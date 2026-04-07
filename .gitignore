@@ -1,0 +1,77 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+out/
+artifacts/
+*.dll
+*.exe
+*.pdb
+*.deps.json
+*.runtimeconfig.json
+project.lock.json
+project.fragment.lock.json
+publish/
+
+# Benchmarks / profiling
+BenchmarkDotNet.Artifacts/
+
+# Local tools
+.dotnet-tools.json.user
+
+# Test output
+TestResults/
+coverage/
+*.coverage
+*.coveragexml
+*.trx
+
+# User-specific files
+*.user
+*.rsuser
+*.suo
+
+# IDEs
+.vs/
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+
+# Rider caches
+.idea_modules/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local auth, session, and machine state
+.sharpclaw/
+*.session.json
+*.auth.json
+*.secrets.json
+*.tokens.json
+*.local.json
+*.snapshot.json
+
+# Logs
+*.log
+
+# Env and secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# Backup / temp
+*.tmp
+*.bak
+*~

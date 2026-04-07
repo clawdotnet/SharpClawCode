@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <GenerateDocumentationFile>false</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Anthropic" />
+    <PackageReference Include="coverlet.collector" />
+    <PackageReference Include="FluentAssertions" />
+    <PackageReference Include="Microsoft.Extensions.AI" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="xunit" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Git\SharpClaw.Code.Git.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Memory\SharpClaw.Code.Memory.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Mcp\SharpClaw.Code.Mcp.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Permissions\SharpClaw.Code.Permissions.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Plugins\SharpClaw.Code.Plugins.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Providers\SharpClaw.Code.Providers.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Skills\SharpClaw.Code.Skills.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Telemetry\SharpClaw.Code.Telemetry.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Tools\SharpClaw.Code.Tools.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Web\SharpClaw.Code.Web.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.MockProvider\SharpClaw.Code.MockProvider.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+</Project>

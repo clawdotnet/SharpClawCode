@@ -1,0 +1,40 @@
+namespace SharpClaw.Code.Protocol.Models;
+
+/// <summary>
+/// Stable metadata keys for workflow features (session, turns, prompts).
+/// </summary>
+public static class SharpClawWorkflowMetadataKeys
+{
+    /// <summary>Serialized <see cref="Enums.PrimaryMode"/> for the session.</summary>
+    public const string PrimaryMode = "sharpclaw.primaryMode";
+
+    /// <summary>Parent session id after a fork.</summary>
+    public const string ParentSessionId = "sharpclaw.parentSessionId";
+
+    /// <summary>Optional checkpoint id the fork was taken from.</summary>
+    public const string ForkedFromCheckpointId = "sharpclaw.forkedFromCheckpointId";
+
+    /// <summary>UTC ISO timestamp of fork.</summary>
+    public const string ForkedAtUtc = "sharpclaw.forkedAtUtc";
+
+    /// <summary>Compact history summary copied into a forked child session.</summary>
+    public const string ForkHistorySummary = "sharpclaw.forkHistorySummary";
+
+    /// <summary>Original user prompt before @file expansion (turn metadata).</summary>
+    public const string OriginalPrompt = "sharpclaw.originalPrompt";
+
+    /// <summary>JSON array of resolved <see cref="PromptReference"/> for tracing.</summary>
+    public const string PromptReferencesJson = "sharpclaw.promptReferencesJson";
+
+    /// <summary>Custom command name when invoked from a command file.</summary>
+    public const string CustomCommandName = "sharpclaw.customCommandName";
+
+    /// <summary>JSON <see cref="UndoRedoStateDocument"/> for checkpoint-backed undo/redo.</summary>
+    public const string UndoRedoStateJson = "sharpclaw.undoRedoStateJson";
+
+    /// <summary>Optional session label for multi-session UX (non-authoritative).</summary>
+    public const string SessionLabel = "sharpclaw.sessionLabel";
+
+    /// <summary>Workspace key for attaching editor/IDE context (normalized path).</summary>
+    public const string EditorContextJson = "sharpclaw.editorContextJson";
+}

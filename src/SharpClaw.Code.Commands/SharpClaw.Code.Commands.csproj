@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpClaw.Code.Acp\SharpClaw.Code.Acp.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Mcp\SharpClaw.Code.Mcp.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Plugins\SharpClaw.Code.Plugins.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
