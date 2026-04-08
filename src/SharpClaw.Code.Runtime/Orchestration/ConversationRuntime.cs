@@ -46,6 +46,7 @@ public sealed class ConversationRuntime(
     CheckpointMutationCoordinator checkpointMutationCoordinator,
     ISessionCoordinator sessionCoordinator,
     IPortableSessionBundleService portableSessionBundleService,
+    ISpecWorkflowService specWorkflowService,
     ILogger<ConversationRuntime> logger) : IConversationRuntime, IRuntimeCommandService
 {
     private const string LastTurnSequenceKey = "lastTurnSequence";
@@ -237,6 +238,20 @@ public sealed class ConversationRuntime(
             };
 
             var turnRunResult = await turnRunner.RunAsync(session, turn, runnerRequest, cancellationToken).ConfigureAwait(false);
+            SpecArtifactSet? specArtifacts = null;
+            if (effectivePrimary == PrimaryMode.Spec)
+            {
+                specArtifacts = await specWorkflowService
+                    .MaterializeAsync(workspacePath, request.Prompt, turnRunResult.Output, cancellationToken)
+                    .ConfigureAwait(false);
+
+                turnRunResult = turnRunResult with
+                {
+                    Output = FormatSpecCompletionMessage(specArtifacts),
+                    Summary = $"Generated spec artifacts in '{specArtifacts.RootPath}'."
+                };
+            }
+
             var completedAtUtc = systemClock.UtcNow;
             var completedTurn = turn with
             {
@@ -338,7 +353,8 @@ public sealed class ConversationRuntime(
                 ToolResults: (turnRunResult.ToolResults ?? []).ToArray(),
                 Usage: turnRunResult.Usage,
                 Checkpoint: checkpoint,
-                Events: runtimeEvents.ToArray());
+                Events: runtimeEvents.ToArray(),
+                SpecArtifacts: specArtifacts);
         }
         catch (OperationCanceledException exception)
         {
@@ -1244,8 +1260,26 @@ public sealed class ConversationRuntime(
     private static PrimaryMode ClampPrimaryModeForCustomCommand(PrimaryMode context, PrimaryMode? commandOverride)
     {
         var effective = commandOverride ?? context;
-        return context == PrimaryMode.Plan || effective == PrimaryMode.Plan
-            ? PrimaryMode.Plan
-            : PrimaryMode.Build;
+        if (context == PrimaryMode.Plan || effective == PrimaryMode.Plan)
+        {
+            return PrimaryMode.Plan;
+        }
+
+        if (context == PrimaryMode.Spec || effective == PrimaryMode.Spec)
+        {
+            return PrimaryMode.Spec;
+        }
+
+        return PrimaryMode.Build;
     }
+
+    private static string FormatSpecCompletionMessage(SpecArtifactSet artifacts)
+        => string.Join(
+            Environment.NewLine,
+            [
+                $"Spec generated: {artifacts.RootPath}",
+                $"Requirements: {artifacts.RequirementsPath}",
+                $"Design: {artifacts.DesignPath}",
+                $"Tasks: {artifacts.TasksPath}"
+            ]);
 }

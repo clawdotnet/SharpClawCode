@@ -19,4 +19,10 @@ public enum PrimaryMode
     /// </summary>
     [JsonStringEnumMemberName("plan")]
     Plan,
+
+    /// <summary>
+    /// Spec-generation posture: prompt execution produces structured product specs and persists them as workspace documents.
+    /// </summary>
+    [JsonStringEnumMemberName("spec")]
+    Spec,
 }

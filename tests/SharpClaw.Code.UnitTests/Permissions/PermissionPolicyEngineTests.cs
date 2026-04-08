@@ -260,6 +260,26 @@ public sealed class PermissionPolicyEngineTests
         decision.Reason.Should().Contain("Plan mode");
     }
 
+    /// <summary>
+    /// Ensures spec primary mode preserves build-mode mutation behavior.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_spec_primary_mode_allows_workspace_writes()
+    {
+        var engine = CreateEngine(new StubApprovalService());
+        var context = CreateContext(PermissionMode.WorkspaceWrite, primaryMode: PrimaryMode.Spec);
+        var request = CreateRequest(
+            "write_file",
+            """{"path":"notes.txt","content":"x"}""",
+            ApprovalScope.FileSystemWrite,
+            requiresApproval: true,
+            isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeTrue();
+    }
+
     private static IPermissionPolicyEngine CreateEngine(IApprovalService approvalService)
         => new PermissionPolicyEngine(
             [

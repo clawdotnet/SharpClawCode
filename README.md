@@ -71,6 +71,12 @@ dotnet run --project src/SharpClaw.Code.Cli -- --output-format json doctor
 
 Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, `/commands`, `/mode`, `/editor`, `/export`, `/undo`, `/redo`, and `/version`. Use `/help` to see the active command set, including discovered workspace custom commands.
 
+Primary workflow modes:
+
+- `build`: normal coding-agent execution
+- `plan`: analysis-first mode that blocks mutating tools
+- `spec`: generates Kiro-style spec artifacts under `docs/superpowers/specs/<date>-<slug>/`
+
 ## Core Capabilities
 
 | Capability | Why it matters |
@@ -82,6 +88,7 @@ Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, 
 | Plugins and skills | Extend the runtime with trusted plugin manifests and discoverable workspace skills |
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
+| Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
 
 ## Good Fit For
 
@@ -115,7 +122,7 @@ For dependency boundaries and project responsibilities, see [docs/architecture.m
 | `--model <id>` | Model id or alias; `provider/model` forms are supported where configured |
 | `--permission-mode <mode>` | `readOnly`, `workspaceWrite`, or `dangerFullAccess`; see [docs/permissions.md](docs/permissions.md) |
 | `--output-format text\|json` | Human-readable or structured output |
-| `--primary-mode <mode>` | Workflow bias for prompts: `build` or `plan` |
+| `--primary-mode <mode>` | Workflow bias for prompts: `build`, `plan`, or `spec` |
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
 
 Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
