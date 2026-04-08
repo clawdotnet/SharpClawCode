@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using SharpClaw.Code.Commands;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
@@ -17,9 +18,30 @@ public sealed class JsonOutputRenderer : IOutputRenderer
     /// <inheritdoc />
     public Task RenderCommandResultAsync(CommandResult result, CancellationToken cancellationToken)
     {
-        var json = string.IsNullOrWhiteSpace(result.DataJson)
-            ? JsonSerializer.Serialize(result, ProtocolJsonContext.Default.CommandResult)
-            : result.DataJson;
+        JsonElement? data = null;
+        string? dataRaw = null;
+        if (!string.IsNullOrWhiteSpace(result.DataJson))
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(result.DataJson);
+                data = document.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                dataRaw = result.DataJson;
+            }
+        }
+
+        var json = JsonSerializer.Serialize(
+            new JsonCommandEnvelope(
+                result.Succeeded,
+                result.ExitCode,
+                OutputFormat.Json,
+                result.Message,
+                data,
+                dataRaw),
+            JsonOutputJsonContext.Default.JsonCommandEnvelope);
 
         return Console.Out.WriteLineAsync(json.AsMemory(), cancellationToken);
     }
@@ -31,3 +53,17 @@ public sealed class JsonOutputRenderer : IOutputRenderer
         return Console.Out.WriteLineAsync(json.AsMemory(), cancellationToken);
     }
 }
+
+internal sealed record JsonCommandEnvelope(
+    bool Succeeded,
+    int ExitCode,
+    OutputFormat OutputFormat,
+    string Message,
+    JsonElement? Data,
+    string? DataRaw);
+
+[JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
+    DefaultIgnoreCondition = JsonIgnoreCondition.Never)]
+[JsonSerializable(typeof(JsonCommandEnvelope))]
+internal sealed partial class JsonOutputJsonContext : JsonSerializerContext;

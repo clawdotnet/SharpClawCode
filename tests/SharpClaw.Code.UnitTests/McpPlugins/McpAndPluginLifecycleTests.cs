@@ -77,6 +77,30 @@ public sealed class McpAndPluginLifecycleTests
         handshakeFailed.HandshakeSucceeded.Should().BeFalse();
     }
 
+    /// <summary>
+    /// Ensures host status preserves explicit failure kinds returned by the supervisor.
+    /// </summary>
+    [Fact]
+    public async Task Mcp_host_should_preserve_supervisor_failure_kind_overrides()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var registry = new FileBackedMcpRegistry(new LocalFileSystem(), new PathService(), new FixedClock());
+        await registry.RegisterAsync(
+            workspacePath,
+            new McpServerDefinition("capabilities", "Capabilities", "stdio", "capabilities-server", true, null, ["--serve"]),
+            CancellationToken.None);
+
+        var host = new ProcessMcpServerHost(
+            registry,
+            new StubMcpProcessSupervisor(handshakeFails: true, failureKind: McpFailureKind.Capabilities),
+            new FixedClock());
+
+        var failed = await host.StartAsync(workspacePath, "capabilities", CancellationToken.None);
+
+        failed.FailureKind.Should().Be(McpFailureKind.Capabilities);
+        failed.State.Should().Be(McpLifecycleState.Faulted);
+    }
+
     private static PluginManager CreatePluginManager()
         => new(
             new OutOfProcessPluginLoader(new StubPluginProcessRunner()),
@@ -234,13 +258,16 @@ public sealed class McpAndPluginLifecycleTests
         public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-04-06T00:00:00Z");
     }
 
-    private sealed class StubMcpProcessSupervisor(bool startFails = false, bool handshakeFails = false) : IMcpProcessSupervisor
+    private sealed class StubMcpProcessSupervisor(
+        bool startFails = false,
+        bool handshakeFails = false,
+        McpFailureKind? failureKind = null) : IMcpProcessSupervisor
     {
         public Task<McpProcessStartResult> StartAsync(McpServerDefinition definition, string workingDirectory, CancellationToken cancellationToken)
             => Task.FromResult(startFails
                 ? new McpProcessStartResult(false, null, false, "startup failed")
                 : handshakeFails
-                    ? new McpProcessStartResult(true, 4242, false, "handshake failed")
+                    ? new McpProcessStartResult(true, 4242, false, "handshake failed", FailureKind: failureKind)
                     : new McpProcessStartResult(true, 4242, true, null));
 
         public Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken) => Task.CompletedTask;

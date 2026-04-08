@@ -1,5 +1,6 @@
 using FluentAssertions;
 using SharpClaw.Code.Agents.Agents;
+using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.CustomCommands;
 

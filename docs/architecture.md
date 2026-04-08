@@ -15,13 +15,14 @@ This document matches the **current** solution: `SharpClawCode.sln` with project
 | **SharpClaw.Code.Sessions** | `ISessionStore`, `IEventStore`, file-backed snapshot + NDJSON append log. |
 | **SharpClaw.Code.Mcp** | `IMcpRegistry`, `IMcpServerHost`, `IMcpDoctorService`, file-backed registry; **`SdkMcpProcessSupervisor`** uses the official **ModelContextProtocol** client for stdio, HTTP (auto/streamable), and SSE transports. |
 | **SharpClaw.Code.Plugins** | `IPluginManager`, manifest install, out-of-process loader. |
+| **SharpClaw.Code.Acp** | ACP stdio host surface for editor and protocol bridge scenarios. |
 | **SharpClaw.Code.Memory / Git / Web / Skills** | Context and auxiliary services composed by runtime/agents as implemented today. |
 | **SharpClaw.Code.Agents** | Microsoft Agent Framework bridge, `ProviderBackedAgentKernel`, concrete agents. |
 | **SharpClaw.Code.Runtime** | `ConversationRuntime`, `DefaultTurnRunner`, lifecycle/state machine, operational diagnostics DI. |
 | **SharpClaw.Code.Commands** | System.CommandLine handlers, REPL host, slash commands, output renderers dispatch. |
 | **SharpClaw.Code.Cli** | Entry point (`Program.cs`), `Host` wiring: `AddSharpClawRuntime` + `AddSharpClawCli`. |
 
-Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHarness**.
+Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHarness**, **Mcp.FixtureServer**.
 
 ## Composition overview
 

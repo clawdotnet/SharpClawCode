@@ -48,7 +48,7 @@ Subcommands of **`mcp`** (see **`McpCommandHandler`**):
 
 Global CLI options apply (`--cwd`, `--output-format`, …).
 
-JSON **`DataJson`** for register/start/stop/restart uses **`ProtocolJsonContext`** where types are **`RegisteredMcpServer`** / **`McpServerStatus`**.
+JSON **`DataJson`** for register/start/stop/restart uses **`ProtocolJsonContext`** where types are **`RegisteredMcpServer`** / **`McpServerStatus`**. MCP doctor/status payloads serialize **`failureKind`** with the protocol enum names (`none`, `startup`, `handshake`, `capabilities`, `runtime`).
 
 **`McpDoctorService`** still builds some diagnostic payloads with anonymous objects (see **`ARCHITECTURE-NOTES.md`**).
 

@@ -1,3 +1,5 @@
+using SharpClaw.Code.Protocol.Enums;
+
 namespace SharpClaw.Code.Mcp.Models;
 
 /// <summary>Status payload returned by <see cref="Services.McpDoctorService.GetStatusAsync"/>.</summary>
@@ -18,7 +20,7 @@ public sealed record McpDoctorServerEntry(
     int ToolCount,
     int PromptCount,
     int ResourceCount,
-    string FailureKind,
+    McpFailureKind FailureKind,
     bool HandshakeSucceeded,
     string? Message);
 

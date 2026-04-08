@@ -111,14 +111,16 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
                 definition.Id)
             .ConfigureAwait(false);
 
-        if (!toolsOk || !promptsOk || !resourcesOk)
+        // Many real servers expose only a subset (e.g. tools-only). Treat handshake as failed only when
+        // none of the capability planes could be listed — not when prompts/resources are absent.
+        if (!toolsOk && !promptsOk && !resourcesOk)
         {
             await client.DisposeAsync().ConfigureAwait(false);
             return new McpProcessStartResult(
                 true,
                 null,
                 false,
-                "MCP capability enumeration failed (tools, prompts, or resources). See logs for details.",
+                "MCP capability enumeration failed (tools, prompts, and resources). See logs for details.",
                 0,
                 0,
                 0,
@@ -251,17 +253,17 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
             0,
             0);
 
-    private async Task<int> CountListedAsync<T>(ValueTask<IList<T>> listTask, string capability, string serverId)
+    private async Task<(int Count, bool Ok)> TryCountListedAsync<T>(ValueTask<IList<T>> listTask, string capability, string serverId)
     {
         try
         {
             var list = await listTask.ConfigureAwait(false);
-            return list.Count;
+            return (list.Count, true);
         }
         catch (Exception ex) when (ex is McpException or IOException or InvalidOperationException or HttpRequestException or TaskCanceledException)
         {
             logger.LogWarning(ex, "MCP server '{ServerId}' failed to list {Capability}.", serverId, capability);
-            return 0;
+            return (0, false);
         }
     }
 

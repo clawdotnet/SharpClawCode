@@ -63,7 +63,7 @@ public sealed class ProcessMcpServerHost(
                     State = McpLifecycleState.Faulted,
                     UpdatedAtUtc = systemClock.UtcNow,
                     StatusMessage = processResult.FailureReason,
-                    FailureKind = McpFailureKind.Handshake,
+                    FailureKind = processResult.FailureKind ?? McpFailureKind.Handshake,
                     Pid = processResult.Pid,
                     HandshakeSucceeded = false
                 }
@@ -72,7 +72,7 @@ public sealed class ProcessMcpServerHost(
                 State = McpLifecycleState.Faulted,
                 UpdatedAtUtc = systemClock.UtcNow,
                 StatusMessage = processResult.FailureReason,
-                FailureKind = McpFailureKind.Startup,
+                FailureKind = processResult.FailureKind ?? McpFailureKind.Startup,
                 Pid = null,
                 HandshakeSucceeded = false
             };

@@ -1,5 +1,6 @@
 using System.CommandLine;
 using System.Reflection;
+using System.Text.Json;
 using SharpClaw.Code.Commands.Models;
 using SharpClaw.Code.Commands.Options;
 using SharpClaw.Code.Protocol.Commands;
@@ -28,7 +29,7 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
         command.SetAction(async (parseResult, cancellationToken) =>
         {
             var context = globalOptions.Resolve(parseResult);
-            await outputRendererDispatcher.RenderCommandResultAsync(CreateResult(), context.OutputFormat, cancellationToken);
+            await outputRendererDispatcher.RenderCommandResultAsync(CreateResult(context.OutputFormat), context.OutputFormat, cancellationToken);
             return 0;
         });
 
@@ -38,19 +39,19 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
     /// <inheritdoc />
     public async Task<int> ExecuteAsync(SlashCommandParseResult command, CommandExecutionContext context, CancellationToken cancellationToken)
     {
-        await outputRendererDispatcher.RenderCommandResultAsync(CreateResult(), context.OutputFormat, cancellationToken);
+        await outputRendererDispatcher.RenderCommandResultAsync(CreateResult(context.OutputFormat), context.OutputFormat, cancellationToken);
         return 0;
     }
 
-    private static CommandResult CreateResult()
+    private static CommandResult CreateResult(OutputFormat outputFormat)
     {
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
-        var payload = $"{{\"version\":\"{version}\"}}";
+        var payload = JsonSerializer.Serialize(new { version });
 
         return new CommandResult(
             Succeeded: true,
             ExitCode: 0,
-            OutputFormat: OutputFormat.Text,
+            OutputFormat: outputFormat,
             Message: $"SharpClaw Code version {version}",
             DataJson: payload);
     }

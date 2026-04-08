@@ -103,22 +103,20 @@ public sealed class ConversationRuntimeFlowTests
         var workspacePath = CreateTemporaryWorkspace();
         using var serviceProvider = CreateServiceProvider(services => services.AddDeterministicMockModelProvider());
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
 
-        var act = async () => await runtime.RunPromptAsync(
-            new RunPromptRequest(
-                Prompt: "cancel me",
-                SessionId: null,
-                WorkingDirectory: workspacePath,
-                PermissionMode: PermissionMode.WorkspaceWrite,
-                OutputFormat: OutputFormat.Text,
-                Metadata: new Dictionary<string, string>
-                {
-                    ["provider"] = DeterministicMockModelProvider.ProviderNameConstant,
-                    ["model"] = DeterministicMockModelProvider.DefaultModelId,
-                    [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
-                }),
-            cts.Token);
+        var request = new RunPromptRequest(
+            Prompt: "cancel me",
+            SessionId: null,
+            WorkingDirectory: workspacePath,
+            PermissionMode: PermissionMode.WorkspaceWrite,
+            OutputFormat: OutputFormat.Text,
+            Metadata: new Dictionary<string, string>
+            {
+                ["provider"] = DeterministicMockModelProvider.ProviderNameConstant,
+                ["model"] = DeterministicMockModelProvider.DefaultModelId,
+                [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
+            });
+        var act = async () => await RunPromptWithCancelAfterAsync(runtime, request, TimeSpan.FromMilliseconds(300));
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         var latestSession = await runtime.GetLatestSessionAsync(workspacePath, CancellationToken.None);
@@ -138,22 +136,20 @@ public sealed class ConversationRuntimeFlowTests
         var workspacePath = CreateTemporaryWorkspace();
         using var serviceProvider = CreateServiceProvider(services => services.AddDeterministicMockModelProvider());
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
 
-        var cancelAct = async () => await runtime.RunPromptAsync(
-            new RunPromptRequest(
-                Prompt: "cancel me",
-                SessionId: null,
-                WorkingDirectory: workspacePath,
-                PermissionMode: PermissionMode.WorkspaceWrite,
-                OutputFormat: OutputFormat.Text,
-                Metadata: new Dictionary<string, string>
-                {
-                    ["provider"] = DeterministicMockModelProvider.ProviderNameConstant,
-                    ["model"] = DeterministicMockModelProvider.DefaultModelId,
-                    [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
-                }),
-            cts.Token);
+        var cancelRequest = new RunPromptRequest(
+            Prompt: "cancel me",
+            SessionId: null,
+            WorkingDirectory: workspacePath,
+            PermissionMode: PermissionMode.WorkspaceWrite,
+            OutputFormat: OutputFormat.Text,
+            Metadata: new Dictionary<string, string>
+            {
+                ["provider"] = DeterministicMockModelProvider.ProviderNameConstant,
+                ["model"] = DeterministicMockModelProvider.DefaultModelId,
+                [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
+            });
+        var cancelAct = async () => await RunPromptWithCancelAfterAsync(runtime, cancelRequest, TimeSpan.FromMilliseconds(300));
         await cancelAct.Should().ThrowAsync<OperationCanceledException>();
 
         var second = await runtime.RunPromptAsync(
@@ -180,6 +176,21 @@ public sealed class ConversationRuntimeFlowTests
         services.AddSharpClawRuntime();
         configure?.Invoke(services);
         return services.BuildServiceProvider();
+    }
+
+    /// <summary>
+    /// Starts <see cref="IConversationRuntime.RunPromptAsync"/> then schedules cancellation so setup work
+    /// (DI, workspace) does not consume the delay — matches real "cancel during turn" behavior.
+    /// </summary>
+    private static async Task RunPromptWithCancelAfterAsync(
+        IConversationRuntime runtime,
+        RunPromptRequest request,
+        TimeSpan cancelAfter)
+    {
+        using var cts = new CancellationTokenSource();
+        var runTask = runtime.RunPromptAsync(request, cts.Token);
+        cts.CancelAfter(cancelAfter);
+        await runTask.ConfigureAwait(false);
     }
 
     private static string CreateTemporaryWorkspace()

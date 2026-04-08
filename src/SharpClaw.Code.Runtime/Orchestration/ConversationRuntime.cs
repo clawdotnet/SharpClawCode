@@ -211,6 +211,10 @@ public sealed class ConversationRuntime(
             Metadata = metadataAtTurnStart,
         };
 
+        // Persist sequence allocation before any cancellable I/O so failed/canceled turns
+        // still monotonically consume sequence numbers even if the event append is cancelled.
+        await sessionStore.SaveAsync(workspacePath, session, CancellationToken.None).ConfigureAwait(false);
+
         await AppendEventAsync(
             workspacePath,
             session.Id,
@@ -222,10 +226,6 @@ public sealed class ConversationRuntime(
                 Turn: turn),
             runtimeEvents,
             cancellationToken).ConfigureAwait(false);
-
-        // Persist sequence allocation so failed/canceled turns still monotonically consume sequence numbers.
-        // Use None so cooperative cancellation cannot leave a torn or missing session snapshot.
-        await sessionStore.SaveAsync(workspacePath, session, CancellationToken.None).ConfigureAwait(false);
 
         try
         {

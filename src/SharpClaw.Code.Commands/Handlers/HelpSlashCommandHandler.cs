@@ -26,7 +26,7 @@ public sealed class HelpSlashCommandHandler(ICommandRegistry commandRegistry, Ou
             new CommandResult(
                 Succeeded: true,
                 ExitCode: 0,
-                OutputFormat: OutputFormat.Text,
+                OutputFormat: context.OutputFormat,
                 Message: message,
                 DataJson: null),
             context.OutputFormat,

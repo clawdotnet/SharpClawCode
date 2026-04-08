@@ -34,6 +34,9 @@ public sealed class CliCommandSurfaceTests
 
         rootCommand.Subcommands.Select(command => command.Name).Should().Contain(
             [
+                "acp",
+                "bridge",
+                "commands",
                 "mcp",
                 "plugins",
                 "prompt",
@@ -48,7 +51,9 @@ public sealed class CliCommandSurfaceTests
                 "--output-format",
                 "--cwd",
                 "--model",
-                "--permission-mode"
+                "--permission-mode",
+                "--primary-mode",
+                "--session"
             ]);
     }
 }

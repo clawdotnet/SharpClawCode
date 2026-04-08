@@ -83,7 +83,7 @@ public sealed class ReplHost(
                             new CommandResult(
                                 Succeeded: true,
                                 ExitCode: 0,
-                                OutputFormat: OutputFormat.Text,
+                                OutputFormat: context.OutputFormat,
                                 Message: message,
                                 DataJson: null),
                             context.OutputFormat,

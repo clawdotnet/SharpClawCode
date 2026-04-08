@@ -15,7 +15,7 @@ public static class ProviderHttpHelpers
             return null;
         }
 
-        return baseUrl.EndsWith('/', StringComparison.Ordinal)
+        return baseUrl.EndsWith("/", StringComparison.Ordinal)
             ? baseUrl
             : $"{baseUrl}/";
     }

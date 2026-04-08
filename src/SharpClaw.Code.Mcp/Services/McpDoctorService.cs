@@ -35,7 +35,7 @@ public sealed class McpDoctorService(IMcpRegistry registry) : IMcpDoctorService
                 ToolCount: server.Status.ToolCount,
                 PromptCount: server.Status.PromptCount,
                 ResourceCount: server.Status.ResourceCount,
-                FailureKind: server.Status.FailureKind.ToString(),
+                FailureKind: server.Status.FailureKind,
                 HandshakeSucceeded: server.Status.HandshakeSucceeded,
                 Message: server.Status.StatusMessage)).ToList());
 
@@ -47,7 +47,7 @@ public sealed class McpDoctorService(IMcpRegistry registry) : IMcpDoctorService
                 Environment.NewLine,
                 filteredServers.Select(server =>
                     $"{server.Definition.Id}: {server.Status.State}"
-                    + (server.Status.FailureKind is not McpFailureKind.None ? $" ({server.Status.FailureKind})" : string.Empty)
+                    + (server.Status.FailureKind is not McpFailureKind.None ? $" ({FormatFailureKind(server.Status.FailureKind)})" : string.Empty)
                     + (string.IsNullOrWhiteSpace(server.Status.StatusMessage) ? string.Empty : $" - {server.Status.StatusMessage}")));
 
         return new CommandResult(
@@ -84,6 +84,17 @@ public sealed class McpDoctorService(IMcpRegistry registry) : IMcpDoctorService
             server.Definition.Id,
             server.Status.State is McpLifecycleState.Faulted ? "faulted" : "ok",
             $"{server.Status.State} - {server.Status.StatusMessage ?? "No status message."}");
+
+    private static string FormatFailureKind(McpFailureKind failureKind)
+        => failureKind switch
+        {
+            McpFailureKind.None => "none",
+            McpFailureKind.Startup => "startup",
+            McpFailureKind.Handshake => "handshake",
+            McpFailureKind.Capabilities => "capabilities",
+            McpFailureKind.Runtime => "runtime",
+            _ => failureKind.ToString()
+        };
 }
 
 /// <summary>Source-generated JSON context for MCP doctor payloads.</summary>

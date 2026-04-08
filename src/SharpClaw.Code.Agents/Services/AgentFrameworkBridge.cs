@@ -15,6 +15,7 @@ namespace SharpClaw.Code.Agents.Services;
 /// </summary>
 public sealed class AgentFrameworkBridge(
     ProviderBackedAgentKernel providerBackedAgentKernel,
+    ISystemClock systemClock,
     ILogger<AgentFrameworkBridge> logger) : IAgentFrameworkBridge
 {
     /// <inheritdoc />
