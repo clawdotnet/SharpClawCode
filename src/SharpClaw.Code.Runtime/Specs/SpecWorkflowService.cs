@@ -75,14 +75,13 @@ public sealed class SpecWorkflowService(
 
         var datePrefix = systemClock.UtcNow.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
         var slug = Slugify(userPrompt);
-        var root = GetUniqueSpecRoot(workspacePath, datePrefix, slug);
+        var root = await AllocateSpecRootAsync(workspacePath, datePrefix, slug, cancellationToken).ConfigureAwait(false);
         var requirementsPath = pathService.Combine(root, "requirements.md");
         var designPath = pathService.Combine(root, "design.md");
         var tasksPath = pathService.Combine(root, "tasks.md");
 
         try
         {
-            fileSystem.CreateDirectory(root);
             await fileSystem.WriteAllTextAsync(requirementsPath, RenderRequirements(payload.Requirements), cancellationToken).ConfigureAwait(false);
             await fileSystem.WriteAllTextAsync(designPath, RenderDesign(payload.Design), cancellationToken).ConfigureAwait(false);
             await fileSystem.WriteAllTextAsync(tasksPath, RenderTasks(payload.Tasks), cancellationToken).ConfigureAwait(false);
@@ -136,8 +135,23 @@ public sealed class SpecWorkflowService(
 
     private static void ValidatePayload(SpecGenerationPayload payload)
     {
-        if (string.IsNullOrWhiteSpace(payload.Requirements.Title)
+        ArgumentNullException.ThrowIfNull(payload);
+
+        if (payload.Requirements is null
+            || payload.Design is null
+            || payload.Tasks is null
+            || string.IsNullOrWhiteSpace(payload.Requirements.Title)
             || string.IsNullOrWhiteSpace(payload.Requirements.Summary)
+            || payload.Requirements.Requirements is null
+            || string.IsNullOrWhiteSpace(payload.Design.Title)
+            || string.IsNullOrWhiteSpace(payload.Design.Summary)
+            || payload.Design.Architecture is null
+            || payload.Design.DataFlow is null
+            || payload.Design.Interfaces is null
+            || payload.Design.FailureModes is null
+            || payload.Design.Testing is null
+            || string.IsNullOrWhiteSpace(payload.Tasks.Title)
+            || payload.Tasks.Tasks is null
             || payload.Requirements.Requirements.Count == 0
             || payload.Design.Architecture.Count == 0
             || payload.Design.DataFlow.Count == 0
@@ -163,9 +177,20 @@ public sealed class SpecWorkflowService(
         }
     }
 
-    private string GetUniqueSpecRoot(string workspacePath, string datePrefix, string slug)
+    private async Task<string> AllocateSpecRootAsync(
+        string workspacePath,
+        string datePrefix,
+        string slug,
+        CancellationToken cancellationToken)
     {
         var specsRoot = pathService.Combine(workspacePath, "docs", "superpowers", "specs");
+        fileSystem.CreateDirectory(specsRoot);
+
+        var allocationLockPath = pathService.Combine(specsRoot, ".spec-allocation.lock");
+        await using var allocationLock = await fileSystem
+            .AcquireExclusiveFileLockAsync(allocationLockPath, cancellationToken)
+            .ConfigureAwait(false);
+
         var folderName = $"{datePrefix}-{slug}";
         var candidate = pathService.Combine(specsRoot, folderName);
         var suffix = 2;
@@ -175,6 +200,7 @@ public sealed class SpecWorkflowService(
             suffix++;
         }
 
+        fileSystem.CreateDirectory(candidate);
         return candidate;
     }
 

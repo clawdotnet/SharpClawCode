@@ -57,6 +57,101 @@ public sealed class SpecWorkflowServiceTests
         fileSystem.DeletedDirectories.Should().Contain(expectedRoot);
     }
 
+    [Fact]
+    public async Task MaterializeAsync_should_reject_missing_required_design_and_task_metadata()
+    {
+        ISpecWorkflowService service = new SpecWorkflowService(new LocalFileSystem(), new PathService(), new FixedClock());
+        var workspace = CreateWorkspace();
+        var invalidPayload =
+            """
+            {
+              "requirements": {
+                "title": "Offline Sync Requirements",
+                "summary": "Support queued changes while the client is disconnected.",
+                "requirements": [
+                  {
+                    "id": "REQ-001",
+                    "statement": "When the client is offline, the system shall queue write operations for later synchronization."
+                  }
+                ]
+              },
+              "design": {
+                "title": "",
+                "summary": "",
+                "architecture": ["Add a sync queue service in the runtime layer."],
+                "dataFlow": ["Write requests are persisted locally, then replayed when connectivity returns."],
+                "interfaces": ["Expose queue status through the existing operational surfaces."],
+                "failureModes": ["Handle replay conflicts by surfacing a recoverable error state."],
+                "testing": ["Add unit and integration coverage for queue persistence and replay."]
+              },
+              "tasks": {
+                "title": "",
+                "tasks": [
+                  {
+                    "id": "TASK-001",
+                    "description": "Add queue persistence and replay orchestration."
+                  }
+                ]
+              }
+            }
+            """;
+
+        var act = async () => await service.MaterializeAsync(workspace, "Add offline sync support", invalidPayload, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Spec mode output was incomplete. Requirements, design, and tasks must all contain content.");
+        Directory.Exists(Path.Combine(workspace, "docs", "superpowers", "specs")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MaterializeAsync_should_reject_null_document_lists_with_validation_error()
+    {
+        ISpecWorkflowService service = new SpecWorkflowService(new LocalFileSystem(), new PathService(), new FixedClock());
+        var workspace = CreateWorkspace();
+        var invalidPayload =
+            """
+            {
+              "requirements": {
+                "title": "Offline Sync Requirements",
+                "summary": "Support queued changes while the client is disconnected.",
+                "requirements": null
+              },
+              "design": {
+                "title": "Offline Sync Design",
+                "summary": "Introduce a local queue and replay workflow.",
+                "architecture": null,
+                "dataFlow": ["Write requests are persisted locally, then replayed when connectivity returns."],
+                "interfaces": ["Expose queue status through the existing operational surfaces."],
+                "failureModes": ["Handle replay conflicts by surfacing a recoverable error state."],
+                "testing": ["Add unit and integration coverage for queue persistence and replay."]
+              },
+              "tasks": {
+                "title": "Offline Sync Tasks",
+                "tasks": null
+              }
+            }
+            """;
+
+        var act = async () => await service.MaterializeAsync(workspace, "Add offline sync support", invalidPayload, CancellationToken.None);
+
+        await act.Should().ThrowAsync<InvalidOperationException>()
+            .WithMessage("Spec mode output was incomplete. Requirements, design, and tasks must all contain content.");
+        Directory.Exists(Path.Combine(workspace, "docs", "superpowers", "specs")).Should().BeFalse();
+    }
+
+    [Fact]
+    public async Task MaterializeAsync_should_allocate_spec_folder_under_exclusive_lock()
+    {
+        var fileSystem = new TrackingLockFileSystem();
+        ISpecWorkflowService service = new SpecWorkflowService(fileSystem, new PathService(), new FixedClock());
+        var workspace = CreateWorkspace();
+
+        _ = await service.MaterializeAsync(workspace, "Add offline sync support", CreatePayloadJson(), CancellationToken.None);
+
+        fileSystem.AcquiredLockPaths.Should().ContainSingle()
+            .Which.Should().Be(Path.Combine(workspace, "docs", "superpowers", "specs", ".spec-allocation.lock"));
+    }
+
     private static string CreateWorkspace()
     {
         var workspace = Path.Combine(Path.GetTempPath(), "sharpclaw-spec-service-tests", Guid.NewGuid().ToString("N"));
@@ -146,6 +241,48 @@ public sealed class SpecWorkflowServiceTests
             DeletedDirectories.Add(path);
             inner.DeleteDirectoryRecursive(path);
         }
+
+        public void TryDeleteFile(string path) => inner.TryDeleteFile(path);
+    }
+
+    private sealed class TrackingLockFileSystem : IFileSystem
+    {
+        private readonly LocalFileSystem inner = new();
+
+        public List<string> AcquiredLockPaths { get; } = [];
+
+        public async Task<IAsyncDisposable> AcquireExclusiveFileLockAsync(string lockFilePath, CancellationToken cancellationToken = default)
+        {
+            AcquiredLockPaths.Add(lockFilePath);
+            return await inner.AcquireExclusiveFileLockAsync(lockFilePath, cancellationToken);
+        }
+
+        public void CreateDirectory(string path) => inner.CreateDirectory(path);
+
+        public bool FileExists(string path) => inner.FileExists(path);
+
+        public bool DirectoryExists(string path) => inner.DirectoryExists(path);
+
+        public IEnumerable<string> EnumerateDirectories(string path) => inner.EnumerateDirectories(path);
+
+        public IEnumerable<string> EnumerateFiles(string path, string searchPattern) => inner.EnumerateFiles(path, searchPattern);
+
+        public Task<string?> ReadAllTextIfExistsAsync(string path, CancellationToken cancellationToken)
+            => inner.ReadAllTextIfExistsAsync(path, cancellationToken);
+
+        public Task<string[]> ReadAllLinesIfExistsAsync(string path, CancellationToken cancellationToken)
+            => inner.ReadAllLinesIfExistsAsync(path, cancellationToken);
+
+        public Task WriteAllTextAsync(string path, string content, CancellationToken cancellationToken)
+            => inner.WriteAllTextAsync(path, content, cancellationToken);
+
+        public Task CopyFileAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
+            => inner.CopyFileAsync(sourcePath, destinationPath, cancellationToken);
+
+        public Task AppendLineAsync(string path, string line, CancellationToken cancellationToken)
+            => inner.AppendLineAsync(path, line, cancellationToken);
+
+        public void DeleteDirectoryRecursive(string path) => inner.DeleteDirectoryRecursive(path);
 
         public void TryDeleteFile(string path) => inner.TryDeleteFile(path);
     }
