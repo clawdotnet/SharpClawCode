@@ -44,13 +44,38 @@ public sealed class ProcessRunner(ISystemClock systemClock) : IProcessRunner
         var startedAtUtc = systemClock.UtcNow;
         process.Start();
 
-        var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-        var standardOutput = await standardOutputTask.ConfigureAwait(false);
-        var standardError = await standardErrorTask.ConfigureAwait(false);
-        var completedAtUtc = systemClock.UtcNow;
+        try
+        {
+            var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            var standardOutput = await standardOutputTask.ConfigureAwait(false);
+            var standardError = await standardErrorTask.ConfigureAwait(false);
+            var completedAtUtc = systemClock.UtcNow;
 
-        return new ProcessRunResult(process.ExitCode, standardOutput, standardError, startedAtUtc, completedAtUtc);
+            return new ProcessRunResult(process.ExitCode, standardOutput, standardError, startedAtUtc, completedAtUtc);
+        }
+        catch (OperationCanceledException)
+        {
+            TryKillProcessTree(process);
+            throw;
+        }
+    }
+
+    private static void TryKillProcessTree(Process process)
+    {
+        try
+        {
+            if (!process.HasExited)
+            {
+                process.Kill(entireProcessTree: true);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (NotSupportedException)
+        {
+        }
     }
 }

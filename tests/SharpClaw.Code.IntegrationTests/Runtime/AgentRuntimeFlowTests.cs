@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.MockProvider;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
@@ -22,6 +23,7 @@ public sealed class AgentRuntimeFlowTests
         var workspacePath = CreateTemporaryWorkspace();
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
         using var serviceProvider = services.BuildServiceProvider();
 
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();

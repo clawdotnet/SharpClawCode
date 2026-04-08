@@ -620,7 +620,11 @@ public sealed class ConversationRuntime(
             }
 
             var result = await checkpointMutationCoordinator
-                .TryUndoAsync(workspace, sid, cancellationToken)
+                .TryUndoAsync(
+                    workspace,
+                    sid,
+                    cancellationToken,
+                    operation => ExecuteWithSessionLockAsync(workspace, sid, operation, cancellationToken))
                 .ConfigureAwait(false);
             var payload = JsonSerializer.Serialize(result, ProtocolJsonContext.Default.UndoRedoActionResult);
             return new CommandResult(result.Succeeded, result.Succeeded ? 0 : 1, context.OutputFormat, result.Message, payload);
@@ -644,7 +648,11 @@ public sealed class ConversationRuntime(
             }
 
             var result = await checkpointMutationCoordinator
-                .TryRedoAsync(workspace, sid, cancellationToken)
+                .TryRedoAsync(
+                    workspace,
+                    sid,
+                    cancellationToken,
+                    operation => ExecuteWithSessionLockAsync(workspace, sid, operation, cancellationToken))
                 .ConfigureAwait(false);
             var payload = JsonSerializer.Serialize(result, ProtocolJsonContext.Default.UndoRedoActionResult);
             return new CommandResult(result.Succeeded, result.Succeeded ? 0 : 1, context.OutputFormat, result.Message, payload);
@@ -959,7 +967,11 @@ public sealed class ConversationRuntime(
         await eventPublisher
             .PublishAsync(
                 runtimeEvent,
-                new RuntimeEventPublishOptions(workspacePath, sessionId, PersistToSessionStore: true),
+                new RuntimeEventPublishOptions(
+                    workspacePath,
+                    sessionId,
+                    PersistToSessionStore: true,
+                    ThrowIfPersistenceFails: true),
                 cancellationToken)
             .ConfigureAwait(false);
         collectedEvents.Add(runtimeEvent);
@@ -1162,6 +1174,32 @@ public sealed class ConversationRuntime(
 
     private string NormalizeWorkspacePath(string? workspacePath)
         => pathService.GetFullPath(string.IsNullOrWhiteSpace(workspacePath) ? pathService.GetCurrentDirectory() : workspacePath);
+
+    private async Task<T> ExecuteWithSessionLockAsync<T>(
+        string workspacePath,
+        string sessionId,
+        Func<CancellationToken, Task<T>> operation,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentNullException.ThrowIfNull(operation);
+
+        var sessionMutex = GetSessionMutex(workspacePath, sessionId);
+        await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var turnLockPath = SessionStorageLayout.GetSessionTurnLockPath(pathService, workspacePath, sessionId);
+            await using var crossProcessTurnLock = await fileSystem
+                .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
+                .ConfigureAwait(false);
+            return await operation(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            sessionMutex.Release();
+        }
+    }
 
     private static string CreateIdentifier(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}";

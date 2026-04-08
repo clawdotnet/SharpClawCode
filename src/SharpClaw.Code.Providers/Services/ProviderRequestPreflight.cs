@@ -8,13 +8,19 @@ namespace SharpClaw.Code.Providers;
 /// <summary>
 /// Resolves provider and model aliases into normalized provider requests.
 /// </summary>
-public sealed class ProviderRequestPreflight(IOptions<ProviderCatalogOptions> options) : IProviderRequestPreflight
+public sealed class ProviderRequestPreflight(
+    IOptions<ProviderCatalogOptions> options,
+    IOptions<AnthropicProviderOptions>? anthropicOptions = null,
+    IOptions<OpenAiCompatibleProviderOptions>? openAiCompatibleOptions = null) : IProviderRequestPreflight
 {
+    private readonly AnthropicProviderOptions anthropicOptions = anthropicOptions?.Value ?? new AnthropicProviderOptions();
+    private readonly OpenAiCompatibleProviderOptions openAiCompatibleOptions = openAiCompatibleOptions?.Value ?? new OpenAiCompatibleProviderOptions();
+
     /// <inheritdoc />
     public ProviderRequest Prepare(ProviderRequest request)
     {
         var providerName = request.ProviderName?.Trim() ?? string.Empty;
-        var model = request.Model.Trim();
+        var model = request.Model?.Trim() ?? string.Empty;
         var catalog = options.Value;
 
         if (catalog.ModelAliases.TryGetValue(model, out var alias))
@@ -32,11 +38,33 @@ public sealed class ProviderRequestPreflight(IOptions<ProviderCatalogOptions> op
             providerName = catalog.DefaultProvider;
         }
 
+        if (Internal.ProviderHttpHelpers.IsDefaultModelAlias(model) || string.IsNullOrWhiteSpace(model))
+        {
+            model = ResolveDefaultModel(providerName);
+        }
+
         return request with
         {
             ProviderName = providerName,
             Model = model,
         };
+    }
+
+    private string ResolveDefaultModel(string providerName)
+    {
+        if (providerName.Equals(anthropicOptions.ProviderName, StringComparison.OrdinalIgnoreCase)
+            || providerName.Equals("anthropic", StringComparison.OrdinalIgnoreCase))
+        {
+            return anthropicOptions.DefaultModel;
+        }
+
+        if (providerName.Equals(openAiCompatibleOptions.ProviderName, StringComparison.OrdinalIgnoreCase)
+            || providerName.Equals("openai-compatible", StringComparison.OrdinalIgnoreCase))
+        {
+            return openAiCompatibleOptions.DefaultModel;
+        }
+
+        return string.Empty;
     }
 
     private static bool TryParseQualifiedModel(string model, out string providerName, out string providerModel)

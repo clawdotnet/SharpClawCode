@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Models;
 
@@ -11,23 +12,27 @@ internal static class PermissionRuleHelpers
            && trustedNames is not null
            && trustedNames.Contains(candidate, StringComparer.OrdinalIgnoreCase);
 
-    public static string ResolvePath(PermissionEvaluationContext context, string? candidatePath)
+    public static string ResolvePath(IPathService pathService, PermissionEvaluationContext context, string? candidatePath)
     {
-        var workspaceRoot = Path.GetFullPath(context.WorkspaceRoot);
+        ArgumentNullException.ThrowIfNull(pathService);
+
+        var workspaceRoot = pathService.GetCanonicalFullPath(context.WorkspaceRoot);
         var value = string.IsNullOrWhiteSpace(candidatePath)
             ? context.WorkingDirectory
             : candidatePath;
 
         var fullPath = Path.IsPathRooted(value)
-            ? Path.GetFullPath(value)
-            : Path.GetFullPath(Path.Combine(workspaceRoot, value));
+            ? pathService.GetCanonicalFullPath(value)
+            : pathService.GetCanonicalFullPath(Path.Combine(workspaceRoot, value));
 
         return fullPath;
     }
 
-    public static bool IsWithinWorkspace(PermissionEvaluationContext context, string fullPath)
+    public static bool IsWithinWorkspace(IPathService pathService, PermissionEvaluationContext context, string fullPath)
     {
-        var workspaceRoot = Path.GetFullPath(context.WorkspaceRoot);
+        ArgumentNullException.ThrowIfNull(pathService);
+
+        var workspaceRoot = pathService.GetCanonicalFullPath(context.WorkspaceRoot);
         var comparison = OperatingSystem.IsWindows()
             ? StringComparison.OrdinalIgnoreCase
             : StringComparison.Ordinal;

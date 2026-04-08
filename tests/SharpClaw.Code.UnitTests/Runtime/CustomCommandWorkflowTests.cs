@@ -18,6 +18,14 @@ public sealed class CustomCommandWorkflowTests
     }
 
     [Fact]
+    public void Template_expander_should_treat_multi_digit_placeholders_as_distinct_tokens()
+    {
+        var body = "$1 / $10";
+        var expanded = CustomCommandTemplateExpander.Expand(body, "one two three four five six seven eight nine ten");
+        expanded.Should().Be("one / ten");
+    }
+
+    [Fact]
     public void Markdown_parser_reads_frontmatter_and_body()
     {
         ICustomCommandMarkdownParser parser = new CustomCommandMarkdownParser();

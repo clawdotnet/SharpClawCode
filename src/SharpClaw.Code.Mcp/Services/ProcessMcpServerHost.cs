@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
@@ -22,11 +23,40 @@ public sealed class ProcessMcpServerHost(
     ILogger<ProcessMcpServerHost>? logger = null) : IMcpServerHost
 {
     private readonly ILogger<ProcessMcpServerHost> logger = logger ?? NullLogger<ProcessMcpServerHost>.Instance;
+    private static readonly ConcurrentDictionary<string, SemaphoreSlim> ServerLocks = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public async Task<McpServerStatus> StartAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
+        => await ExecuteWithServerLockAsync(workspaceRoot, serverId, ct => StartCoreAsync(workspaceRoot, serverId, ct), cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<McpServerStatus> StopAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
+        => await ExecuteWithServerLockAsync(workspaceRoot, serverId, ct => StopCoreAsync(workspaceRoot, serverId, ct), cancellationToken).ConfigureAwait(false);
+
+    /// <inheritdoc />
+    public async Task<McpServerStatus> RestartAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
+        => await ExecuteWithServerLockAsync(
+            workspaceRoot,
+            serverId,
+            async ct =>
+            {
+                await StopCoreAsync(workspaceRoot, serverId, ct).ConfigureAwait(false);
+                return await StartCoreAsync(workspaceRoot, serverId, ct).ConfigureAwait(false);
+            },
+            cancellationToken).ConfigureAwait(false);
+
+    private async Task<McpServerStatus> StartCoreAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
     {
         var server = await GetRequiredServerAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false);
+        if (server.Status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting or McpLifecycleState.Ready or McpLifecycleState.Degraded)
+        {
+            logger.LogInformation(
+                "MCP server {ServerId} is already active with state {State}; skipping duplicate start.",
+                serverId,
+                server.Status.State);
+            return server.Status;
+        }
+
         var startingStatus = new McpServerStatus(
             ServerId: serverId,
             State: McpLifecycleState.Starting,
@@ -81,10 +111,14 @@ public sealed class ProcessMcpServerHost(
         return finalStatus;
     }
 
-    /// <inheritdoc />
-    public async Task<McpServerStatus> StopAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
+    private async Task<McpServerStatus> StopCoreAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
     {
         var server = await GetRequiredServerAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false);
+        if (server.Status.State is McpLifecycleState.Stopped or McpLifecycleState.Disabled)
+        {
+            return server.Status;
+        }
+
         try
         {
             await processSupervisor
@@ -129,13 +163,6 @@ public sealed class ProcessMcpServerHost(
     }
 
     /// <inheritdoc />
-    public async Task<McpServerStatus> RestartAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
-    {
-        await StopAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false);
-        return await StartAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false);
-    }
-
-    /// <inheritdoc />
     public async Task<McpServerStatus?> GetStatusAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
         => (await registry.GetAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false))?.Status;
 
@@ -175,6 +202,34 @@ public sealed class ProcessMcpServerHost(
                     new RuntimeEventPublishOptions(workspaceRoot, SessionId: "system", PersistToSessionStore: false),
                     cancellationToken)
                 .ConfigureAwait(false);
+        }
+    }
+
+    private static string CreateServerLockKey(string workspaceRoot, string serverId)
+        => $"{workspaceRoot}\u0000{serverId}";
+
+    private static SemaphoreSlim GetServerLock(string workspaceRoot, string serverId)
+        => ServerLocks.GetOrAdd(CreateServerLockKey(workspaceRoot, serverId), static _ => new SemaphoreSlim(1, 1));
+
+    private static async Task<T> ExecuteWithServerLockAsync<T>(
+        string workspaceRoot,
+        string serverId,
+        Func<CancellationToken, Task<T>> action,
+        CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);
+        ArgumentException.ThrowIfNullOrWhiteSpace(serverId);
+        ArgumentNullException.ThrowIfNull(action);
+
+        var gate = GetServerLock(workspaceRoot, serverId);
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            return await action(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            gate.Release();
         }
     }
 }

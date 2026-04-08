@@ -15,7 +15,7 @@ public sealed class WorkspacePathResolver(IPathService pathService)
 
     /// <summary>Absolute, normalized workspace root from the tool context.</summary>
     public string ResolveWorkspaceRoot(ToolExecutionContext context)
-        => pathService.GetFullPath(context.WorkspaceRoot);
+        => pathService.GetCanonicalFullPath(context.WorkspaceRoot);
 
     /// <summary>
     /// Resolves a user-relative or absolute path to a full path under (or equal to) the workspace root.
@@ -26,8 +26,8 @@ public sealed class WorkspacePathResolver(IPathService pathService)
 
         var workspaceRoot = ResolveWorkspaceRoot(context);
         var fullPath = Path.IsPathRooted(path)
-            ? pathService.GetFullPath(path)
-            : pathService.GetFullPath(pathService.Combine(workspaceRoot, path));
+            ? pathService.GetCanonicalFullPath(path)
+            : pathService.GetCanonicalFullPath(pathService.Combine(workspaceRoot, path));
 
         EnsureWithinWorkspace(workspaceRoot, fullPath);
         return fullPath;

@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.MockProvider;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Runtime;
@@ -101,6 +102,7 @@ public sealed class PortableSessionBundleRoundtripTests
     {
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
         configure?.Invoke(services);
         return services.BuildServiceProvider();
     }

@@ -60,11 +60,15 @@ public sealed class ProviderBackedAgentKernel(
 
             if (!authStatus.IsAuthenticated)
             {
-                logger.LogInformation(
-                    "Provider {ProviderName} is not authenticated for session {SessionId}; returning placeholder response.",
+                logger.LogWarning(
+                    "Provider {ProviderName} is not authenticated for session {SessionId}.",
                     providerRequest.ProviderName,
                     request.Context.SessionId);
-                return CreatePlaceholderResult(request, providerRequest.Model, $"Provider '{providerRequest.ProviderName}' is not authenticated; using placeholder response.");
+                throw new ProviderExecutionException(
+                    providerRequest.ProviderName,
+                    providerRequest.Model,
+                    ProviderFailureKind.AuthenticationUnavailable,
+                    $"Provider '{providerRequest.ProviderName}' is not authenticated.");
             }
 
             IModelProvider provider;

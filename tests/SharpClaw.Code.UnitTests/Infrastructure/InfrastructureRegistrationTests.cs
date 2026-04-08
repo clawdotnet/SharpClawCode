@@ -45,4 +45,39 @@ public sealed class InfrastructureRegistrationTests
         combined.Should().EndWith("/tmp/sharpclaw/sessions");
         normalized.Should().NotBeNullOrWhiteSpace();
     }
+
+    /// <summary>
+    /// Ensures canonical path resolution follows existing symlinks/junctions.
+    /// </summary>
+    [Fact]
+    public void Path_service_should_canonicalize_symlinked_paths()
+    {
+        var services = new ServiceCollection();
+        services.AddSharpClawInfrastructure();
+        using var serviceProvider = services.BuildServiceProvider();
+        var pathService = serviceProvider.GetRequiredService<IPathService>();
+        var workspace = Path.Combine(Path.GetTempPath(), "sharpclaw-path-tests", Guid.NewGuid().ToString("N"));
+        var outside = Path.Combine(Path.GetTempPath(), "sharpclaw-path-targets", Guid.NewGuid().ToString("N"));
+        var link = Path.Combine(workspace, "linked");
+        Directory.CreateDirectory(workspace);
+        Directory.CreateDirectory(outside);
+
+        try
+        {
+            Directory.CreateSymbolicLink(link, outside);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var canonical = pathService.GetCanonicalFullPath(Path.Combine(link, "file.txt"));
+        var expected = pathService.Combine(pathService.GetCanonicalFullPath(outside), "file.txt");
+
+        canonical.Should().Be(expected);
+    }
 }

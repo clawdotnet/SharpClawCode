@@ -48,26 +48,38 @@ public sealed class AcpStdioHost(
             catch (JsonException ex)
             {
                 logger.LogWarning(ex, "ACP received non-JSON line.");
+                await WriteErrorAsync(stdout, null, -32700, "Parse error.").ConfigureAwait(false);
+                await stdout.FlushAsync(cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
-            if (root is null)
+            if (root is not JsonObject requestObject)
             {
+                await WriteErrorAsync(stdout, null, -32600, "Invalid request.").ConfigureAwait(false);
+                await stdout.FlushAsync(cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
-            var method = root["method"]?.GetValue<string>();
-            var id = root["id"];
-
-            if (method is null || id is null)
+            var id = requestObject["id"];
+            var method = requestObject["method"]?.GetValue<string>();
+            if (!string.Equals(requestObject["jsonrpc"]?.GetValue<string>(), "2.0", StringComparison.Ordinal)
+                || string.IsNullOrWhiteSpace(method)
+                || id is null)
             {
+                await WriteErrorAsync(stdout, id, -32600, "Invalid request.").ConfigureAwait(false);
+                await stdout.FlushAsync(cancellationToken).ConfigureAwait(false);
                 continue;
             }
 
             try
             {
-                var response = await DispatchAsync(method, root["params"], stdout, cancellationToken).ConfigureAwait(false);
+                var response = await DispatchAsync(method, requestObject["params"], stdout, cancellationToken).ConfigureAwait(false);
                 await WriteResponseAsync(stdout, id, response).ConfigureAwait(false);
+            }
+            catch (AcpJsonRpcException ex)
+            {
+                logger.LogWarning(ex, "ACP request failed for method {Method} with JSON-RPC error {Code}.", method, ex.Code);
+                await WriteErrorAsync(stdout, id, ex.Code, ex.Message).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
@@ -90,7 +102,7 @@ public sealed class AcpStdioHost(
             "session/new" => await HandleSessionNewAsync(parameters, cancellationToken).ConfigureAwait(false),
             "session/load" => await HandleSessionLoadAsync(parameters, cancellationToken).ConfigureAwait(false),
             "session/prompt" => await HandleSessionPromptAsync(parameters, stdout, cancellationToken).ConfigureAwait(false),
-            _ => throw new InvalidOperationException($"Unsupported ACP method '{method}'.")
+            _ => throw new AcpJsonRpcException(-32601, $"Method '{method}' was not found.")
         };
 
     private static JsonObject BuildInitializeResult()
@@ -243,12 +255,12 @@ public sealed class AcpStdioHost(
         await stdout.WriteLineAsync(response.ToJsonString()).ConfigureAwait(false);
     }
 
-    private static async Task WriteErrorAsync(TextWriter stdout, JsonNode id, int code, string message)
+    private static async Task WriteErrorAsync(TextWriter stdout, JsonNode? id, int code, string message)
     {
         var response = new JsonObject
         {
             ["jsonrpc"] = "2.0",
-            ["id"] = id.DeepClone(),
+            ["id"] = id?.DeepClone(),
             ["error"] = new JsonObject
             {
                 ["code"] = code,
@@ -256,5 +268,10 @@ public sealed class AcpStdioHost(
             },
         };
         await stdout.WriteLineAsync(response.ToJsonString()).ConfigureAwait(false);
+    }
+
+    private sealed class AcpJsonRpcException(int code, string message) : Exception(message)
+    {
+        public int Code { get; } = code;
     }
 }

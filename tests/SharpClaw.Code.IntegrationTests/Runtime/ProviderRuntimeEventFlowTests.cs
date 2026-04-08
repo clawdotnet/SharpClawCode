@@ -129,6 +129,39 @@ public sealed class ProviderRuntimeEventFlowTests
         latestSession!.State.Should().Be(SessionLifecycleState.Failed);
     }
 
+    /// <summary>
+    /// Ensures unauthenticated providers fail explicitly instead of returning placeholder content.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_fail_when_provider_is_not_authenticated()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        using var serviceProvider = CreateRuntimeServices(services =>
+        {
+            services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+            services.AddSingleton<IAuthFlowService, UnauthenticatedAuthFlowService>();
+            services.AddSingleton<IModelProviderResolver, StubModelProviderResolver>();
+        });
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var act = async () => await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "provider auth failure",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = "stub-provider",
+                    ["model"] = "stub-model"
+                }),
+            CancellationToken.None);
+
+        var exception = await act.Should().ThrowAsync<ProviderExecutionException>();
+        exception.Which.Kind.Should().Be(ProviderFailureKind.AuthenticationUnavailable);
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-provider-tests", Guid.NewGuid().ToString("N"));
@@ -159,6 +192,12 @@ public sealed class ProviderRuntimeEventFlowTests
     {
         public Task<AuthStatus> GetStatusAsync(string providerName, CancellationToken cancellationToken)
             => throw new InvalidOperationException($"Provider '{providerName}' is not registered.");
+    }
+
+    private sealed class UnauthenticatedAuthFlowService : IAuthFlowService
+    {
+        public Task<AuthStatus> GetStatusAsync(string providerName, CancellationToken cancellationToken)
+            => Task.FromResult(new AuthStatus("stub-subject", false, providerName, null, null, ["api"]));
     }
 
     private sealed class StubModelProviderResolver : IModelProviderResolver

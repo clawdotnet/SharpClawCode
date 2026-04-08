@@ -183,7 +183,8 @@ public sealed class ToolExecutor(
         => new(
             context.WorkspaceRoot,
             context.SessionId,
-            PersistToSessionStore: !string.IsNullOrWhiteSpace(context.SessionId));
+            PersistToSessionStore: !string.IsNullOrWhiteSpace(context.SessionId),
+            ThrowIfPersistenceFails: !string.IsNullOrWhiteSpace(context.SessionId));
 
     private async ValueTask PublishAsync(
         RuntimeEvent runtimeEvent,
