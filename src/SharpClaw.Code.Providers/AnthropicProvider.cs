@@ -33,7 +33,7 @@ public sealed class AnthropicProvider(
     public async Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken cancellationToken)
     {
         var client = CreateClient();
-        var modelId = string.IsNullOrWhiteSpace(request.Model) ? _options.DefaultModel : request.Model;
+        var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(request.Model, _options.DefaultModel);
 
         var systemPrompt = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt;
         float? temperature = request.Temperature.HasValue ? (float)request.Temperature.Value : null;

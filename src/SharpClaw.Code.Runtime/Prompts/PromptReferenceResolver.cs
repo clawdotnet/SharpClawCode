@@ -39,8 +39,8 @@ public sealed partial class PromptReferenceResolver(
             return new PromptReferenceResolution(original, original, []);
         }
 
-        var workspaceFull = pathService.GetFullPath(workspaceRoot);
-        var workDirFull = pathService.GetFullPath(workingDirectory);
+        var workspaceFull = pathService.GetCanonicalFullPath(workspaceRoot);
+        var workDirFull = pathService.GetCanonicalFullPath(workingDirectory);
         var refs = new List<PromptReference>();
         var expanded = new StringBuilder(original);
 
@@ -54,8 +54,8 @@ public sealed partial class PromptReferenceResolver(
             }
 
             var resolvedFull = Path.IsPathRooted(pathPart)
-                ? pathService.GetFullPath(pathPart)
-                : pathService.GetFullPath(pathService.Combine(workDirFull, pathPart));
+                ? pathService.GetCanonicalFullPath(pathPart)
+                : pathService.GetCanonicalFullPath(pathService.Combine(workDirFull, pathPart));
 
             var outside = !IsWithinWorkspace(workspaceFull, resolvedFull);
             if (outside)

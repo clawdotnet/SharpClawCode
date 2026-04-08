@@ -41,7 +41,7 @@ public sealed class OpenAiCompatibleProvider(
         ProviderRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var modelId = string.IsNullOrWhiteSpace(request.Model) ? _options.DefaultModel : request.Model;
+        var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(request.Model, _options.DefaultModel);
         var openAiOptions = new OpenAIClientOptions();
         var normalized = Internal.ProviderHttpHelpers.NormalizeBaseUrl(_options.BaseUrl);
         if (normalized is not null)

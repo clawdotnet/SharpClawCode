@@ -1,4 +1,5 @@
 using FluentAssertions;
+using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Permissions.Abstractions;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Permissions.Rules;
@@ -262,7 +263,7 @@ public sealed class PermissionPolicyEngineTests
     private static IPermissionPolicyEngine CreateEngine(IApprovalService approvalService)
         => new PermissionPolicyEngine(
             [
-                new WorkspaceBoundaryRule(),
+                new WorkspaceBoundaryRule(new PathService()),
                 new PrimaryModeMutationRule(),
                 new AllowedToolRule(),
                 new DangerousShellPatternRule(),

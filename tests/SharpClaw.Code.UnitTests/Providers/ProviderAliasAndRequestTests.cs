@@ -48,4 +48,36 @@ public sealed class ProviderAliasAndRequestTests
         resolved.Model.Should().Be("claude-3-7-sonnet-latest");
     }
 
+    /// <summary>
+    /// Ensures the runtime default-model sentinel resolves to the configured provider default model even without an alias entry.
+    /// </summary>
+    [Fact]
+    public void Preflight_should_resolve_default_model_sentinel_to_provider_default_model()
+    {
+        var catalogOptions = Options.Create(new ProviderCatalogOptions
+        {
+            DefaultProvider = "openai-compatible",
+        });
+        var anthropic = Options.Create(new AnthropicProviderOptions { DefaultModel = "claude-default" });
+        var openAi = Options.Create(new OpenAiCompatibleProviderOptions { DefaultModel = "gpt-default" });
+
+        var preflight = new ProviderRequestPreflight(catalogOptions, anthropic, openAi);
+        var request = new ProviderRequest(
+            Id: "req-002",
+            SessionId: "session-001",
+            TurnId: "turn-001",
+            ProviderName: string.Empty,
+            Model: "default",
+            Prompt: "Explain the repo layout.",
+            SystemPrompt: "Be concise.",
+            OutputFormat: OutputFormat.Text,
+            Temperature: 0.2m,
+            Metadata: null);
+
+        var resolved = preflight.Prepare(request);
+
+        resolved.ProviderName.Should().Be("openai-compatible");
+        resolved.Model.Should().Be("gpt-default");
+    }
+
 }

@@ -1,11 +1,12 @@
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace SharpClaw.Code.Runtime.CustomCommands;
 
 /// <summary>
 /// Substitutes <c>$ARGUMENTS</c> and <c>$1..$n</c> placeholders in a command template.
 /// </summary>
-public static class CustomCommandTemplateExpander
+public static partial class CustomCommandTemplateExpander
 {
     /// <summary>
     /// Expands template placeholders using whitespace-separated arguments (quotes supported).
@@ -14,13 +15,20 @@ public static class CustomCommandTemplateExpander
     {
         ArgumentNullException.ThrowIfNull(template);
         var parts = SplitArguments(argumentsLine);
-        var result = template.Replace("$ARGUMENTS", argumentsLine, StringComparison.Ordinal);
-        for (var i = 0; i < parts.Length; i++)
-        {
-            result = result.Replace($"${i + 1}", parts[i], StringComparison.Ordinal);
-        }
+        return PlaceholderRegex().Replace(
+            template,
+            match =>
+            {
+                var token = match.Groups[1].Value;
+                if (string.Equals(token, "ARGUMENTS", StringComparison.Ordinal))
+                {
+                    return argumentsLine;
+                }
 
-        return result;
+                return int.TryParse(token, out var index) && index > 0 && index <= parts.Length
+                    ? parts[index - 1]
+                    : match.Value;
+            });
     }
 
     private static string[] SplitArguments(string line)
@@ -63,4 +71,7 @@ public static class CustomCommandTemplateExpander
 
         return results.ToArray();
     }
+
+    [GeneratedRegex(@"\$(ARGUMENTS|[1-9][0-9]*)", RegexOptions.CultureInvariant)]
+    private static partial Regex PlaceholderRegex();
 }

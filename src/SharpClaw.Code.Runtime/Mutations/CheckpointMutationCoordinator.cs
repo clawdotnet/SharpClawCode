@@ -71,6 +71,7 @@ public sealed class CheckpointMutationCoordinator(
             Operations: operations.ToArray());
 
         await mutationSetStore.SaveAsync(workspacePath, doc, cancellationToken).ConfigureAwait(false);
+        await sessionStore.SaveAsync(workspacePath, updatedSession, cancellationToken).ConfigureAwait(false);
 
         await eventPublisher.PublishAsync(
             new MutationSetRecordedEvent(
@@ -81,7 +82,11 @@ public sealed class CheckpointMutationCoordinator(
                 MutationSetId: checkpointId,
                 CheckpointId: checkpointId,
                 OperationCount: operations.Count),
-            new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+            new RuntimeEventPublishOptions(
+                workspacePath,
+                session.Id,
+                PersistToSessionStore: true,
+                ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
         logger.LogInformation(
@@ -99,8 +104,14 @@ public sealed class CheckpointMutationCoordinator(
     public async Task<UndoRedoActionResult> TryUndoAsync(
         string workspacePath,
         string sessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Func<CancellationToken, Task<UndoRedoActionResult>>, Task<UndoRedoActionResult>>? executeWithinSessionLock = null)
     {
+        if (executeWithinSessionLock is not null)
+        {
+            return await executeWithinSessionLock(ct => TryUndoAsync(workspacePath, sessionId, ct, null)).ConfigureAwait(false);
+        }
+
         var session = await sessionStore.GetByIdAsync(workspacePath, sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null)
         {
@@ -140,7 +151,11 @@ public sealed class CheckpointMutationCoordinator(
 
         await eventPublisher.PublishAsync(
             new UndoRequestedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),
-            new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+            new RuntimeEventPublishOptions(
+                workspacePath,
+                session.Id,
+                PersistToSessionStore: true,
+                ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
         var appliedInverseCount = 0;
@@ -170,7 +185,11 @@ public sealed class CheckpointMutationCoordinator(
 
             await eventPublisher.PublishAsync(
                 new UndoFailedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, ex.Message),
-                new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+                new RuntimeEventPublishOptions(
+                    workspacePath,
+                    session.Id,
+                    PersistToSessionStore: true,
+                    ThrowIfPersistenceFails: true),
                 cancellationToken).ConfigureAwait(false);
             return new UndoRedoActionResult(false, "undo", mutationId, ex.Message, state.AppliedPrefixLength, state.RedoStack.Count);
         }
@@ -192,7 +211,11 @@ public sealed class CheckpointMutationCoordinator(
 
         await eventPublisher.PublishAsync(
             new UndoCompletedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),
-            new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+            new RuntimeEventPublishOptions(
+                workspacePath,
+                session.Id,
+                PersistToSessionStore: true,
+                ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
         return new UndoRedoActionResult(
@@ -210,8 +233,14 @@ public sealed class CheckpointMutationCoordinator(
     public async Task<UndoRedoActionResult> TryRedoAsync(
         string workspacePath,
         string sessionId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        Func<Func<CancellationToken, Task<UndoRedoActionResult>>, Task<UndoRedoActionResult>>? executeWithinSessionLock = null)
     {
+        if (executeWithinSessionLock is not null)
+        {
+            return await executeWithinSessionLock(ct => TryRedoAsync(workspacePath, sessionId, ct, null)).ConfigureAwait(false);
+        }
+
         var session = await sessionStore.GetByIdAsync(workspacePath, sessionId, cancellationToken).ConfigureAwait(false);
         if (session is null)
         {
@@ -257,7 +286,11 @@ public sealed class CheckpointMutationCoordinator(
 
         await eventPublisher.PublishAsync(
             new RedoRequestedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),
-            new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+            new RuntimeEventPublishOptions(
+                workspacePath,
+                session.Id,
+                PersistToSessionStore: true,
+                ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
         var appliedForwardCount = 0;
@@ -285,7 +318,11 @@ public sealed class CheckpointMutationCoordinator(
 
             await eventPublisher.PublishAsync(
                 new RedoFailedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, ex.Message),
-                new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+                new RuntimeEventPublishOptions(
+                    workspacePath,
+                    session.Id,
+                    PersistToSessionStore: true,
+                    ThrowIfPersistenceFails: true),
                 cancellationToken).ConfigureAwait(false);
             return new UndoRedoActionResult(false, "redo", mutationId, ex.Message, state.AppliedPrefixLength, state.RedoStack.Count);
         }
@@ -307,7 +344,11 @@ public sealed class CheckpointMutationCoordinator(
 
         await eventPublisher.PublishAsync(
             new RedoCompletedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),
-            new RuntimeEventPublishOptions(workspacePath, session.Id, PersistToSessionStore: true),
+            new RuntimeEventPublishOptions(
+                workspacePath,
+                session.Id,
+                PersistToSessionStore: true,
+                ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
         return new UndoRedoActionResult(

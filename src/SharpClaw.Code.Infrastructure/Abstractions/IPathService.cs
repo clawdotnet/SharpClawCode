@@ -20,6 +20,14 @@ public interface IPathService
     string GetFullPath(string path);
 
     /// <summary>
+    /// Gets the canonical full path with any existing symlinks or junctions resolved.
+    /// Non-existent trailing segments are preserved under the canonicalized existing ancestor.
+    /// </summary>
+    /// <param name="path">The path to canonicalize.</param>
+    /// <returns>The canonical full path.</returns>
+    string GetCanonicalFullPath(string path);
+
+    /// <summary>
     /// Gets the current working directory.
     /// </summary>
     /// <returns>The current working directory.</returns>

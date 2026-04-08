@@ -28,45 +28,61 @@ public sealed class FileBackedMcpRegistry(
         ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);
         ArgumentNullException.ThrowIfNull(definition);
 
-        var document = await LoadAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        document.Definitions[definition.Id] = definition;
-        if (!document.Statuses.TryGetValue(definition.Id, out var status))
-        {
-            status = CreateInitialStatus(definition.Id, definition.EnabledByDefault);
-        }
+        return await ExecuteLockedAsync(
+            workspaceRoot,
+            async ct =>
+            {
+                var document = await LoadAsync(workspaceRoot, ct).ConfigureAwait(false);
+                document.Definitions[definition.Id] = definition;
+                if (!document.Statuses.TryGetValue(definition.Id, out var status))
+                {
+                    status = CreateInitialStatus(definition.Id, definition.EnabledByDefault);
+                }
 
-        document.Statuses[definition.Id] = status with { UpdatedAtUtc = systemClock.UtcNow };
-        await SaveAsync(workspaceRoot, document, cancellationToken).ConfigureAwait(false);
-        return new RegisteredMcpServer(definition, document.Statuses[definition.Id]);
+                document.Statuses[definition.Id] = status with { UpdatedAtUtc = systemClock.UtcNow };
+                await SaveAsync(workspaceRoot, document, ct).ConfigureAwait(false);
+                return new RegisteredMcpServer(definition, document.Statuses[definition.Id]);
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<IReadOnlyList<RegisteredMcpServer>> ListAsync(string workspaceRoot, CancellationToken cancellationToken)
-    {
-        var document = await LoadAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        return document.Definitions.Values
-            .OrderBy(definition => definition.Id, StringComparer.OrdinalIgnoreCase)
-            .Select(definition => new RegisteredMcpServer(
-                definition,
-                document.Statuses.TryGetValue(definition.Id, out var status)
-                    ? status
-                    : CreateInitialStatus(definition.Id, definition.EnabledByDefault)))
-            .ToArray();
-    }
+        => await ExecuteLockedAsync(
+            workspaceRoot,
+            async ct =>
+            {
+                var document = await LoadAsync(workspaceRoot, ct).ConfigureAwait(false);
+                return (IReadOnlyList<RegisteredMcpServer>)document.Definitions.Values
+                    .OrderBy(definition => definition.Id, StringComparer.OrdinalIgnoreCase)
+                    .Select(definition => new RegisteredMcpServer(
+                        definition,
+                        document.Statuses.TryGetValue(definition.Id, out var status)
+                            ? status
+                            : CreateInitialStatus(definition.Id, definition.EnabledByDefault)))
+                    .ToArray();
+            },
+            cancellationToken).ConfigureAwait(false);
 
     /// <inheritdoc />
     public async Task<RegisteredMcpServer?> GetAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(serverId);
 
-        var document = await LoadAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        return document.Definitions.TryGetValue(serverId, out var definition)
-            ? new RegisteredMcpServer(
-                definition,
-                document.Statuses.TryGetValue(serverId, out var status)
-                    ? status
-                    : CreateInitialStatus(serverId, definition.EnabledByDefault))
-            : null;
+        return await ExecuteLockedAsync(
+            workspaceRoot,
+            async ct =>
+            {
+                var document = await LoadAsync(workspaceRoot, ct).ConfigureAwait(false);
+                return document.Definitions.TryGetValue(serverId, out var definition)
+                    ? new RegisteredMcpServer(
+                        definition,
+                        document.Statuses.TryGetValue(serverId, out var status)
+                            ? status
+                            : CreateInitialStatus(serverId, definition.EnabledByDefault))
+                    : null;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -74,14 +90,21 @@ public sealed class FileBackedMcpRegistry(
     {
         ArgumentNullException.ThrowIfNull(status);
 
-        var document = await LoadAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        if (!document.Definitions.ContainsKey(status.ServerId))
-        {
-            throw new InvalidOperationException($"MCP server '{status.ServerId}' is not registered.");
-        }
+        await ExecuteLockedAsync(
+            workspaceRoot,
+            async ct =>
+            {
+                var document = await LoadAsync(workspaceRoot, ct).ConfigureAwait(false);
+                if (!document.Definitions.ContainsKey(status.ServerId))
+                {
+                    throw new InvalidOperationException($"MCP server '{status.ServerId}' is not registered.");
+                }
 
-        document.Statuses[status.ServerId] = status;
-        await SaveAsync(workspaceRoot, document, cancellationToken).ConfigureAwait(false);
+                document.Statuses[status.ServerId] = status;
+                await SaveAsync(workspaceRoot, document, ct).ConfigureAwait(false);
+                return 0;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<McpRegistryDocument> LoadAsync(string workspaceRoot, CancellationToken cancellationToken)
@@ -117,6 +140,9 @@ public sealed class FileBackedMcpRegistry(
     private string GetRegistryPath(string workspaceRoot)
         => pathService.Combine(GetRegistryDirectory(workspaceRoot), RegistryFileName);
 
+    private string GetRegistryLockPath(string workspaceRoot)
+        => pathService.Combine(GetRegistryDirectory(workspaceRoot), "servers.lock");
+
     private McpServerStatus CreateInitialStatus(string serverId, bool enabledByDefault)
         => new(
             ServerId: serverId,
@@ -125,6 +151,17 @@ public sealed class FileBackedMcpRegistry(
             StatusMessage: enabledByDefault ? "Registered and ready to start." : "Registered but disabled.",
             ToolCount: 0,
             IsHealthy: false);
+
+    private async Task<T> ExecuteLockedAsync<T>(string workspaceRoot, Func<CancellationToken, Task<T>> operation, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(workspaceRoot);
+        ArgumentNullException.ThrowIfNull(operation);
+
+        await using var fileLock = await fileSystem
+            .AcquireExclusiveFileLockAsync(GetRegistryLockPath(workspaceRoot), cancellationToken)
+            .ConfigureAwait(false);
+        return await operation(cancellationToken).ConfigureAwait(false);
+    }
 
     private sealed record McpRegistryDocument(
         Dictionary<string, McpServerDefinition> Definitions,

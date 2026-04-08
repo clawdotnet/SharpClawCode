@@ -46,7 +46,7 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
     private static CommandResult CreateResult(OutputFormat outputFormat)
     {
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
-        var payload = JsonSerializer.Serialize(new { version });
+        var payload = JsonSerializer.Serialize(new VersionPayload(version));
 
         return new CommandResult(
             Succeeded: true,
@@ -55,4 +55,6 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
             Message: $"SharpClaw Code version {version}",
             DataJson: payload);
     }
+
+    private sealed record VersionPayload(string Version);
 }

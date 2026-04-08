@@ -3,8 +3,8 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Infrastructure;
 using SharpClaw.Code.Infrastructure.Abstractions;
-using SharpClaw.Code.Infrastructure.Models;
 using SharpClaw.Code.Infrastructure.Services;
+using SharpClaw.Code.Infrastructure.Models;
 using SharpClaw.Code.Plugins.Abstractions;
 using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Permissions;
@@ -146,6 +146,45 @@ public sealed class ToolRegistryAndExecutionTests
     }
 
     /// <summary>
+    /// Ensures symlinked paths that resolve outside the workspace are denied.
+    /// </summary>
+    [Fact]
+    public async Task ToolExecutor_should_reject_symlink_escape_within_workspace()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var outsideRoot = Path.Combine(Path.GetTempPath(), "sharpclaw-tool-tests-outside", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(outsideRoot);
+        var linkPath = Path.Combine(workspacePath, "linked");
+
+        try
+        {
+            Directory.CreateSymbolicLink(linkPath, outsideRoot);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return;
+        }
+        catch (PlatformNotSupportedException)
+        {
+            return;
+        }
+
+        var registry = CreateRegistryWithStubShell();
+        var executor = CreateExecutor(registry);
+        var context = CreateContext(workspacePath, PermissionMode.DangerFullAccess);
+
+        var result = await executor.ExecuteAsync(
+            WriteFileTool.ToolName,
+            JsonSerializer.Serialize(new WriteFileToolArguments("linked/escape.txt", "nope")),
+            context,
+            CancellationToken.None);
+
+        result.Result.Succeeded.Should().BeFalse();
+        result.Result.ErrorMessage.Should().Contain("workspace");
+        File.Exists(Path.Combine(outsideRoot, "escape.txt")).Should().BeFalse();
+    }
+
+    /// <summary>
     /// Ensures the permission layer blocks destructive tools in read-only mode.
     /// </summary>
     [Fact]
@@ -187,7 +226,8 @@ public sealed class ToolRegistryAndExecutionTests
 
         shellExecutor.Commands.Should().ContainSingle();
         shellExecutor.Commands[0].Command.Should().Be("echo hello");
-        shellExecutor.Commands[0].WorkingDirectory.Should().Be(workspacePath);
+        var pathService = new PathService();
+        shellExecutor.Commands[0].WorkingDirectory.Should().Be(pathService.GetCanonicalFullPath(workspacePath));
         result.Result.Succeeded.Should().BeTrue();
         result.Result.Output.Should().Contain("hello");
     }
@@ -270,7 +310,7 @@ public sealed class ToolRegistryAndExecutionTests
             registry,
             new PermissionPolicyEngine(
                 [
-                    new WorkspaceBoundaryRule(),
+                    new WorkspaceBoundaryRule(new PathService()),
                     new PrimaryModeMutationRule(),
                     new AllowedToolRule(),
                     new DangerousShellPatternRule(),

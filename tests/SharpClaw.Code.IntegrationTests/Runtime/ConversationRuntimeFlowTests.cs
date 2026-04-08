@@ -101,7 +101,7 @@ public sealed class ConversationRuntimeFlowTests
     public async Task RunPrompt_cancellation_should_persist_failed_session_state()
     {
         var workspacePath = CreateTemporaryWorkspace();
-        using var serviceProvider = CreateServiceProvider(services => services.AddDeterministicMockModelProvider());
+        using var serviceProvider = CreateServiceProvider();
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
 
         var request = new RunPromptRequest(
@@ -134,7 +134,7 @@ public sealed class ConversationRuntimeFlowTests
     public async Task RunPrompt_after_failed_turn_should_recover_and_complete_next_turn()
     {
         var workspacePath = CreateTemporaryWorkspace();
-        using var serviceProvider = CreateServiceProvider(services => services.AddDeterministicMockModelProvider());
+        using var serviceProvider = CreateServiceProvider();
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
 
         var cancelRequest = new RunPromptRequest(
@@ -174,6 +174,7 @@ public sealed class ConversationRuntimeFlowTests
     {
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
         configure?.Invoke(services);
         return services.BuildServiceProvider();
     }
