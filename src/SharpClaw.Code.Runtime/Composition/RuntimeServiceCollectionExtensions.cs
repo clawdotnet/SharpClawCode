@@ -22,6 +22,7 @@ using SharpClaw.Code.Runtime.Lifecycle;
 using SharpClaw.Code.Runtime.Mutations;
 using SharpClaw.Code.Runtime.Prompts;
 using SharpClaw.Code.Runtime.Sessions;
+using SharpClaw.Code.Runtime.Specs;
 using SharpClaw.Code.Runtime.Turns;
 using SharpClaw.Code.Sessions.Abstractions;
 using SharpClaw.Code.Sessions.Storage;
@@ -86,6 +87,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<ICustomCommandMarkdownParser, CustomCommandMarkdownParser>();
         services.AddSingleton<ICustomCommandDiscoveryService, CustomCommandDiscoveryService>();
         services.AddSingleton<IPromptReferenceResolver, PromptReferenceResolver>();
+        services.AddSingleton<ISpecWorkflowService, SpecWorkflowService>();
         services.AddSingleton<ISessionExportService, SessionExportService>();
         services.AddSingleton<IPromptContextAssembler, PromptContextAssembler>();
         services.AddSingleton<ITurnRunner, DefaultTurnRunner>();

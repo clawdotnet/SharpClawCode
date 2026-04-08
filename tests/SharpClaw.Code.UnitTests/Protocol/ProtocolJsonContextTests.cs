@@ -69,4 +69,55 @@ public sealed class ProtocolJsonContextTests
         deserialized.Should().BeOfType<ToolCompletedEvent>();
         json.Should().Contain("\"$eventType\":\"toolCompleted\"");
     }
+
+    /// <summary>
+    /// Ensures spec artifact metadata serializes through the shared protocol context.
+    /// </summary>
+    [Fact]
+    public void Turn_execution_result_should_serialize_spec_artifacts()
+    {
+        var result = new TurnExecutionResult(
+            Session: new ConversationSession(
+                Id: "session-001",
+                Title: "Spec session",
+                State: SessionLifecycleState.Active,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Json,
+                WorkingDirectory: "/workspace",
+                RepositoryRoot: "/workspace",
+                CreatedAtUtc: DateTimeOffset.Parse("2026-04-08T00:00:00Z"),
+                UpdatedAtUtc: DateTimeOffset.Parse("2026-04-08T00:05:00Z"),
+                ActiveTurnId: null,
+                LastCheckpointId: null,
+                Metadata: []),
+            Turn: new ConversationTurn(
+                Id: "turn-001",
+                SessionId: "session-001",
+                SequenceNumber: 1,
+                Input: "spec this",
+                Output: "Spec generated",
+                StartedAtUtc: DateTimeOffset.Parse("2026-04-08T00:00:00Z"),
+                CompletedAtUtc: DateTimeOffset.Parse("2026-04-08T00:05:00Z"),
+                AgentId: "primary-coding-agent",
+                SlashCommandName: null,
+                Usage: null,
+                Metadata: []),
+            FinalOutput: "Spec generated",
+            ToolResults: [],
+            Usage: null,
+            Checkpoint: null,
+            Events: [],
+            SpecArtifacts: new SpecArtifactSet(
+                Slug: "my-spec",
+                RootPath: "/workspace/docs/superpowers/specs/2026-04-08-my-spec",
+                RequirementsPath: "/workspace/docs/superpowers/specs/2026-04-08-my-spec/requirements.md",
+                DesignPath: "/workspace/docs/superpowers/specs/2026-04-08-my-spec/design.md",
+                TasksPath: "/workspace/docs/superpowers/specs/2026-04-08-my-spec/tasks.md",
+                GeneratedAtUtc: DateTimeOffset.Parse("2026-04-08T00:05:00Z")));
+
+        var json = JsonSerializer.Serialize(result, ProtocolJsonContext.Default.TurnExecutionResult);
+
+        json.Should().Contain("\"specArtifacts\":");
+        json.Should().Contain("\"slug\":\"my-spec\"");
+    }
 }

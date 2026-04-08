@@ -112,4 +112,13 @@ namespace SharpClaw.Code.Protocol.Serialization;
 [JsonSerializable(typeof(RedoCompletedEvent))]
 [JsonSerializable(typeof(RedoFailedEvent))]
 [JsonSerializable(typeof(List<string>))]
+[JsonSerializable(typeof(SpecRequirementItem))]
+[JsonSerializable(typeof(List<SpecRequirementItem>))]
+[JsonSerializable(typeof(SpecRequirementsDocument))]
+[JsonSerializable(typeof(SpecDesignDocument))]
+[JsonSerializable(typeof(SpecTaskItem))]
+[JsonSerializable(typeof(List<SpecTaskItem>))]
+[JsonSerializable(typeof(SpecTasksDocument))]
+[JsonSerializable(typeof(SpecGenerationPayload))]
+[JsonSerializable(typeof(SpecArtifactSet))]
 public sealed partial class ProtocolJsonContext : JsonSerializerContext;

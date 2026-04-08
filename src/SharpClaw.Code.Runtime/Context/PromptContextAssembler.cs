@@ -18,7 +18,8 @@ public sealed class PromptContextAssembler(
     ISessionSummaryService sessionSummaryService,
     ISkillRegistry skillRegistry,
     IGitWorkspaceService gitWorkspaceService,
-    IPromptReferenceResolver promptReferenceResolver) : IPromptContextAssembler
+    IPromptReferenceResolver promptReferenceResolver,
+    ISpecWorkflowService specWorkflowService) : IPromptContextAssembler
 {
     /// <inheritdoc />
     public async Task<PromptExecutionContext> AssembleAsync(
@@ -110,6 +111,11 @@ public sealed class PromptContextAssembler(
         }
 
         sections.Add(gitSnapshot.RenderForPrompt());
+        if (effectivePrimary == Protocol.Enums.PrimaryMode.Spec)
+        {
+            sections.Add(specWorkflowService.BuildPromptInstructions());
+        }
+
         sections.Add($"User request:\n{refResolution.ExpandedPrompt}");
 
         return new PromptExecutionContext(
