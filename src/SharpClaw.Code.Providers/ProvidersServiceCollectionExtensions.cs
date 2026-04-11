@@ -1,9 +1,11 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Configuration;
+using SharpClaw.Code.Providers.Resilience;
 
 namespace SharpClaw.Code.Providers;
 
@@ -16,6 +18,7 @@ public static class ProvidersServiceCollectionExtensions
     private const string CatalogSectionName = $"{ProviderRootSectionName}:Catalog";
     private const string AnthropicSectionName = $"{ProviderRootSectionName}:Anthropic";
     private const string OpenAiCompatibleSectionName = $"{ProviderRootSectionName}:OpenAiCompatible";
+    private const string ResilienceSectionName = $"{ProviderRootSectionName}:Resilience";
 
     /// <summary>
     /// Adds the default provider layer services and binds provider options from configuration.
@@ -31,7 +34,8 @@ public static class ProvidersServiceCollectionExtensions
         IConfiguration configuration,
         Action<ProviderCatalogOptions>? configureCatalog = null,
         Action<AnthropicProviderOptions>? configureAnthropic = null,
-        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible = null)
+        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible = null,
+        Action<ProviderResilienceOptions>? configureResilience = null)
     {
         ArgumentNullException.ThrowIfNull(configuration);
 
@@ -41,8 +45,10 @@ public static class ProvidersServiceCollectionExtensions
             .Bind(configuration.GetSection(AnthropicSectionName));
         services.AddOptions<OpenAiCompatibleProviderOptions>()
             .Bind(configuration.GetSection(OpenAiCompatibleSectionName));
+        services.AddOptions<ProviderResilienceOptions>()
+            .Bind(configuration.GetSection(ResilienceSectionName));
 
-        return AddSharpClawProvidersCore(services, configureCatalog, configureAnthropic, configureOpenAiCompatible);
+        return AddSharpClawProvidersCore(services, configureCatalog, configureAnthropic, configureOpenAiCompatible, configureResilience);
     }
 
     /// <summary>
@@ -57,18 +63,21 @@ public static class ProvidersServiceCollectionExtensions
         this IServiceCollection services,
         Action<ProviderCatalogOptions>? configureCatalog = null,
         Action<AnthropicProviderOptions>? configureAnthropic = null,
-        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible = null)
-        => AddSharpClawProvidersCore(services, configureCatalog, configureAnthropic, configureOpenAiCompatible);
+        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible = null,
+        Action<ProviderResilienceOptions>? configureResilience = null)
+        => AddSharpClawProvidersCore(services, configureCatalog, configureAnthropic, configureOpenAiCompatible, configureResilience);
 
     private static IServiceCollection AddSharpClawProvidersCore(
         IServiceCollection services,
         Action<ProviderCatalogOptions>? configureCatalog,
         Action<AnthropicProviderOptions>? configureAnthropic,
-        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible)
+        Action<OpenAiCompatibleProviderOptions>? configureOpenAiCompatible,
+        Action<ProviderResilienceOptions>? configureResilience)
     {
         services.AddOptions<ProviderCatalogOptions>();
         services.AddOptions<AnthropicProviderOptions>();
         services.AddOptions<OpenAiCompatibleProviderOptions>();
+        services.AddOptions<ProviderResilienceOptions>();
 
         if (configureCatalog is not null)
         {
@@ -85,6 +94,11 @@ public static class ProvidersServiceCollectionExtensions
             services.Configure(configureOpenAiCompatible);
         }
 
+        if (configureResilience is not null)
+        {
+            services.Configure(configureResilience);
+        }
+
         services.AddSingleton<IValidateOptions<ProviderCatalogOptions>, ProviderCatalogOptionsValidator>();
         services.AddSingleton<IValidateOptions<AnthropicProviderOptions>, AnthropicProviderOptionsValidator>();
         services.AddSingleton<IValidateOptions<OpenAiCompatibleProviderOptions>, OpenAiCompatibleProviderOptionsValidator>();
@@ -98,9 +112,25 @@ public static class ProvidersServiceCollectionExtensions
         services.AddSingleton<IProviderRequestPreflight, ProviderRequestPreflight>();
         services.AddSingleton<IModelProviderResolver, ModelProviderResolver>();
         services.AddSingleton<IAuthFlowService, AuthFlowService>();
-        services.AddSingleton<IModelProvider>(serviceProvider => serviceProvider.GetRequiredService<AnthropicProvider>());
-        services.AddSingleton<IModelProvider>(serviceProvider => serviceProvider.GetRequiredService<OpenAiCompatibleProvider>());
+
+        services.AddSingleton<IModelProvider>(serviceProvider =>
+            WrapWithResilience(serviceProvider, serviceProvider.GetRequiredService<AnthropicProvider>()));
+        services.AddSingleton<IModelProvider>(serviceProvider =>
+            WrapWithResilience(serviceProvider, serviceProvider.GetRequiredService<OpenAiCompatibleProvider>()));
 
         return services;
+    }
+
+    private static IModelProvider WrapWithResilience(IServiceProvider serviceProvider, IModelProvider inner)
+    {
+        var options = serviceProvider.GetRequiredService<IOptions<ProviderResilienceOptions>>().Value;
+        if (!options.Enabled)
+        {
+            return inner;
+        }
+
+        var loggerFactory = serviceProvider.GetRequiredService<ILoggerFactory>();
+        var logger = loggerFactory.CreateLogger<ResilientProviderDecorator>();
+        return new ResilientProviderDecorator(inner, options, logger);
     }
 }
