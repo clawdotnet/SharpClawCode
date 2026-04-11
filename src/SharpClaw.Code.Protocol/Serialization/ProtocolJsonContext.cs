@@ -126,4 +126,6 @@ namespace SharpClaw.Code.Protocol.Serialization;
 [JsonSerializable(typeof(ContentBlock))]
 [JsonSerializable(typeof(ContentBlock[]))]
 [JsonSerializable(typeof(ContentBlockKind))]
+[JsonSerializable(typeof(ProviderToolDefinition))]
+[JsonSerializable(typeof(ProviderToolDefinition[]))]
 public sealed partial class ProtocolJsonContext : JsonSerializerContext;
