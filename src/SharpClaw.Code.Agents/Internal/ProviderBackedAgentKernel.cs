@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Agents.Configuration;
@@ -7,6 +8,8 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Telemetry.Diagnostics;
+using SharpClaw.Code.Telemetry.Metrics;
 using SharpClaw.Code.Tools.Models;
 
 namespace SharpClaw.Code.Agents.Internal;
@@ -142,28 +145,44 @@ public sealed class ProviderBackedAgentKernel(
 
                 lastProviderRequest = providerRequest;
 
-                var stream = await provider.StartStreamAsync(providerRequest, cancellationToken).ConfigureAwait(false);
                 var iterationTextSegments = new List<string>();
                 var toolUseEvents = new List<ProviderEvent>();
 
-                await foreach (var providerEvent in stream.Events.WithCancellation(cancellationToken))
+                using var providerScope = new ProviderActivityScope(resolvedProviderName, requestedModel, providerRequest.Id);
+                var providerSw = Stopwatch.StartNew();
+                try
                 {
-                    allProviderEvents.Add(providerEvent);
+                    var stream = await provider.StartStreamAsync(providerRequest, cancellationToken).ConfigureAwait(false);
 
-                    if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
+                    await foreach (var providerEvent in stream.Events.WithCancellation(cancellationToken))
                     {
-                        iterationTextSegments.Add(providerEvent.Content);
+                        allProviderEvents.Add(providerEvent);
+
+                        if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
+                        {
+                            iterationTextSegments.Add(providerEvent.Content);
+                        }
+
+                        if (!string.IsNullOrEmpty(providerEvent.ToolUseId) && !string.IsNullOrEmpty(providerEvent.ToolName))
+                        {
+                            toolUseEvents.Add(providerEvent);
+                        }
+
+                        if (providerEvent.IsTerminal && providerEvent.Usage is not null)
+                        {
+                            terminalUsage = providerEvent.Usage;
+                        }
                     }
 
-                    if (!string.IsNullOrEmpty(providerEvent.ToolUseId) && !string.IsNullOrEmpty(providerEvent.ToolName))
-                    {
-                        toolUseEvents.Add(providerEvent);
-                    }
-
-                    if (providerEvent.IsTerminal && providerEvent.Usage is not null)
-                    {
-                        terminalUsage = providerEvent.Usage;
-                    }
+                    providerSw.Stop();
+                    providerScope.SetCompleted(terminalUsage?.InputTokens, terminalUsage?.OutputTokens);
+                    SharpClawMeterSource.ProviderDuration.Record(providerSw.Elapsed.TotalMilliseconds);
+                }
+                catch (Exception ex)
+                {
+                    providerSw.Stop();
+                    providerScope.SetError(ex.Message);
+                    throw;
                 }
 
                 // If no tool-use events, accumulate text and break
