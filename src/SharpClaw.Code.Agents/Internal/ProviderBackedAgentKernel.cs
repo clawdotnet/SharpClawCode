@@ -107,6 +107,12 @@ public sealed class ProviderBackedAgentKernel(
                 messages.Add(new ChatMessage("system", [new ContentBlock(ContentBlockKind.Text, request.Instructions, null, null, null, null)]));
             }
 
+            // Prepend prior-turn conversation history for multi-turn context.
+            if (request.Context.ConversationHistory is { Count: > 0 } history)
+            {
+                messages.AddRange(history);
+            }
+
             messages.Add(new ChatMessage("user", [new ContentBlock(ContentBlockKind.Text, request.Context.Prompt, null, null, null, null)]));
 
             // --- Tool-calling loop ---

@@ -54,7 +54,8 @@ public sealed class DefaultTurnRunner(
             Metadata: promptContext.Metadata,
             PrimaryMode: primaryMode,
             ToolMutationRecorder: mutationAccumulator,
-            DelegatedTask: request.DelegatedTask);
+            DelegatedTask: request.DelegatedTask,
+            ConversationHistory: promptContext.ConversationHistory);
 
         var agentResult = await agent.RunAsync(agentContext, cancellationToken).ConfigureAwait(false);
         var mutations = mutationAccumulator.ToSnapshot();

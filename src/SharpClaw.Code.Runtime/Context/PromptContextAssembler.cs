@@ -6,6 +6,7 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Workflow;
+using SharpClaw.Code.Sessions.Abstractions;
 using SharpClaw.Code.Skills.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Context;
@@ -19,7 +20,8 @@ public sealed class PromptContextAssembler(
     ISkillRegistry skillRegistry,
     IGitWorkspaceService gitWorkspaceService,
     IPromptReferenceResolver promptReferenceResolver,
-    ISpecWorkflowService specWorkflowService) : IPromptContextAssembler
+    ISpecWorkflowService specWorkflowService,
+    IEventStore eventStore) : IPromptContextAssembler
 {
     /// <inheritdoc />
     public async Task<PromptExecutionContext> AssembleAsync(
@@ -118,8 +120,17 @@ public sealed class PromptContextAssembler(
 
         sections.Add($"User request:\n{refResolution.ExpandedPrompt}");
 
+        // Assemble prior-turn conversation history for multi-turn context.
+        const int MaxHistoryTokenBudget = 100_000;
+        var sessionEvents = await eventStore
+            .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
+            .ConfigureAwait(false);
+        var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
+        var conversationHistory = ContextWindowManager.Truncate(rawHistory, MaxHistoryTokenBudget);
+
         return new PromptExecutionContext(
             Prompt: string.Join(Environment.NewLine + Environment.NewLine, sections),
-            Metadata: metadata);
+            Metadata: metadata,
+            ConversationHistory: conversationHistory);
     }
 }
