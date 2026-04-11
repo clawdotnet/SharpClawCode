@@ -16,10 +16,14 @@ public sealed class SpectreReplTerminal : IReplTerminal
     }
 
     /// <inheritdoc />
-    public ValueTask<string?> ReadLineAsync(string prompt, CancellationToken cancellationToken)
+    public async ValueTask<string?> ReadLineAsync(string prompt, CancellationToken cancellationToken)
     {
         AnsiConsole.Markup($"[grey]{Markup.Escape(prompt)}[/]");
-        return ValueTask.FromResult(Console.ReadLine());
+        var readTask = Task.Run(Console.ReadLine, cancellationToken);
+        var tcs = new TaskCompletionSource<string?>();
+        await using var registration = cancellationToken.Register(() => tcs.TrySetCanceled(cancellationToken));
+        var completed = await Task.WhenAny(readTask, tcs.Task).ConfigureAwait(false);
+        return await completed.ConfigureAwait(false);
     }
 
     /// <inheritdoc />

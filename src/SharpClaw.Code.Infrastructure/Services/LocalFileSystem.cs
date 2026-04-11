@@ -9,6 +9,7 @@ namespace SharpClaw.Code.Infrastructure.Services;
 public sealed class LocalFileSystem : IFileSystem
 {
     private static readonly TimeSpan LockRetryDelay = TimeSpan.FromMilliseconds(50);
+    private const int MaxLockRetries = 200; // ~10 seconds total at 50ms intervals
 
     /// <inheritdoc />
     public async Task<IAsyncDisposable> AcquireExclusiveFileLockAsync(string lockFilePath, CancellationToken cancellationToken = default)
@@ -20,7 +21,7 @@ public sealed class LocalFileSystem : IFileSystem
             Directory.CreateDirectory(directory);
         }
 
-        while (true)
+        for (var attempt = 0; ; attempt++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             try
@@ -34,11 +35,11 @@ public sealed class LocalFileSystem : IFileSystem
                     FileOptions.Asynchronous);
                 return new ExclusiveFileLock(stream);
             }
-            catch (IOException)
+            catch (IOException) when (attempt < MaxLockRetries)
             {
                 await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException) when (attempt < MaxLockRetries)
             {
                 await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
             }
@@ -126,8 +127,8 @@ public sealed class LocalFileSystem : IFileSystem
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read);
-        await using var writer = new StreamWriter(stream, Encoding.UTF8);
+        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous);
+        await using var writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n" };
         await writer.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
     }
 

@@ -54,23 +54,32 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
 
         if (routing.ShouldPersist && persistence is not null)
         {
-            try
+            if (string.IsNullOrWhiteSpace(routing.WorkspacePath) || string.IsNullOrWhiteSpace(routing.SessionId))
             {
-                await persistence
-                    .PersistAsync(routing.WorkspacePath!, routing.SessionId!, runtimeEvent, cancellationToken)
-                    .ConfigureAwait(false);
+                this.logger.LogWarning(
+                    "Runtime event {EventId} requested persistence but WorkspacePath or SessionId is null.",
+                    runtimeEvent.EventId);
             }
-            catch (Exception exception)
+            else
             {
-                this.logger.LogError(
-                    exception,
-                    "Failed to persist runtime event {EventId} for workspace {WorkspacePath} session {SessionId}.",
-                    runtimeEvent.EventId,
-                    routing.WorkspacePath,
-                    routing.SessionId);
-                if (routing.ThrowIfPersistenceFails)
+                try
                 {
-                    throw;
+                    await persistence
+                        .PersistAsync(routing.WorkspacePath, routing.SessionId, runtimeEvent, cancellationToken)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    this.logger.LogError(
+                        exception,
+                        "Failed to persist runtime event {EventId} for workspace {WorkspacePath} session {SessionId}.",
+                        runtimeEvent.EventId,
+                        routing.WorkspacePath,
+                        routing.SessionId);
+                    if (routing.ThrowIfPersistenceFails)
+                    {
+                        throw;
+                    }
                 }
             }
         }

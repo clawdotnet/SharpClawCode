@@ -43,6 +43,12 @@ public sealed class ProviderRequestPreflight(
             model = ResolveDefaultModel(providerName);
         }
 
+        if (string.IsNullOrWhiteSpace(model))
+        {
+            throw new InvalidOperationException(
+                $"No default model configured for provider '{providerName}'. Specify a model explicitly.");
+        }
+
         return request with
         {
             ProviderName = providerName,

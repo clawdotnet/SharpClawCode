@@ -70,8 +70,8 @@ public sealed class CheckpointMutationCoordinator(
             RecordedAtUtc: DateTimeOffset.UtcNow,
             Operations: operations.ToArray());
 
-        await mutationSetStore.SaveAsync(workspacePath, doc, cancellationToken).ConfigureAwait(false);
         await sessionStore.SaveAsync(workspacePath, updatedSession, cancellationToken).ConfigureAwait(false);
+        await mutationSetStore.SaveAsync(workspacePath, doc, cancellationToken).ConfigureAwait(false);
 
         await eventPublisher.PublishAsync(
             new MutationSetRecordedEvent(
@@ -189,8 +189,8 @@ public sealed class CheckpointMutationCoordinator(
                     workspacePath,
                     session.Id,
                     PersistToSessionStore: true,
-                    ThrowIfPersistenceFails: true),
-                cancellationToken).ConfigureAwait(false);
+                    ThrowIfPersistenceFails: false),
+                CancellationToken.None).ConfigureAwait(false);
             return new UndoRedoActionResult(false, "undo", mutationId, ex.Message, state.AppliedPrefixLength, state.RedoStack.Count);
         }
 
@@ -322,8 +322,8 @@ public sealed class CheckpointMutationCoordinator(
                     workspacePath,
                     session.Id,
                     PersistToSessionStore: true,
-                    ThrowIfPersistenceFails: true),
-                cancellationToken).ConfigureAwait(false);
+                    ThrowIfPersistenceFails: false),
+                CancellationToken.None).ConfigureAwait(false);
             return new UndoRedoActionResult(false, "redo", mutationId, ex.Message, state.AppliedPrefixLength, state.RedoStack.Count);
         }
 

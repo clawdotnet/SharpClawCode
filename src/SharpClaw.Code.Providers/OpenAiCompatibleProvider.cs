@@ -22,6 +22,7 @@ public sealed class OpenAiCompatibleProvider(
     ILogger<OpenAiCompatibleProvider> logger) : IModelProvider
 {
     private readonly OpenAiCompatibleProviderOptions _options = options.Value;
+    private OpenAIClient? _cachedOpenAiClient;
 
     /// <inheritdoc />
     public string ProviderName => _options.ProviderName;
@@ -42,15 +43,8 @@ public sealed class OpenAiCompatibleProvider(
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(request.Model, _options.DefaultModel);
-        var openAiOptions = new OpenAIClientOptions();
-        var normalized = Internal.ProviderHttpHelpers.NormalizeBaseUrl(_options.BaseUrl);
-        if (normalized is not null)
-        {
-            openAiOptions.Endpoint = new Uri(normalized);
-        }
-
-        var credential = new ApiKeyCredential(_options.ApiKey ?? string.Empty);
-        var nativeClient = new global::OpenAI.Chat.ChatClient(modelId, credential, openAiOptions);
+        var openAiClient = GetOrCreateOpenAiClient();
+        var nativeClient = openAiClient.GetChatClient(modelId);
         using var chatClient = nativeClient.AsIChatClient();
 
         var messages = BuildChatMessages(request);
@@ -67,6 +61,25 @@ public sealed class OpenAiCompatibleProvider(
         {
             yield return ev;
         }
+    }
+
+    private OpenAIClient GetOrCreateOpenAiClient()
+    {
+        if (_cachedOpenAiClient is not null)
+        {
+            return _cachedOpenAiClient;
+        }
+
+        var openAiOptions = new OpenAIClientOptions();
+        var normalized = Internal.ProviderHttpHelpers.NormalizeBaseUrl(_options.BaseUrl);
+        if (normalized is not null)
+        {
+            openAiOptions.Endpoint = new Uri(normalized);
+        }
+
+        var credential = new ApiKeyCredential(_options.ApiKey ?? string.Empty);
+        _cachedOpenAiClient = new OpenAIClient(credential, openAiOptions);
+        return _cachedOpenAiClient;
     }
 
     private static List<Microsoft.Extensions.AI.ChatMessage> BuildChatMessages(ProviderRequest request)

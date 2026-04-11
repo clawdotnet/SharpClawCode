@@ -95,63 +95,71 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
                 0);
         }
 
-        var (toolCount, toolsOk) = await TryCountListedAsync(
-                client.ListToolsAsync(cancellationToken: cancellationToken),
-                "tools",
-                definition.Id)
-            .ConfigureAwait(false);
-        var (promptCount, promptsOk) = await TryCountListedAsync(
-                client.ListPromptsAsync(cancellationToken: cancellationToken),
-                "prompts",
-                definition.Id)
-            .ConfigureAwait(false);
-        var (resourceCount, resourcesOk) = await TryCountListedAsync(
-                client.ListResourcesAsync(cancellationToken: cancellationToken),
-                "resources",
-                definition.Id)
-            .ConfigureAwait(false);
-
-        // Many real servers expose only a subset (e.g. tools-only). Treat handshake as failed only when
-        // none of the capability planes could be listed — not when prompts/resources are absent.
-        if (!toolsOk && !promptsOk && !resourcesOk)
+        try
         {
-            await client.DisposeAsync().ConfigureAwait(false);
+            var (toolCount, toolsOk) = await TryCountListedAsync(
+                    client.ListToolsAsync(cancellationToken: cancellationToken),
+                    "tools",
+                    definition.Id)
+                .ConfigureAwait(false);
+            var (promptCount, promptsOk) = await TryCountListedAsync(
+                    client.ListPromptsAsync(cancellationToken: cancellationToken),
+                    "prompts",
+                    definition.Id)
+                .ConfigureAwait(false);
+            var (resourceCount, resourcesOk) = await TryCountListedAsync(
+                    client.ListResourcesAsync(cancellationToken: cancellationToken),
+                    "resources",
+                    definition.Id)
+                .ConfigureAwait(false);
+
+            // Many real servers expose only a subset (e.g. tools-only). Treat handshake as failed only when
+            // none of the capability planes could be listed — not when prompts/resources are absent.
+            if (!toolsOk && !promptsOk && !resourcesOk)
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+                return new McpProcessStartResult(
+                    true,
+                    null,
+                    false,
+                    "MCP capability enumeration failed (tools, prompts, and resources). See logs for details.",
+                    0,
+                    0,
+                    0,
+                    0,
+                    McpFailureKind.Capabilities);
+            }
+
+            var sessionId = Interlocked.Increment(ref _nextSessionId);
+            if (!Sessions.TryAdd(sessionId, client))
+            {
+                await client.DisposeAsync().ConfigureAwait(false);
+                return new McpProcessStartResult(
+                    false,
+                    null,
+                    false,
+                    "Failed to register MCP SDK session handle.",
+                    0,
+                    0,
+                    0,
+                    0);
+            }
+
             return new McpProcessStartResult(
                 true,
                 null,
-                false,
-                "MCP capability enumeration failed (tools, prompts, and resources). See logs for details.",
-                0,
-                0,
-                0,
-                0,
-                McpFailureKind.Capabilities);
+                true,
+                null,
+                sessionId,
+                toolCount,
+                promptCount,
+                resourceCount);
         }
-
-        var sessionId = Interlocked.Increment(ref _nextSessionId);
-        if (!Sessions.TryAdd(sessionId, client))
+        catch
         {
             await client.DisposeAsync().ConfigureAwait(false);
-            return new McpProcessStartResult(
-                false,
-                null,
-                false,
-                "Failed to register MCP SDK session handle.",
-                0,
-                0,
-                0,
-                0);
+            throw;
         }
-
-        return new McpProcessStartResult(
-            true,
-            null,
-            true,
-            null,
-            sessionId,
-            toolCount,
-            promptCount,
-            resourceCount);
     }
 
     /// <inheritdoc />

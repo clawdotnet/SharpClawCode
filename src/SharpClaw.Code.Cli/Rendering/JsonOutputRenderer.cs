@@ -1,5 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Commands;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
@@ -10,8 +12,9 @@ namespace SharpClaw.Code.Cli.Rendering;
 /// <summary>
 /// Renders command and prompt results as JSON.
 /// </summary>
-public sealed class JsonOutputRenderer : IOutputRenderer
+public sealed class JsonOutputRenderer(ILogger<JsonOutputRenderer>? logger = null) : IOutputRenderer
 {
+    private readonly ILogger<JsonOutputRenderer> _logger = logger ?? NullLogger<JsonOutputRenderer>.Instance;
     /// <inheritdoc />
     public OutputFormat Format => OutputFormat.Json;
 
@@ -27,8 +30,9 @@ public sealed class JsonOutputRenderer : IOutputRenderer
                 using var document = JsonDocument.Parse(result.DataJson);
                 data = document.RootElement.Clone();
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
+                _logger.LogWarning(ex, "Failed to parse DataJson as valid JSON; falling back to raw string.");
                 dataRaw = result.DataJson;
             }
         }

@@ -19,20 +19,60 @@ internal static class AnthropicSdkStreamAdapter
         ISystemClock clock,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        await foreach (var ev in messageStream.WithCancellation(cancellationToken).ConfigureAwait(false))
+        IAsyncEnumerator<RawMessageStreamEvent>? enumerator = null;
+        try
         {
-            if (ev.TryPickContentBlockDelta(out var blockDelta))
+            enumerator = messageStream.GetAsyncEnumerator(cancellationToken);
+            while (true)
             {
-                var deltaText = ExtractTextDelta(blockDelta.Delta);
-                if (!string.IsNullOrEmpty(deltaText))
+                bool moved;
+                string? streamError = null;
+                try
                 {
-                    yield return ProviderStreamEventFactory.Delta(requestId, clock, deltaText);
+                    moved = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    streamError = ex.Message;
+                    moved = false;
+                }
+
+                if (streamError is not null)
+                {
+                    yield return ProviderStreamEventFactory.Failed(requestId, clock, streamError);
+                    yield break;
+                }
+
+                if (!moved)
+                {
+                    break;
+                }
+
+                var ev = enumerator.Current;
+                if (ev.TryPickContentBlockDelta(out var blockDelta))
+                {
+                    var deltaText = ExtractTextDelta(blockDelta.Delta);
+                    if (!string.IsNullOrEmpty(deltaText))
+                    {
+                        yield return ProviderStreamEventFactory.Delta(requestId, clock, deltaText);
+                    }
+                }
+                else if (ev.TryPickStop(out _))
+                {
+                    yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
+                    yield break;
                 }
             }
-            else if (ev.TryPickStop(out _))
+        }
+        finally
+        {
+            if (enumerator is not null)
             {
-                yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
-                yield break;
+                await enumerator.DisposeAsync().ConfigureAwait(false);
             }
         }
 

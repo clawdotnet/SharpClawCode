@@ -38,7 +38,16 @@ public sealed class GrepSearchTool(IPathService pathService) : SharpClawToolBase
         var regexOptions = arguments.CaseSensitive
             ? RegexOptions.CultureInvariant
             : RegexOptions.IgnoreCase | RegexOptions.CultureInvariant;
-        var regex = new Regex(arguments.Pattern, regexOptions);
+
+        Regex regex;
+        try
+        {
+            regex = new Regex(arguments.Pattern, regexOptions);
+        }
+        catch (ArgumentException ex)
+        {
+            return CreateFailureResult(context, request, $"Invalid regex pattern: {ex.Message}");
+        }
 
         var pathResolver = new WorkspacePathResolver(pathService);
         var workspaceRoot = pathResolver.ResolveWorkspaceRoot(context);

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using SharpClaw.Code.Permissions.Abstractions;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Models;
@@ -33,7 +34,8 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
 
     private static bool IsDangerous(string command)
     {
-        var normalized = command.Trim().ToLowerInvariant();
+        // Collapse whitespace runs so extra spaces don't bypass detection.
+        var normalized = CollapseWhitespace().Replace(command.Trim(), " ").ToLowerInvariant();
         return normalized.Contains("rm -rf /", StringComparison.Ordinal)
                || normalized.Contains("rm -rf .", StringComparison.Ordinal)
                || normalized.Contains("rm -rf ..", StringComparison.Ordinal)
@@ -41,6 +43,19 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
                || normalized.Contains("mkfs", StringComparison.Ordinal)
                || normalized.Contains("dd if=", StringComparison.Ordinal)
                || normalized.StartsWith("shutdown", StringComparison.Ordinal)
-               || normalized.StartsWith("reboot", StringComparison.Ordinal);
+               || normalized.StartsWith("reboot", StringComparison.Ordinal)
+               || ContainsDangerousSubstitution(normalized);
     }
+
+    private static bool ContainsDangerousSubstitution(string normalized)
+    {
+        // Detect command substitution containing dangerous commands.
+        return DangerousSubstitutionRegex().IsMatch(normalized);
+    }
+
+    [GeneratedRegex(@"\$\(.*(?:rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot)", RegexOptions.Singleline)]
+    private static partial Regex DangerousSubstitutionRegex();
+
+    [GeneratedRegex(@"\s+")]
+    private static partial Regex CollapseWhitespace();
 }

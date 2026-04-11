@@ -20,21 +20,60 @@ internal static class OpenAiMeaiStreamAdapter
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
         var completed = false;
-
-        await foreach (var update in updates.WithCancellation(cancellationToken).ConfigureAwait(false))
+        IAsyncEnumerator<ChatResponseUpdate>? enumerator = null;
+        try
         {
-            var text = update.Text;
-            if (!string.IsNullOrEmpty(text))
+            enumerator = updates.GetAsyncEnumerator(cancellationToken);
+            while (true)
             {
-                yield return ProviderStreamEventFactory.Delta(requestId, clock, text);
-            }
+                bool moved;
+                string? streamError = null;
+                try
+                {
+                    moved = await enumerator.MoveNextAsync().ConfigureAwait(false);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    streamError = ex.Message;
+                    moved = false;
+                }
 
-            if (update.FinishReason is { } finish && !string.IsNullOrEmpty(finish.Value))
+                if (streamError is not null)
+                {
+                    yield return ProviderStreamEventFactory.Failed(requestId, clock, streamError);
+                    yield break;
+                }
+
+                if (!moved)
+                {
+                    break;
+                }
+
+                var update = enumerator.Current;
+                var text = update.Text;
+                if (!string.IsNullOrEmpty(text))
+                {
+                    yield return ProviderStreamEventFactory.Delta(requestId, clock, text);
+                }
+
+                if (update.FinishReason is { } finish && !string.IsNullOrEmpty(finish.Value))
+                {
+                    var usage = ProviderStreamEventFactory.TryUsageFromUpdate(update);
+                    yield return ProviderStreamEventFactory.Completed(requestId, clock, usage);
+                    completed = true;
+                    yield break;
+                }
+            }
+        }
+        finally
+        {
+            if (enumerator is not null)
             {
-                var usage = ProviderStreamEventFactory.TryUsageFromUpdate(update);
-                yield return ProviderStreamEventFactory.Completed(requestId, clock, usage);
-                completed = true;
-                yield break;
+                await enumerator.DisposeAsync().ConfigureAwait(false);
             }
         }
 

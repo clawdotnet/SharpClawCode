@@ -14,7 +14,7 @@ public sealed class DefaultRuntimeStateMachine : IRuntimeStateMachine
         {
             RuntimeLifecycleTransition.Activate when currentState is SessionLifecycleState.Created or SessionLifecycleState.Paused or SessionLifecycleState.Recovering or SessionLifecycleState.Active
                 => SessionLifecycleState.Active,
-            RuntimeLifecycleTransition.Recover when currentState is SessionLifecycleState.Active or SessionLifecycleState.Paused or SessionLifecycleState.Failed
+            RuntimeLifecycleTransition.Recover when currentState is SessionLifecycleState.Active or SessionLifecycleState.Paused or SessionLifecycleState.Failed or SessionLifecycleState.Recovering
                 => SessionLifecycleState.Recovering,
             RuntimeLifecycleTransition.Fail when currentState is not SessionLifecycleState.Archived
                 => SessionLifecycleState.Failed,

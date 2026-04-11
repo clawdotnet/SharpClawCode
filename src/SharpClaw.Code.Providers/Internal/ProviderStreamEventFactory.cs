@@ -23,6 +23,19 @@ internal static class ProviderStreamEventFactory
             Usage: null);
 
     /// <summary>
+    /// Creates a terminal failure event when the stream encounters an error.
+    /// </summary>
+    public static ProviderEvent Failed(string requestId, ISystemClock clock, string? errorMessage)
+        => new(
+            Id: $"provider-event-{Guid.NewGuid():N}",
+            RequestId: requestId,
+            Kind: "failed",
+            CreatedAtUtc: clock.UtcNow,
+            Content: errorMessage,
+            IsTerminal: true,
+            Usage: null);
+
+    /// <summary>
     /// Creates a terminal completed event with optional usage.
     /// </summary>
     public static ProviderEvent Completed(string requestId, ISystemClock clock, UsageSnapshot? usage)

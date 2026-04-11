@@ -20,6 +20,7 @@ public sealed class MutationWorkspaceApplier(IFileSystem fileSystem, IPathServic
         var root = pathService.GetFullPath(workspaceRoot);
         var context = CreateBypassContext(root);
         var fullPath = resolver.ResolvePath(context, operation.RelativePath);
+        EnsureWithinWorkspace(root, fullPath, operation.RelativePath);
 
         var current = await fileSystem.ReadAllTextIfExistsAsync(fullPath, cancellationToken).ConfigureAwait(false);
         switch (operation.Kind)
@@ -73,6 +74,7 @@ public sealed class MutationWorkspaceApplier(IFileSystem fileSystem, IPathServic
         var root = pathService.GetFullPath(workspaceRoot);
         var context = CreateBypassContext(root);
         var fullPath = resolver.ResolvePath(context, operation.RelativePath);
+        EnsureWithinWorkspace(root, fullPath, operation.RelativePath);
 
         var current = await fileSystem.ReadAllTextIfExistsAsync(fullPath, cancellationToken).ConfigureAwait(false);
         switch (operation.Kind)
@@ -112,6 +114,22 @@ public sealed class MutationWorkspaceApplier(IFileSystem fileSystem, IPathServic
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(operation), operation.Kind, "Unsupported mutation kind.");
+        }
+    }
+
+    private static void EnsureWithinWorkspace(string workspaceRoot, string fullPath, string relativePath)
+    {
+        var comparison = OperatingSystem.IsWindows()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        var prefix = workspaceRoot.EndsWith(Path.DirectorySeparatorChar)
+            ? workspaceRoot
+            : workspaceRoot + Path.DirectorySeparatorChar;
+
+        if (!fullPath.StartsWith(prefix, comparison) && !string.Equals(fullPath, workspaceRoot, comparison))
+        {
+            throw new InvalidOperationException(
+                $"Mutation path '{relativePath}' resolves to '{fullPath}' which is outside workspace '{workspaceRoot}'. Refusing to apply.");
         }
     }
 

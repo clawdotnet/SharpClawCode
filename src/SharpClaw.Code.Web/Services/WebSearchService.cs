@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Web.Abstractions;
 using SharpClaw.Code.Web.Configuration;
@@ -12,8 +14,10 @@ namespace SharpClaw.Code.Web.Services;
 /// </summary>
 public sealed partial class WebSearchService(
     HttpClient httpClient,
-    IOptions<WebSearchOptions> options) : IWebSearchService
+    IOptions<WebSearchOptions> options,
+    ILogger<WebSearchService>? logger = null) : IWebSearchService
 {
+    private readonly ILogger<WebSearchService> _logger = logger ?? NullLogger<WebSearchService>.Instance;
     /// <inheritdoc />
     public async Task<WebSearchResponse> SearchAsync(string query, int? limit, CancellationToken cancellationToken)
     {
@@ -31,6 +35,11 @@ public sealed partial class WebSearchService(
         var html = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
         var linkMatches = ResultLinkRegex().Matches(html);
+        if (linkMatches.Count == 0 && html.Length > 0)
+        {
+            _logger.LogWarning("Web search result HTML contained no matching link patterns; the search provider format may have changed.");
+        }
+
         var snippetMatches = ResultSnippetRegex().Matches(html);
         var results = new List<WebSearchResult>();
 

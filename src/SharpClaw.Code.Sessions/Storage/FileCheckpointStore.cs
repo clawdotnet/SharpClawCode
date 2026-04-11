@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Serialization;
@@ -9,7 +11,7 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Stores runtime checkpoints as readable JSON files under each session.
 /// </summary>
-public sealed class FileCheckpointStore(IFileSystem fileSystem, IPathService pathService) : ICheckpointStore
+public sealed class FileCheckpointStore(IFileSystem fileSystem, IPathService pathService, ILogger<FileCheckpointStore>? logger = null) : ICheckpointStore
 {
     /// <inheritdoc />
     public Task SaveAsync(string workspacePath, RuntimeCheckpoint checkpoint, CancellationToken cancellationToken)
@@ -37,7 +39,17 @@ public sealed class FileCheckpointStore(IFileSystem fileSystem, IPathService pat
                 continue;
             }
 
-            var checkpoint = JsonSerializer.Deserialize(content, ProtocolJsonContext.Default.RuntimeCheckpoint);
+            RuntimeCheckpoint? checkpoint;
+            try
+            {
+                checkpoint = JsonSerializer.Deserialize(content, ProtocolJsonContext.Default.RuntimeCheckpoint);
+            }
+            catch (JsonException ex)
+            {
+                (logger ?? NullLogger<FileCheckpointStore>.Instance).LogWarning(ex, "Skipping malformed checkpoint file {Path}.", path);
+                continue;
+            }
+
             if (checkpoint is null)
             {
                 continue;

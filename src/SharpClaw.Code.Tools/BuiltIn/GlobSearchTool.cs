@@ -36,12 +36,15 @@ public sealed class GlobSearchTool(IPathService pathService) : SharpClawToolBase
         var arguments = DeserializeArguments<GlobSearchToolArguments>(request);
         var pathResolver = new WorkspacePathResolver(pathService);
         var workspaceRoot = pathResolver.ResolveWorkspaceRoot(context);
+        cancellationToken.ThrowIfCancellationRequested();
         var matches = Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories)
+            .TakeWhile(_ => !cancellationToken.IsCancellationRequested)
             .Select(path => pathResolver.ToRelativePath(context, path))
             .Where(path => GlobPatternMatcher.IsMatch(arguments.Pattern, path))
             .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .Take(arguments.Limit.GetValueOrDefault(50))
             .ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
 
         var payload = new GlobSearchToolResult(arguments.Pattern, matches);
         var textOutput = matches.Length == 0

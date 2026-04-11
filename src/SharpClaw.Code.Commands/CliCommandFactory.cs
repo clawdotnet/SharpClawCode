@@ -50,7 +50,9 @@ public sealed class CliCommandFactory(
     private async Task AddDiscoveredCustomCommandsAsync(RootCommand rootCommand, CancellationToken cancellationToken)
     {
         var reserved = new HashSet<string>(
-            commandRegistry.GetCommandHandlers().Select(static h => h.Name).Append("repl"),
+            commandRegistry.GetCommandHandlers().Select(static h => h.Name)
+                .Concat(commandRegistry.GetSlashCommandHandlers().Select(static h => h.CommandName))
+                .Append("repl"),
             StringComparer.OrdinalIgnoreCase);
 
         var workspace = pathService.GetFullPath(pathService.GetCurrentDirectory());

@@ -51,10 +51,17 @@ internal static class PermissionRuleHelpers
 
     public static string? TryReadJsonString(ToolExecutionRequest request, string propertyName)
     {
-        using var document = JsonDocument.Parse(request.ArgumentsJson);
-        return document.RootElement.TryGetProperty(propertyName, out var property)
-            && property.ValueKind is JsonValueKind.String
-            ? property.GetString()
-            : null;
+        try
+        {
+            using var document = JsonDocument.Parse(request.ArgumentsJson);
+            return document.RootElement.TryGetProperty(propertyName, out var property)
+                && property.ValueKind is JsonValueKind.String
+                ? property.GetString()
+                : null;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

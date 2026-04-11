@@ -1,4 +1,6 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Serialization;
@@ -9,7 +11,7 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Stores session runtime events in append-only NDJSON files.
 /// </summary>
-public sealed class NdjsonEventStore(IFileSystem fileSystem, IPathService pathService) : IEventStore
+public sealed class NdjsonEventStore(IFileSystem fileSystem, IPathService pathService, ILogger<NdjsonEventStore>? logger = null) : IEventStore
 {
     /// <inheritdoc />
     public Task AppendAsync(string workspacePath, string sessionId, RuntimeEvent runtimeEvent, CancellationToken cancellationToken)
@@ -33,10 +35,17 @@ public sealed class NdjsonEventStore(IFileSystem fileSystem, IPathService pathSe
                 continue;
             }
 
-            var runtimeEvent = JsonSerializer.Deserialize(line, ProtocolJsonContext.Default.RuntimeEvent);
-            if (runtimeEvent is not null)
+            try
             {
-                events.Add(runtimeEvent);
+                var runtimeEvent = JsonSerializer.Deserialize(line, ProtocolJsonContext.Default.RuntimeEvent);
+                if (runtimeEvent is not null)
+                {
+                    events.Add(runtimeEvent);
+                }
+            }
+            catch (JsonException ex)
+            {
+                (logger ?? NullLogger<NdjsonEventStore>.Instance).LogWarning(ex, "Skipping malformed NDJSON event line in session {SessionId}.", sessionId);
             }
         }
 
