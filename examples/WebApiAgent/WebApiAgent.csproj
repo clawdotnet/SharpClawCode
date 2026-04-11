@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <Description>ASP.NET Core minimal API agent example for SharpClaw Code.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>
