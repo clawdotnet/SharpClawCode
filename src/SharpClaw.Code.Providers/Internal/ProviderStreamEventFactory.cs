@@ -77,6 +77,23 @@ internal static class ProviderStreamEventFactory
     }
 
     /// <summary>
+    /// Creates a non-terminal event representing a tool-use request from the model.
+    /// </summary>
+    public static ProviderEvent ToolUse(string requestId, ISystemClock clock, string toolUseId, string toolName, string toolInputJson)
+        => new(
+            Id: $"provider-event-{Guid.NewGuid():N}",
+            RequestId: requestId,
+            Kind: "tool_use",
+            CreatedAtUtc: clock.UtcNow,
+            Content: null,
+            IsTerminal: false,
+            Usage: null,
+            BlockType: "tool_use",
+            ToolUseId: toolUseId,
+            ToolName: toolName,
+            ToolInputJson: toolInputJson);
+
+    /// <summary>
     /// Extracts usage from a streamed update's message contents, if present.
     /// </summary>
     public static UsageSnapshot? TryUsageFromUpdate(ChatResponseUpdate update)
