@@ -35,8 +35,9 @@ public sealed class LocalFileSystemExclusiveLockTests
         await using var first = await fs.AcquireExclusiveFileLockAsync(lockPath, CancellationToken.None);
         var secondTask = Task.Run(async () => await fs.AcquireExclusiveFileLockAsync(lockPath, CancellationToken.None));
 
-        await Task.Delay(100);
-        secondTask.IsCompleted.Should().BeFalse();
+        // Give the second task time to start and attempt the lock.
+        await Task.Delay(200);
+        secondTask.IsCompleted.Should().BeFalse("the second lock holder should block while the first is held");
 
         await first.DisposeAsync();
         await using var second = await secondTask.WaitAsync(TimeSpan.FromSeconds(10));

@@ -116,7 +116,7 @@ public sealed class ConversationRuntimeFlowTests
                 ["model"] = DeterministicMockModelProvider.DefaultModelId,
                 [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
             });
-        var act = async () => await RunPromptWithCancelAfterAsync(runtime, request, TimeSpan.FromMilliseconds(300));
+        var act = async () => await RunPromptWithCancelAfterAsync(runtime, request, TimeSpan.FromMilliseconds(400));
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         var latestSession = await runtime.GetLatestSessionAsync(workspacePath, CancellationToken.None);
@@ -149,7 +149,7 @@ public sealed class ConversationRuntimeFlowTests
                 ["model"] = DeterministicMockModelProvider.DefaultModelId,
                 [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
             });
-        var cancelAct = async () => await RunPromptWithCancelAfterAsync(runtime, cancelRequest, TimeSpan.FromMilliseconds(300));
+        var cancelAct = async () => await RunPromptWithCancelAfterAsync(runtime, cancelRequest, TimeSpan.FromMilliseconds(400));
         await cancelAct.Should().ThrowAsync<OperationCanceledException>();
 
         var second = await runtime.RunPromptAsync(

@@ -45,7 +45,8 @@ public static class RuntimeServiceCollectionExtensions
     public static IServiceCollection AddSharpClawRuntime(this IServiceCollection services, IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
-        return AddSharpClawRuntimeCore(services, serviceCollection => serviceCollection.AddSharpClawProviders(configuration));
+        services.AddSharpClawTelemetry(configuration);
+        return AddSharpClawRuntimeCore(services, serviceCollection => serviceCollection.AddSharpClawProviders(configuration), configuration);
     }
 
     /// <summary>
@@ -54,21 +55,38 @@ public static class RuntimeServiceCollectionExtensions
     /// <param name="services">The service collection to update.</param>
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawRuntime(this IServiceCollection services)
-        => AddSharpClawRuntimeCore(services, serviceCollection => serviceCollection.AddSharpClawProviders());
+        => AddSharpClawRuntimeCore(services, serviceCollection => serviceCollection.AddSharpClawProviders(), configuration: null);
 
     private static IServiceCollection AddSharpClawRuntimeCore(
         IServiceCollection services,
-        Action<IServiceCollection> addProviders)
+        Action<IServiceCollection> addProviders,
+        IConfiguration? configuration)
     {
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(addProviders);
 
         services.AddLogging();
-        services.AddSharpClawTelemetry();
+        if (configuration is not null)
+        {
+            services.AddSharpClawTelemetry(configuration);
+        }
+        else
+        {
+            services.AddSharpClawTelemetry();
+        }
+
         services.AddSharpClawInfrastructure();
         addProviders(services);
         services.AddSharpClawMcp();
-        services.AddSharpClawTools();
+        if (configuration is not null)
+        {
+            services.AddSharpClawTools(configuration);
+        }
+        else
+        {
+            services.AddSharpClawTools();
+        }
+
         services.AddSharpClawAgents();
         services.AddSharpClawMemory();
         services.AddSharpClawSkills();

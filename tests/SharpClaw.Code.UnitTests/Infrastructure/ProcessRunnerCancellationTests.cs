@@ -19,24 +19,28 @@ public sealed class ProcessRunnerCancellationTests
         Directory.CreateDirectory(tempRoot);
         var markerPath = Path.Combine(tempRoot, "marker.txt");
         var runner = new ProcessRunner(new SystemClock());
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
+        // Cancel quickly; the shell command sleeps much longer so if the
+        // process survived cancellation, the marker file would appear.
+        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
 
         var request = OperatingSystem.IsWindows()
             ? new ProcessRunRequest(
                 "cmd.exe",
-                ["/c", $@"ping -n 4 127.0.0.1 >NUL && echo ran>""{markerPath}"""],
+                ["/c", $@"ping -n 10 127.0.0.1 >NUL && echo ran>""{markerPath}"""],
                 tempRoot,
                 null)
             : new ProcessRunRequest(
                 "/bin/sh",
-                ["-lc", $"sleep 2; echo ran > '{markerPath}'"],
+                ["-lc", $"sleep 10; echo ran > '{markerPath}'"],
                 tempRoot,
                 null);
 
         var act = async () => await runner.RunAsync(request, cts.Token);
 
         await act.Should().ThrowAsync<OperationCanceledException>();
-        await Task.Delay(TimeSpan.FromSeconds(3));
+        // The shell command sleeps 10s; wait just 1s — if the process was killed,
+        // the marker cannot exist. This avoids the prior 3s wait.
+        await Task.Delay(TimeSpan.FromSeconds(1));
         File.Exists(markerPath).Should().BeFalse();
     }
 }

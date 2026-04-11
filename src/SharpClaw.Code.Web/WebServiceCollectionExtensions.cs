@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Web.Abstractions;
@@ -11,6 +12,22 @@ namespace SharpClaw.Code.Web;
 /// </summary>
 public static class WebServiceCollectionExtensions
 {
+    private const string WebSectionName = "SharpClaw:Web";
+
+    /// <summary>
+    /// Adds SharpClaw web services with configuration binding.
+    /// </summary>
+    /// <param name="services">The service collection to update.</param>
+    /// <param name="configuration">The application configuration root.</param>
+    /// <returns>The updated service collection.</returns>
+    public static IServiceCollection AddSharpClawWeb(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        services.AddOptions<WebSearchOptions>()
+            .Bind(configuration.GetSection(WebSectionName));
+        return AddSharpClawWebCore(services);
+    }
+
     /// <summary>
     /// Adds SharpClaw web services to the service collection.
     /// </summary>
@@ -18,8 +35,13 @@ public static class WebServiceCollectionExtensions
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawWeb(this IServiceCollection services)
     {
+        services.AddOptions<WebSearchOptions>();
+        return AddSharpClawWebCore(services);
+    }
+
+    private static IServiceCollection AddSharpClawWebCore(IServiceCollection services)
+    {
         services.AddSingleton<IValidateOptions<WebSearchOptions>, WebSearchOptionsValidator>();
-        services.AddOptions<WebSearchOptions>().ValidateOnStart();
         services.AddHttpClient<IWebSearchService, WebSearchService>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60));
         services.AddHttpClient<IWebFetchService, WebFetchService>()

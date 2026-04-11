@@ -114,6 +114,27 @@ Primary workflow modes:
 
 For dependency boundaries and project responsibilities, see [docs/architecture.md](docs/architecture.md) and [AGENTS.md](AGENTS.md).
 
+## Testing
+
+```bash
+# Run all tests
+dotnet test SharpClawCode.sln
+
+# Run a single test by name
+dotnet test SharpClawCode.sln --filter "FullyQualifiedName~YourTestName"
+
+# Run parity harness scenarios only
+dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
+```
+
+| Project | Purpose |
+|---|---|
+| `SharpClaw.Code.UnitTests` | Fast unit tests covering tools, permissions, sessions, providers, state machine, telemetry, and serialization |
+| `SharpClaw.Code.IntegrationTests` | Runtime and provider flows with full DI composition |
+| `SharpClaw.Code.ParityHarness` | End-to-end scenarios using a deterministic mock LLM provider |
+| `SharpClaw.Code.MockProvider` | `DeterministicMockModelProvider` with named scenarios for reproducible testing |
+| `SharpClaw.Code.Mcp.FixtureServer` | MCP fixture server for integration testing |
+
 ## Global CLI Options
 
 | Option | Description |
@@ -144,6 +165,20 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`,
 | [docs/testing.md](docs/testing.md) | Unit, integration, and parity-harness coverage |
 | [ARCHITECTURE-NOTES.md](ARCHITECTURE-NOTES.md) | Architectural follow-ups and cleanup ideas |
 
+## Configuration
+
+SharpClaw Code uses the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args). Key configuration sections:
+
+| Section | Purpose |
+|---|---|
+| `SharpClaw:Providers:Catalog` | Default provider, model aliases |
+| `SharpClaw:Providers:Anthropic` | Anthropic API key, base URL, default model |
+| `SharpClaw:Providers:OpenAiCompatible` | OpenAI-compatible API key, base URL, default model |
+| `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
+| `SharpClaw:Telemetry` | Runtime event ring buffer capacity |
+
+All options are validated at startup via `IValidateOptions` implementations.
+
 ## Current Scope
 
 - The shared tooling layer is permission-aware across the runtime.
@@ -160,5 +195,9 @@ Before opening a PR:
 dotnet build SharpClawCode.sln
 dotnet test SharpClawCode.sln
 ```
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
 
 Repository: [github.com/clawdotnet/SharpClawCode](https://github.com/clawdotnet/SharpClawCode)

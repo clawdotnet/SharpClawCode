@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Infrastructure;
 using SharpClaw.Code.Permissions;
@@ -20,6 +21,23 @@ namespace SharpClaw.Code.Tools;
 public static class ToolsServiceCollectionExtensions
 {
     /// <summary>
+    /// Adds the SharpClaw tool system with configuration binding.
+    /// </summary>
+    /// <param name="services">The service collection to update.</param>
+    /// <param name="configuration">The application configuration root.</param>
+    /// <returns>The updated service collection.</returns>
+    public static IServiceCollection AddSharpClawTools(this IServiceCollection services, IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+        services.AddSharpClawTelemetry(configuration);
+        services.AddSharpClawInfrastructure();
+        services.AddSharpClawPermissions();
+        services.AddSharpClawPlugins();
+        services.AddSharpClawWeb(configuration);
+        return AddSharpClawToolsCore(services);
+    }
+
+    /// <summary>
     /// Adds the SharpClaw tool system to the service collection.
     /// </summary>
     /// <param name="services">The service collection to update.</param>
@@ -31,7 +49,11 @@ public static class ToolsServiceCollectionExtensions
         services.AddSharpClawPermissions();
         services.AddSharpClawPlugins();
         services.AddSharpClawWeb();
+        return AddSharpClawToolsCore(services);
+    }
 
+    private static IServiceCollection AddSharpClawToolsCore(IServiceCollection services)
+    {
         services.AddSingleton<ReadFileTool>();
         services.AddSingleton<WriteFileTool>();
         services.AddSingleton<EditFileTool>();
