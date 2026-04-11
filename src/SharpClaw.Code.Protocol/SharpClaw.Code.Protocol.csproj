@@ -4,6 +4,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Core contracts, models, and events for the SharpClaw Code agent runtime.</Description>
   </PropertyGroup>
 
 </Project>

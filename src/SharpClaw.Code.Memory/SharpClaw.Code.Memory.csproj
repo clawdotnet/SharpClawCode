@@ -11,6 +11,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Memory extraction, indexing, and recall for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>

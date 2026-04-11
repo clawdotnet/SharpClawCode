@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>Production runtime orchestration for SharpClaw Code agents, built on Microsoft Agent Framework.</Description>
   </PropertyGroup>
 
   <ItemGroup>

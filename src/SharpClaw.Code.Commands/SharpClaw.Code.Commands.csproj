@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <Description>Command handlers and output rendering for SharpClaw Code.</Description>
   </PropertyGroup>
 
   <ItemGroup>

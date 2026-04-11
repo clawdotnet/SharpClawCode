@@ -25,6 +25,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Microsoft Agent Framework integration and agent orchestration for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>

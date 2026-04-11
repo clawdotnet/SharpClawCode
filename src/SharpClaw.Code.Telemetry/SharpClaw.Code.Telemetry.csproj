@@ -16,6 +16,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Structured telemetry, event publishing, and usage tracking for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>

@@ -10,6 +10,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Durable session persistence with append-only event logs for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>
