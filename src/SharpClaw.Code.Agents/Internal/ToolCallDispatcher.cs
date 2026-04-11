@@ -10,7 +10,7 @@ namespace SharpClaw.Code.Agents.Internal;
 /// Dispatches tool-use requests from provider events through the permission-aware tool executor
 /// and returns content blocks for the provider conversation.
 /// </summary>
-internal sealed class ToolCallDispatcher(
+public sealed class ToolCallDispatcher(
     IToolExecutor toolExecutor,
     IRuntimeEventPublisher eventPublisher)
 {

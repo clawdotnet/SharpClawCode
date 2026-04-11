@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Agents.Agents;
+using SharpClaw.Code.Agents.Configuration;
 using SharpClaw.Code.Agents.Internal;
 using SharpClaw.Code.Agents.Services;
 
@@ -18,6 +19,8 @@ public static class AgentsServiceCollectionExtensions
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawAgents(this IServiceCollection services)
     {
+        services.AddOptions<AgentLoopOptions>();
+        services.AddSingleton<ToolCallDispatcher>();
         services.AddSingleton<ProviderBackedAgentKernel>();
         services.AddSingleton<IAgentFrameworkBridge, AgentFrameworkBridge>();
         services.AddSingleton<PrimaryCodingAgent>();

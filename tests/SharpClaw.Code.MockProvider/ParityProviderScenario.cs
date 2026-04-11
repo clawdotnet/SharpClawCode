@@ -19,4 +19,10 @@ public static class ParityProviderScenario
     /// Delays long enough to let timeout and recovery scenarios cancel the stream.
     /// </summary>
     public const string StreamSlow = "stream_slow";
+
+    /// <summary>
+    /// Simulates a tool-calling roundtrip: first call emits a tool-use event,
+    /// second call (with tool results in messages) emits a text response.
+    /// </summary>
+    public const string ToolCallRoundtrip = "tool_call_roundtrip";
 }

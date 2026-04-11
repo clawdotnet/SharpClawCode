@@ -5,8 +5,14 @@ using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Agents.Internal;
 using SharpClaw.Code.Agents.Models;
+using SharpClaw.Code.Permissions.Models;
+using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Events;
+using SharpClaw.Code.Protocol.Models;
+using SharpClaw.Code.Tools.Abstractions;
+using SharpClaw.Code.Tools.Models;
+using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
 
 namespace SharpClaw.Code.Agents.Services;
 
@@ -15,6 +21,7 @@ namespace SharpClaw.Code.Agents.Services;
 /// </summary>
 public sealed class AgentFrameworkBridge(
     ProviderBackedAgentKernel providerBackedAgentKernel,
+    IToolRegistry toolRegistry,
     ISystemClock systemClock,
     ILogger<AgentFrameworkBridge> logger) : IAgentFrameworkBridge
 {
@@ -23,6 +30,34 @@ public sealed class AgentFrameworkBridge(
     {
         ArgumentNullException.ThrowIfNull(request);
 
+        // Build tool execution context from agent run context
+        var toolExecutionContext = new ToolExecutionContext(
+            SessionId: request.Context.SessionId,
+            TurnId: request.Context.TurnId,
+            WorkspaceRoot: request.Context.WorkingDirectory,
+            WorkingDirectory: request.Context.WorkingDirectory,
+            PermissionMode: request.Context.PermissionMode,
+            OutputFormat: request.Context.OutputFormat,
+            EnvironmentVariables: null,
+            AllowedTools: null,
+            AllowDangerousBypass: false,
+            IsInteractive: false,
+            SourceKind: PermissionRequestSourceKind.Runtime,
+            SourceName: null,
+            TrustedPluginNames: null,
+            TrustedMcpServerNames: null,
+            PrimaryMode: request.Context.PrimaryMode,
+            MutationRecorder: request.Context.ToolMutationRecorder);
+
+        // Map tool definitions from the registry to provider tool definitions
+        var registryTools = await toolRegistry.ListAsync(
+            request.Context.WorkingDirectory,
+            cancellationToken).ConfigureAwait(false);
+
+        var providerTools = registryTools
+            .Select(t => new ProviderToolDefinition(t.Name, t.Description, t.InputSchemaJson))
+            .ToList();
+
         ProviderInvocationResult? providerResult = null;
         var frameworkAgent = new SharpClawFrameworkAgent(
             request.AgentId,
@@ -30,7 +65,11 @@ public sealed class AgentFrameworkBridge(
             request.Description,
             async (messages, session, runOptions, ct) =>
             {
-                providerResult = await providerBackedAgentKernel.ExecuteAsync(request, ct).ConfigureAwait(false);
+                providerResult = await providerBackedAgentKernel.ExecuteAsync(
+                    request,
+                    toolExecutionContext,
+                    providerTools,
+                    ct).ConfigureAwait(false);
                 return new AgentResponse(new ChatMessage(ChatRole.Assistant, providerResult.Output));
             });
 
@@ -58,7 +97,8 @@ public sealed class AgentFrameworkBridge(
             ProviderEvents: null);
 
         logger.LogInformation("Completed framework-backed agent run for {AgentId}.", request.AgentId);
-        var events = new RuntimeEvent[]
+
+        var events = new List<RuntimeEvent>
         {
             new AgentSpawnedEvent(
                 EventId: $"event-{Guid.NewGuid():N}",
@@ -79,6 +119,12 @@ public sealed class AgentFrameworkBridge(
                 Usage: resolvedProviderResult.Usage)
         };
 
+        // Include tool-related events from the kernel
+        if (resolvedProviderResult.ToolEvents is { Count: > 0 } toolEvents)
+        {
+            events.AddRange(toolEvents);
+        }
+
         return new AgentRunResult(
             AgentId: request.AgentId,
             AgentKind: request.AgentKind,
@@ -87,7 +133,7 @@ public sealed class AgentFrameworkBridge(
             Summary: resolvedProviderResult.Summary,
             ProviderRequest: resolvedProviderResult.ProviderRequest,
             ProviderEvents: resolvedProviderResult.ProviderEvents,
-            ToolResults: [],
+            ToolResults: resolvedProviderResult.ToolResults ?? [],
             Events: events);
     }
 }

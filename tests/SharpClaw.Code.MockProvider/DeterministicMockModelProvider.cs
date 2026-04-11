@@ -72,6 +72,20 @@ public sealed class DeterministicMockModelProvider : IModelProvider
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
                 yield return CreateTerminal(request, sequence: 2);
                 yield break;
+            case ParityProviderScenario.ToolCallRoundtrip:
+                // Check if the request already contains tool-result content (second iteration)
+                if (HasToolResultInMessages(request))
+                {
+                    yield return CreateDelta(request, sequence: 1, "Tool result received");
+                    yield return CreateTerminal(request, sequence: 2);
+                }
+                else
+                {
+                    // First iteration: emit a tool-use event
+                    yield return CreateToolUse(request, sequence: 1, "toolu_mock_001", "read_file", """{"path":"test.txt"}""");
+                    yield return CreateTerminal(request, sequence: 2);
+                }
+                yield break;
             case ParityProviderScenario.StreamingText:
             default:
                 yield return CreateDelta(request, sequence: 1, "Hello ");
@@ -79,6 +93,27 @@ public sealed class DeterministicMockModelProvider : IModelProvider
                 yield return CreateTerminal(request, sequence: 3);
                 yield break;
         }
+    }
+
+    private static bool HasToolResultInMessages(ProviderRequest request)
+    {
+        if (request.Messages is null)
+        {
+            return false;
+        }
+
+        foreach (var message in request.Messages)
+        {
+            foreach (var block in message.Content)
+            {
+                if (block.Kind == Protocol.Models.ContentBlockKind.ToolResult)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     private static ProviderEvent CreateDelta(ProviderRequest request, int sequence, string content)
@@ -90,6 +125,20 @@ public sealed class DeterministicMockModelProvider : IModelProvider
             Content: content,
             IsTerminal: false,
             Usage: null);
+
+    private static ProviderEvent CreateToolUse(ProviderRequest request, int sequence, string toolUseId, string toolName, string toolInputJson)
+        => new(
+            Id: CreateEventId(request, sequence),
+            RequestId: request.Id,
+            Kind: "tool_use",
+            CreatedAtUtc: CreateTimestamp(sequence),
+            Content: null,
+            IsTerminal: false,
+            Usage: null,
+            BlockType: "tool_use",
+            ToolUseId: toolUseId,
+            ToolName: toolName,
+            ToolInputJson: toolInputJson);
 
     private static ProviderEvent CreateTerminal(ProviderRequest request, int sequence)
         => new(

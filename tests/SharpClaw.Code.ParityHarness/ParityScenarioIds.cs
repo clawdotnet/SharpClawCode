@@ -17,6 +17,7 @@ internal static class ParityScenarioIds
     public const string PluginToolRoundtrip = "plugin_tool_roundtrip";
     public const string McpPartialStartup = "mcp_partial_startup";
     public const string RecoveryAfterTimeout = "recovery_after_timeout";
+    public const string ToolCallRoundtrip = "tool_call_roundtrip";
 
     /// <summary>
     /// All first-class parity scenarios expected in this harness.
@@ -34,5 +35,6 @@ internal static class ParityScenarioIds
         PluginToolRoundtrip,
         McpPartialStartup,
         RecoveryAfterTimeout,
+        ToolCallRoundtrip,
     ];
 }
