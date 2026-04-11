@@ -60,6 +60,24 @@ internal static class OpenAiMeaiStreamAdapter
                     yield return ProviderStreamEventFactory.Delta(requestId, clock, text);
                 }
 
+                if (update.Contents is not null)
+                {
+                    foreach (var content in update.Contents)
+                    {
+                        if (content is FunctionCallContent functionCall)
+                        {
+                            var argsJson = functionCall.Arguments is not null
+                                ? System.Text.Json.JsonSerializer.Serialize(functionCall.Arguments)
+                                : "{}";
+                            yield return ProviderStreamEventFactory.ToolUse(
+                                requestId, clock,
+                                functionCall.CallId ?? $"call-{Guid.NewGuid():N}",
+                                functionCall.Name ?? "unknown",
+                                argsJson);
+                        }
+                    }
+                }
+
                 if (update.FinishReason is { } finish && !string.IsNullOrEmpty(finish.Value))
                 {
                     var usage = ProviderStreamEventFactory.TryUsageFromUpdate(update);

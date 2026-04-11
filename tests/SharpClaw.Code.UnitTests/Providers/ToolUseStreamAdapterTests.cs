@@ -201,6 +201,124 @@ public sealed class ToolUseStreamAdapterTests
         tool.InputSchema.Should().NotBeNull();
     }
 
+    [Fact]
+    public void OpenAi_message_builder_maps_roles_correctly()
+    {
+        var messages = new[]
+        {
+            new ProtocolModels.ChatMessage("system", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "You are a helpful assistant.", null, null, null, null),
+            }),
+            new ProtocolModels.ChatMessage("user", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "Hello", null, null, null, null),
+            }),
+            new ProtocolModels.ChatMessage("assistant", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "Hi there", null, null, null, null),
+            }),
+        };
+
+        var result = OpenAiMessageBuilder.BuildMessages(messages);
+
+        result.Should().HaveCount(3);
+        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.System);
+        result[1].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.User);
+        result[2].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.Assistant);
+    }
+
+    [Fact]
+    public void OpenAi_message_builder_maps_tool_use_to_function_call_content()
+    {
+        var messages = new[]
+        {
+            new ProtocolModels.ChatMessage("assistant", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "Let me check.", null, null, null, null),
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.ToolUse, null, "call-99", "read_file", "{\"path\":\"src/main.cs\"}", null),
+            }),
+        };
+
+        var result = OpenAiMessageBuilder.BuildMessages(messages);
+
+        result.Should().HaveCount(1);
+        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.Assistant);
+        result[0].Contents.Should().HaveCount(2);
+
+        var textItem = result[0].Contents[0];
+        textItem.Should().BeOfType<Microsoft.Extensions.AI.TextContent>();
+        ((Microsoft.Extensions.AI.TextContent)textItem).Text.Should().Be("Let me check.");
+
+        var callItem = result[0].Contents[1];
+        callItem.Should().BeOfType<Microsoft.Extensions.AI.FunctionCallContent>();
+        var functionCall = (Microsoft.Extensions.AI.FunctionCallContent)callItem;
+        functionCall.CallId.Should().Be("call-99");
+        functionCall.Name.Should().Be("read_file");
+    }
+
+    [Fact]
+    public void OpenAi_message_builder_maps_tool_result_to_function_result_content()
+    {
+        var messages = new[]
+        {
+            new ProtocolModels.ChatMessage("user", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.ToolResult, "namespace Foo;", "call-99", null, null, false),
+            }),
+        };
+
+        var result = OpenAiMessageBuilder.BuildMessages(messages);
+
+        result.Should().HaveCount(1);
+        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.User);
+        result[0].Contents.Should().HaveCount(1);
+
+        var resultItem = result[0].Contents[0];
+        resultItem.Should().BeOfType<Microsoft.Extensions.AI.FunctionResultContent>();
+        var functionResult = (Microsoft.Extensions.AI.FunctionResultContent)resultItem;
+        functionResult.CallId.Should().Be("call-99");
+        functionResult.Result.Should().Be("namespace Foo;");
+    }
+
+    [Fact]
+    public void OpenAi_message_builder_builds_tools_from_definitions()
+    {
+        var definitions = new[]
+        {
+            new ProtocolModels.ProviderToolDefinition(
+                "read_file",
+                "Read the contents of a file.",
+                """{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}"""),
+        };
+
+        var result = OpenAiMessageBuilder.BuildTools(definitions);
+
+        result.Should().HaveCount(1);
+        result[0].Should().NotBeNull();
+
+        var funcDecl = result[0] as Microsoft.Extensions.AI.AIFunctionDeclaration;
+        funcDecl.Should().NotBeNull();
+        funcDecl!.Name.Should().Be("read_file");
+        funcDecl.Description.Should().Be("Read the contents of a file.");
+    }
+
+    [Fact]
+    public void OpenAi_message_builder_handles_null_input_schema_for_tools()
+    {
+        var definitions = new[]
+        {
+            new ProtocolModels.ProviderToolDefinition("noop", "Does nothing.", null),
+        };
+
+        var result = OpenAiMessageBuilder.BuildTools(definitions);
+
+        result.Should().HaveCount(1);
+        var funcDecl = result[0] as Microsoft.Extensions.AI.AIFunctionDeclaration;
+        funcDecl.Should().NotBeNull();
+        funcDecl!.Name.Should().Be("noop");
+    }
+
     /// <summary>
     /// Creates a <see cref="ToolUseBlock"/> with all required members set, using the raw JSON deserialization path.
     /// </summary>
