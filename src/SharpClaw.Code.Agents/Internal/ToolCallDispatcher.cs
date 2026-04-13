@@ -22,38 +22,37 @@ public sealed class ToolCallDispatcher(
         ToolExecutionContext context,
         CancellationToken cancellationToken)
     {
-        var toolName = toolUseEvent.ToolName ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(toolUseEvent.ToolName))
+        {
+            return (new ContentBlock(ContentBlockKind.ToolResult, "Tool call missing required tool name.", toolUseEvent.ToolUseId, null, null, true),
+                new ToolResult("unknown", "unknown", false, Protocol.Enums.OutputFormat.Text, null, "Tool call missing required tool name.", 1, null, null), []);
+        }
+
+        if (string.IsNullOrWhiteSpace(toolUseEvent.ToolUseId))
+        {
+            return (new ContentBlock(ContentBlockKind.ToolResult, "Tool call missing required tool use ID.", null, null, null, true),
+                new ToolResult("unknown", toolUseEvent.ToolName, false, Protocol.Enums.OutputFormat.Text, null, "Tool call missing required tool use ID.", 1, null, null), []);
+        }
+
+        var toolName = toolUseEvent.ToolName;
         var toolInputJson = toolUseEvent.ToolInputJson ?? "{}";
-        var toolUseId = toolUseEvent.ToolUseId ?? string.Empty;
+        var toolUseId = toolUseEvent.ToolUseId;
 
         var collectedEvents = new List<RuntimeEvent>();
 
-        // Build a minimal ToolExecutionRequest for the ToolStartedEvent
-        var requestId = $"event-{Guid.NewGuid():N}";
-        var startRequest = new Protocol.Models.ToolExecutionRequest(
-            Id: requestId,
-            SessionId: context.SessionId,
-            TurnId: context.TurnId,
-            ToolName: toolName,
-            ArgumentsJson: toolInputJson,
-            ApprovalScope: Protocol.Enums.ApprovalScope.ToolExecution,
-            WorkingDirectory: context.WorkingDirectory,
-            RequiresApproval: false,
-            IsDestructive: false);
+        // 1. Execute the tool (this builds the real ToolExecutionRequest internally with correct approval/destructive metadata)
+        var envelope = await toolExecutor.ExecuteAsync(toolName, toolInputJson, context, cancellationToken);
 
-        // 1. Publish ToolStartedEvent
+        // 2. Publish ToolStartedEvent using the real request from the executor (has correct approval scope, destructive flag, etc.)
         var startedEvent = new ToolStartedEvent(
             EventId: $"event-{Guid.NewGuid():N}",
             SessionId: context.SessionId,
             TurnId: context.TurnId,
             OccurredAtUtc: DateTimeOffset.UtcNow,
-            Request: startRequest);
+            Request: envelope.Request);
 
         await eventPublisher.PublishAsync(startedEvent, cancellationToken: cancellationToken);
         collectedEvents.Add(startedEvent);
-
-        // 2. Execute the tool
-        var envelope = await toolExecutor.ExecuteAsync(toolName, toolInputJson, context, cancellationToken);
 
         // 3. Publish ToolCompletedEvent
         var completedEvent = new ToolCompletedEvent(

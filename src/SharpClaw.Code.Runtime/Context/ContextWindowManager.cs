@@ -17,7 +17,7 @@ public static class ContextWindowManager
     /// Rules applied in priority order:
     /// <list type="number">
     ///   <item>The system message (role == "system") is always kept.</item>
-    ///   <item>The most-recent user message is always kept.</item>
+    ///   <item>The most-recent non-system message is always kept.</item>
     ///   <item>Oldest non-system messages are dropped until the budget is satisfied.</item>
     /// </list>
     /// </summary>

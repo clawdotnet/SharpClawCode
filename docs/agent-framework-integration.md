@@ -140,7 +140,7 @@ Key responsibilities:
    - Placeholder response when stream is empty
 
 **Loop Configuration:** Controlled by `AgentLoopOptions`:
-- `MaxToolIterations` — maximum rounds (default ~10)
+- `MaxToolIterations` — maximum rounds (default 25)
 - `MaxTokensPerRequest` — per-iteration token budget
 
 ### Layer 4: IModelProvider
@@ -288,29 +288,35 @@ Custom tools integrate via the registry and are automatically available to agent
 ```csharp
 public interface ISharpClawTool
 {
-    string Name { get; }
-    string Description { get; }
-    string InputSchemaJson { get; }
-    Task<string> ExecuteAsync(string input, ToolExecutionContext context, CancellationToken cancellationToken);
+    ToolDefinition Definition { get; }
+    PluginToolSource? PluginSource { get; }
+    Task<ToolResult> ExecuteAsync(ToolExecutionContext context, ToolExecutionRequest request, CancellationToken cancellationToken);
 }
 ```
 
-**Registration:** Tools register via `IToolRegistry`:
+**Implementation:** Extend `SharpClawToolBase` for the common pattern:
 
 ```csharp
-public sealed class YourCustomTool : ISharpClawTool
+public sealed class YourCustomTool(IPathService pathService) : SharpClawToolBase
 {
-    public string Name => "your-tool";
-    public string Description => "Does something useful";
-    public string InputSchemaJson => /* JSON Schema */;
+    public override ToolDefinition Definition { get; } = new(
+        Name: "your-tool",
+        Description: "Does something useful",
+        ApprovalScope: ApprovalScope.ToolExecution,
+        IsDestructive: false,
+        RequiresApproval: false,
+        InputTypeName: "YourToolArguments",
+        InputDescription: "JSON object with tool parameters.",
+        Tags: ["custom"]);
 
-    public async Task<string> ExecuteAsync(
-        string input,
+    public override async Task<ToolResult> ExecuteAsync(
         ToolExecutionContext context,
+        ToolExecutionRequest request,
         CancellationToken cancellationToken)
     {
-        // Perform work respecting context boundaries
-        // context.WorkspaceRoot, context.PermissionMode, context.SessionId, etc.
+        var arguments = DeserializeArguments<YourToolArguments>(request);
+        // Perform work respecting context.WorkspaceRoot, context.PermissionMode, etc.
+        return CreateSuccessResult(context, request, "output text", null);
     }
 }
 ```

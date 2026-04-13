@@ -12,7 +12,13 @@ public sealed class NdjsonTraceFileSink : IDisposable
 {
     private readonly StreamWriter _writer;
     private readonly ActivityListener _listener;
+    private readonly object _writeLock = new();
+    private bool _disposed;
 
+    /// <summary>
+    /// Initializes a new instance targeting the specified file path.
+    /// </summary>
+    /// <param name="filePath">The NDJSON output file path.</param>
     public NdjsonTraceFileSink(string filePath)
     {
         var directory = Path.GetDirectoryName(filePath);
@@ -44,12 +50,25 @@ public sealed class NdjsonTraceFileSink : IDisposable
             status = activity.Status.ToString(),
             tags = activity.Tags.ToDictionary(t => t.Key, t => t.Value),
         };
-        // Serialize with System.Text.Json (not source-generated — this is diagnostic-only)
-        _writer.WriteLine(JsonSerializer.Serialize(entry));
+        var line = JsonSerializer.Serialize(entry);
+
+        lock (_writeLock)
+        {
+            if (!_disposed)
+            {
+                _writer.WriteLine(line);
+            }
+        }
     }
 
+    /// <inheritdoc />
     public void Dispose()
     {
+        lock (_writeLock)
+        {
+            _disposed = true;
+        }
+
         _listener.Dispose();
         _writer.Dispose();
     }

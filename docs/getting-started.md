@@ -100,41 +100,46 @@ Supported formats: `text` (default), `json`, `markdown`.
 Set provider API keys before running the CLI:
 
 ```bash
-export SHARPCLAW_ANTHROPIC_API_KEY=sk-ant-...
+# .NET configuration uses double-underscore for nested keys in env vars
+export SharpClaw__Providers__Anthropic__ApiKey=sk-ant-...
 dotnet run --project src/SharpClaw.Code.Cli
 ```
 
-Supported environment variables:
+Supported environment variables (using .NET configuration path format):
 
-- `SHARPCLAW_ANTHROPIC_API_KEY` – Anthropic API key
-- `SHARPCLAW_OPENAI_API_KEY` – OpenAI API key
+- `SharpClaw__Providers__Anthropic__ApiKey` – Anthropic API key
+- `SharpClaw__Providers__OpenAiCompatible__ApiKey` – OpenAI-compatible API key
+- `SharpClaw__Providers__Catalog__DefaultProvider` – Default provider name
 
 ### Configuration File
 
-Alternatively, configure providers in `appsettings.json` (or `.local`):
+Alternatively, configure providers in `appsettings.json`:
 
 ```json
 {
   "SharpClaw": {
     "Providers": {
+      "Catalog": {
+        "DefaultProvider": "Anthropic"
+      },
       "Anthropic": {
         "ApiKey": "sk-ant-...",
-        "Model": "claude-3-5-sonnet-20241022"
+        "DefaultModel": "claude-sonnet-4-5"
       },
-      "OpenAI": {
+      "OpenAiCompatible": {
         "ApiKey": "sk-...",
-        "Model": "gpt-4-turbo"
+        "DefaultModel": "gpt-4-turbo"
       }
     }
   }
 }
 ```
 
-The runtime loads from:
-1. Environment variables (highest priority)
-2. `appsettings.{Environment}.json` (if applicable)
+The runtime loads from standard .NET configuration sources:
+1. Environment variables (highest priority, double-underscore path format)
+2. `appsettings.{Environment}.json`
 3. `appsettings.json` (default)
-4. `appsettings.local.json` (if present)
+4. Command-line arguments
 
 ## Embed in Your Own App
 

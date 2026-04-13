@@ -104,11 +104,11 @@ public sealed class ProviderBackedAgentKernel(
             }
 
             // --- Build initial conversation messages ---
+            // Do not add request.Instructions as a shared "system" chat message here.
+            // Provider adapters apply system instructions via ProviderRequest.SystemPrompt
+            // so providers that do not support a native "system" role (e.g. Anthropic)
+            // do not receive duplicated or remapped instruction turns.
             var messages = new List<ChatMessage>();
-            if (!string.IsNullOrWhiteSpace(request.Instructions))
-            {
-                messages.Add(new ChatMessage("system", [new ContentBlock(ContentBlockKind.Text, request.Instructions, null, null, null, null)]));
-            }
 
             // Prepend prior-turn conversation history for multi-turn context.
             if (request.Context.ConversationHistory is { Count: > 0 } history)
@@ -128,6 +128,8 @@ public sealed class ProviderBackedAgentKernel(
 
             for (var iteration = 0; iteration < options.MaxToolIterations; iteration++)
             {
+                UsageSnapshot? iterationUsage = null;
+
                 var providerRequest = providerRequestPreflight.Prepare(new ProviderRequest(
                     Id: $"provider-request-{Guid.NewGuid():N}",
                     SessionId: request.Context.SessionId,
@@ -170,12 +172,13 @@ public sealed class ProviderBackedAgentKernel(
 
                         if (providerEvent.IsTerminal && providerEvent.Usage is not null)
                         {
+                            iterationUsage = providerEvent.Usage;
                             terminalUsage = providerEvent.Usage;
                         }
                     }
 
                     providerSw.Stop();
-                    providerScope.SetCompleted(terminalUsage?.InputTokens, terminalUsage?.OutputTokens);
+                    providerScope.SetCompleted(iterationUsage?.InputTokens, iterationUsage?.OutputTokens);
                     SharpClawMeterSource.ProviderDuration.Record(providerSw.Elapsed.TotalMilliseconds);
                 }
                 catch (Exception ex)
