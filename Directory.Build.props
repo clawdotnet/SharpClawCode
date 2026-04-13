@@ -10,5 +10,12 @@
     <GenerateDocumentationFile Condition="'$(IsTestProject)' != 'true'">true</GenerateDocumentationFile>
     <GenerateDocumentationFile Condition="'$(IsTestProject)' == 'true'">false</GenerateDocumentationFile>
     <NoWarn Condition="'$(IsTestProject)' == 'true'">1591;$(NoWarn)</NoWarn>
+    <Authors>clawdotnet</Authors>
+    <Company>clawdotnet</Company>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/clawdotnet/SharpClawCode</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/clawdotnet/SharpClawCode</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <Copyright>Copyright (c) 2025 clawdotnet</Copyright>
   </PropertyGroup>
 </Project>

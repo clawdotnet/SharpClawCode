@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Restore
+        run: dotnet restore SharpClawCode.sln
+      - name: Build
+        run: dotnet build SharpClawCode.sln --no-restore --configuration Release
+      - name: Test
+        run: dotnet test SharpClawCode.sln --no-build --configuration Release
+      - name: Pack
+        run: dotnet pack SharpClawCode.sln --no-build --configuration Release --output ./nupkg
+      - name: Push to NuGet
+        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate

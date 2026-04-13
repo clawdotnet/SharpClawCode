@@ -10,6 +10,10 @@ namespace SharpClaw.Code.Protocol.Models;
 /// <param name="Content">The textual or structured event payload, if any.</param>
 /// <param name="IsTerminal">Indicates whether the event terminates the provider interaction.</param>
 /// <param name="Usage">The usage snapshot associated with the event, if any.</param>
+/// <param name="BlockType">The content block type for structured provider responses, if any.</param>
+/// <param name="ToolUseId">The tool-use block identifier when the provider requests a tool call, if any.</param>
+/// <param name="ToolName">The name of the tool the provider is requesting to call, if any.</param>
+/// <param name="ToolInputJson">The JSON-encoded input arguments for the requested tool call, if any.</param>
 public sealed record ProviderEvent(
     string Id,
     string RequestId,
@@ -17,4 +21,8 @@ public sealed record ProviderEvent(
     DateTimeOffset CreatedAtUtc,
     string? Content,
     bool IsTerminal,
-    UsageSnapshot? Usage);
+    UsageSnapshot? Usage,
+    string? BlockType = null,
+    string? ToolUseId = null,
+    string? ToolName = null,
+    string? ToolInputJson = null);

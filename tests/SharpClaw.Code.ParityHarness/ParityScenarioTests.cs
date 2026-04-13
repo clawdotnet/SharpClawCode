@@ -318,13 +318,37 @@ public sealed class ParityScenarioTests : IAsyncLifetime
         session!.State.Should().Be(SessionLifecycleState.Failed);
     }
 
+    [Fact]
+    public async Task Tool_call_roundtrip_executes_loop_and_returns_final_text()
+    {
+        // Create the fixture file the mock tool-use will request
+        await File.WriteAllTextAsync(Path.Combine(_workspace, "test.txt"), "fixture-content");
+
+        using var provider = ParityTestHost.Create(replaceApprovals: null);
+        var runtime = ParityTestHost.GetConversation(provider);
+        var turn = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "tool roundtrip",
+                SessionId: null,
+                WorkingDirectory: _workspace,
+                PermissionMode.WorkspaceWrite,
+                OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    [ParityMetadataKeys.Scenario] = ParityProviderScenario.ToolCallRoundtrip,
+                }),
+            CancellationToken.None);
+
+        turn.FinalOutput.Should().Contain("Tool result received");
+    }
+
     /// <summary>
     /// Documents parity catalog entries for discoverability in test runners.
     /// </summary>
     [Fact]
     public void Scenario_catalog_contains_expected_keys()
     {
-        ParityScenarioIds.All.Should().HaveCount(11);
+        ParityScenarioIds.All.Should().HaveCount(12);
         ParityScenarioIds.All.Should().OnlyHaveUniqueItems();
     }
 }

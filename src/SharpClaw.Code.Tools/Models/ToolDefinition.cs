@@ -13,6 +13,7 @@ namespace SharpClaw.Code.Tools.Models;
 /// <param name="InputTypeName">The CLR argument contract type name used by the tool.</param>
 /// <param name="InputDescription">A concise description of the JSON input shape.</param>
 /// <param name="Tags">Searchable tags for discoverability.</param>
+/// <param name="InputSchemaJson">The JSON Schema describing the tool's input parameters, if any.</param>
 public sealed record ToolDefinition(
     string Name,
     string Description,
@@ -21,4 +22,5 @@ public sealed record ToolDefinition(
     bool RequiresApproval,
     string InputTypeName,
     string InputDescription,
-    string[] Tags);
+    string[] Tags,
+    string? InputSchemaJson = null);

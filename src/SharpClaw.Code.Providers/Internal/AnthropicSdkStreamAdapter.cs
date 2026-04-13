@@ -19,6 +19,11 @@ internal static class AnthropicSdkStreamAdapter
         ISystemClock clock,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
+        // Track the current tool_use block being accumulated across events.
+        string? pendingToolUseId = null;
+        string? pendingToolName = null;
+        System.Text.StringBuilder? pendingToolInputBuilder = null;
+
         IAsyncEnumerator<RawMessageStreamEvent>? enumerator = null;
         try
         {
@@ -53,12 +58,37 @@ internal static class AnthropicSdkStreamAdapter
                 }
 
                 var ev = enumerator.Current;
-                if (ev.TryPickContentBlockDelta(out var blockDelta))
+
+                if (ev.TryPickContentBlockStart(out var blockStart))
                 {
-                    var deltaText = ExtractTextDelta(blockDelta.Delta);
+                    if (blockStart.ContentBlock.TryPickToolUse(out var toolUse))
+                    {
+                        pendingToolUseId = toolUse.ID;
+                        pendingToolName = toolUse.Name;
+                        pendingToolInputBuilder = new System.Text.StringBuilder();
+                    }
+                }
+                else if (ev.TryPickContentBlockDelta(out var blockDelta))
+                {
+                    var (deltaText, partialJson) = ExtractDeltas(blockDelta.Delta);
                     if (!string.IsNullOrEmpty(deltaText))
                     {
                         yield return ProviderStreamEventFactory.Delta(requestId, clock, deltaText);
+                    }
+                    else if (partialJson is not null && pendingToolInputBuilder is not null)
+                    {
+                        pendingToolInputBuilder.Append(partialJson);
+                    }
+                }
+                else if (ev.TryPickContentBlockStop(out _))
+                {
+                    if (pendingToolUseId is not null && pendingToolName is not null && pendingToolInputBuilder is not null)
+                    {
+                        var toolInputJson = pendingToolInputBuilder.ToString();
+                        yield return ProviderStreamEventFactory.ToolUse(requestId, clock, pendingToolUseId, pendingToolName, toolInputJson);
+                        pendingToolUseId = null;
+                        pendingToolName = null;
+                        pendingToolInputBuilder = null;
                     }
                 }
                 else if (ev.TryPickStop(out _))
@@ -79,11 +109,18 @@ internal static class AnthropicSdkStreamAdapter
         yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
     }
 
-    private static string? ExtractTextDelta(RawContentBlockDelta delta)
-        => delta.Match<string?>(
-            text => text.Text,
-            _ => null,
-            _ => null,
-            _ => null,
-            _ => null);
+    private static (string? Text, string? PartialJson) ExtractDeltas(RawContentBlockDelta delta)
+    {
+        string? text = null;
+        string? partialJson = null;
+
+        delta.Match<int>(
+            textDelta => { text = textDelta.Text; return 0; },
+            inputJsonDelta => { partialJson = inputJsonDelta.PartialJson; return 0; },
+            _ => 0,
+            _ => 0,
+            _ => 0);
+
+        return (text, partialJson);
+    }
 }

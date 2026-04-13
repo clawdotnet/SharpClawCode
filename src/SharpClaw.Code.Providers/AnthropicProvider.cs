@@ -38,20 +38,42 @@ public sealed class AnthropicProvider(
         var systemPrompt = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt;
         float? temperature = request.Temperature.HasValue ? (float)request.Temperature.Value : null;
 
-        var parameters = new MessageCreateParams
+        MessageCreateParams parameters;
+
+        if (request.Messages is not null)
         {
-            MaxTokens = 1024,
-            Model = modelId,
-            Messages =
-            [
-                new MessageParam
-                {
-                    Role = Role.User,
-                    Content = request.Prompt,
-                },
-            ],
-            Temperature = temperature,
-        };
+            var messages = Internal.AnthropicMessageBuilder.BuildMessages(request.Messages);
+            parameters = new MessageCreateParams
+            {
+                MaxTokens = request.MaxTokens ?? 1024,
+                Model = modelId,
+                Messages = messages,
+                Temperature = temperature,
+            };
+
+            if (request.Tools is { Count: > 0 } tools)
+            {
+                var anthropicTools = Internal.AnthropicMessageBuilder.BuildTools(tools);
+                parameters = parameters with { Tools = anthropicTools };
+            }
+        }
+        else
+        {
+            parameters = new MessageCreateParams
+            {
+                MaxTokens = request.MaxTokens ?? 1024,
+                Model = modelId,
+                Messages =
+                [
+                    new MessageParam
+                    {
+                        Role = Role.User,
+                        Content = request.Prompt,
+                    },
+                ],
+                Temperature = temperature,
+            };
+        }
 
         if (systemPrompt is not null)
         {

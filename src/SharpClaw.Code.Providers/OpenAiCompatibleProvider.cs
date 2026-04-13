@@ -47,11 +47,24 @@ public sealed class OpenAiCompatibleProvider(
         var nativeClient = openAiClient.GetChatClient(modelId);
         using var chatClient = nativeClient.AsIChatClient();
 
-        var messages = BuildChatMessages(request);
+        var messages = request.Messages is not null
+            ? OpenAiMessageBuilder.BuildMessages(request.Messages)
+            : BuildChatMessages(request);
+
         var chatOptions = new ChatOptions();
         if (request.Temperature is { } temp)
         {
             chatOptions.Temperature = (float)temp;
+        }
+
+        if (request.MaxTokens is { } maxTokens)
+        {
+            chatOptions.MaxOutputTokens = maxTokens;
+        }
+
+        if (request.Tools is { Count: > 0 } toolDefs)
+        {
+            chatOptions.Tools = OpenAiMessageBuilder.BuildTools(toolDefs);
         }
 
         var updates = chatClient.GetStreamingResponseAsync(messages, chatOptions, cancellationToken);

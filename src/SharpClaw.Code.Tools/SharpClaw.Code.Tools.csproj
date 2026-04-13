@@ -15,6 +15,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Built-in tools and permission-aware tool execution for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>

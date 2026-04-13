@@ -16,6 +16,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Model Context Protocol client integration for SharpClaw Code.</Description>
   </PropertyGroup>
 
   <ItemGroup>

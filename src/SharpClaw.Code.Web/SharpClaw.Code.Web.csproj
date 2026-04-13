@@ -15,6 +15,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Web search and fetch services for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>

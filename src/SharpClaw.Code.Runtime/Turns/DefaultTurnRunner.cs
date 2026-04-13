@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Agents.Agents;
 using SharpClaw.Code.Agents.Models;
@@ -5,6 +6,8 @@ using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Workflow;
+using SharpClaw.Code.Telemetry.Diagnostics;
+using SharpClaw.Code.Telemetry.Metrics;
 using SharpClaw.Code.Tools.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Turns;
@@ -54,9 +57,31 @@ public sealed class DefaultTurnRunner(
             Metadata: promptContext.Metadata,
             PrimaryMode: primaryMode,
             ToolMutationRecorder: mutationAccumulator,
-            DelegatedTask: request.DelegatedTask);
+            DelegatedTask: request.DelegatedTask,
+            ConversationHistory: promptContext.ConversationHistory);
 
-        var agentResult = await agent.RunAsync(agentContext, cancellationToken).ConfigureAwait(false);
+        using var turnScope = new TurnActivityScope(session.Id, turn.Id, promptContext.Prompt);
+        var sw = Stopwatch.StartNew();
+        AgentRunResult agentResult;
+        try
+        {
+            agentResult = await agent.RunAsync(agentContext, cancellationToken).ConfigureAwait(false);
+            sw.Stop();
+            turnScope.SetOutput(agentResult.Output, agentResult.Usage?.InputTokens, agentResult.Usage?.OutputTokens);
+            SharpClawMeterSource.TurnDuration.Record(sw.Elapsed.TotalMilliseconds);
+            if (agentResult.Usage is not null)
+            {
+                SharpClawMeterSource.InputTokens.Add(agentResult.Usage.InputTokens);
+                SharpClawMeterSource.OutputTokens.Add(agentResult.Usage.OutputTokens);
+            }
+        }
+        catch (Exception ex)
+        {
+            sw.Stop();
+            turnScope.SetError(ex);
+            throw;
+        }
+
         var mutations = mutationAccumulator.ToSnapshot();
         return new TurnRunResult(
             Output: agentResult.Output,

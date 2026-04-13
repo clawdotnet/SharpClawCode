@@ -20,6 +20,10 @@ namespace SharpClaw.Code.Agents.Models;
 /// <param name="DelegatedTask">The bounded delegated task contract, if any.</param>
 /// <param name="PrimaryMode">Active build vs plan workflow mode for tool permission behavior.</param>
 /// <param name="ToolMutationRecorder">Optional mutation recorder forwarded to tool executions.</param>
+/// <param name="ConversationHistory">
+/// Prior-turn messages assembled from session events. When non-empty these are prepended
+/// to the provider request so the model has multi-turn context.
+/// </param>
 public sealed record AgentRunContext(
     string SessionId,
     string TurnId,
@@ -33,4 +37,5 @@ public sealed record AgentRunContext(
     string? ParentAgentId = null,
     DelegatedTaskContract? DelegatedTask = null,
     PrimaryMode PrimaryMode = PrimaryMode.Build,
-    IToolMutationRecorder? ToolMutationRecorder = null);
+    IToolMutationRecorder? ToolMutationRecorder = null,
+    IReadOnlyList<ChatMessage>? ConversationHistory = null);

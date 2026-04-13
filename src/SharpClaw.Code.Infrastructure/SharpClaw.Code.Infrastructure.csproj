@@ -10,6 +10,7 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <Description>Shared infrastructure services for SharpClaw Code.</Description>
   </PropertyGroup>
 
 </Project>
