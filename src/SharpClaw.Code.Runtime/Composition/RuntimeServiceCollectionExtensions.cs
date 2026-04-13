@@ -13,6 +13,7 @@ using SharpClaw.Code.Tools;
 using SharpClaw.Code.Mcp.Abstractions;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Context;
+using SharpClaw.Code.Runtime.Configuration;
 using SharpClaw.Code.Runtime.CustomCommands;
 using SharpClaw.Code.Runtime.Bridge;
 using SharpClaw.Code.Runtime.Diagnostics;
@@ -23,6 +24,8 @@ using SharpClaw.Code.Runtime.Mutations;
 using SharpClaw.Code.Runtime.Prompts;
 using SharpClaw.Code.Runtime.Sessions;
 using SharpClaw.Code.Runtime.Specs;
+using SharpClaw.Code.Runtime.Server;
+using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Runtime.Turns;
 using SharpClaw.Code.Sessions.Abstractions;
 using SharpClaw.Code.Sessions.Storage;
@@ -106,6 +109,13 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<ICustomCommandDiscoveryService, CustomCommandDiscoveryService>();
         services.AddSingleton<IPromptReferenceResolver, PromptReferenceResolver>();
         services.AddSingleton<ISpecWorkflowService, SpecWorkflowService>();
+        services.AddSingleton<ISharpClawConfigService, SharpClawConfigService>();
+        services.AddSingleton<IAgentCatalogService, AgentCatalogService>();
+        services.AddSingleton<IWorkspaceDiagnosticsService, WorkspaceDiagnosticsService>();
+        services.AddSingleton<IShareSessionService, ShareSessionService>();
+        services.AddSingleton<IConversationCompactionService, ConversationCompactionService>();
+        services.AddSingleton<IHookDispatcher, HookDispatcher>();
+        services.AddSingleton<IWorkspaceHttpServer, WorkspaceHttpServer>();
         services.AddSingleton<ISessionExportService, SessionExportService>();
         services.AddSingleton<IPromptContextAssembler, PromptContextAssembler>();
         services.AddSingleton<ITurnRunner, DefaultTurnRunner>();
@@ -138,6 +148,7 @@ public static class RuntimeServiceCollectionExtensions
             sp.GetRequiredService<IMcpRegistry>(),
             sp.GetRequiredService<IPluginManager>(),
             sp.GetRequiredService<IEventStore>(),
+            sp.GetRequiredService<IWorkspaceDiagnosticsService>(),
             sp.GetService<IConfiguration>()));
     }
 }

@@ -110,5 +110,6 @@ public sealed class CliCommandFactory(
             context.PermissionMode,
             context.OutputFormat,
             context.PrimaryMode,
-            context.SessionId);
+            context.SessionId,
+            context.AgentId);
 }

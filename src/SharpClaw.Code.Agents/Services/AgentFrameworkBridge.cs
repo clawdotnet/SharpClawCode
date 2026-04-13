@@ -1,6 +1,7 @@
 using Microsoft.Agents.AI;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
+using System.Text.Json;
 using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Agents.Internal;
@@ -10,6 +11,7 @@ using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
+using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.Models;
 using ChatMessage = Microsoft.Extensions.AI.ChatMessage;
@@ -29,6 +31,7 @@ public sealed class AgentFrameworkBridge(
     public async Task<AgentRunResult> RunAsync(AgentFrameworkRequest request, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
+        var allowedTools = ResolveAllowedTools(request.Context.Metadata);
 
         // Build tool execution context from agent run context
         var toolExecutionContext = new ToolExecutionContext(
@@ -39,7 +42,7 @@ public sealed class AgentFrameworkBridge(
             PermissionMode: request.Context.PermissionMode,
             OutputFormat: request.Context.OutputFormat,
             EnvironmentVariables: null,
-            AllowedTools: null,
+            AllowedTools: allowedTools,
             AllowDangerousBypass: false,
             IsInteractive: false,
             SourceKind: PermissionRequestSourceKind.Runtime,
@@ -135,5 +138,24 @@ public sealed class AgentFrameworkBridge(
             ProviderEvents: resolvedProviderResult.ProviderEvents,
             ToolResults: resolvedProviderResult.ToolResults ?? [],
             Events: events);
+    }
+
+    private static IReadOnlyCollection<string>? ResolveAllowedTools(IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (metadata is null
+            || !metadata.TryGetValue(SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson, out var payload)
+            || string.IsNullOrWhiteSpace(payload))
+        {
+            return null;
+        }
+
+        try
+        {
+            return JsonSerializer.Deserialize(payload, ProtocolJsonContext.Default.StringArray);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
     }
 }

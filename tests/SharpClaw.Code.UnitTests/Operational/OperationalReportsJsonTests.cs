@@ -54,6 +54,9 @@ public sealed class OperationalReportsJsonTests
             McpFaultedCount: 1,
             PluginInstalledCount: 2,
             PluginEnabledCount: 1,
+            LspServerCount: 1,
+            DiagnosticsErrorCount: 2,
+            DiagnosticsWarningCount: 3,
             Checks: [new OperationalCheckItem("session.store", OperationalCheckStatus.Ok, "fine", null)]);
 
         var json = JsonSerializer.Serialize(original, ProtocolJsonContext.Default.RuntimeStatusReport);
@@ -61,6 +64,8 @@ public sealed class OperationalReportsJsonTests
         restored.Should().NotBeNull();
         restored!.LatestSessionState.Should().Be(SessionLifecycleState.Active);
         restored.McpFaultedCount.Should().Be(1);
+        restored.LspServerCount.Should().Be(1);
+        restored.DiagnosticsErrorCount.Should().Be(2);
         restored.Checks.Should().HaveCount(1);
     }
 

@@ -26,12 +26,20 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<IReplHost, ReplHost>();
         services.AddSingleton<IReplTerminal, Terminal.SpectreReplTerminal>();
         services.AddSingleton<ReplCommandHandler>();
+        services.AddSingleton<SessionCommandHandler>();
         services.AddSingleton<AcpStdioHost>();
 
         services.AddSingleton<ICommandHandler, PromptCommandHandler>();
         services.AddSingleton<ICommandHandler, StatusCommandHandler>();
         services.AddSingleton<ICommandHandler, DoctorCommandHandler>();
-        services.AddSingleton<ICommandHandler, SessionCommandHandler>();
+        services.AddSingleton<ICommandHandler>(serviceProvider => serviceProvider.GetRequiredService<SessionCommandHandler>());
+        services.AddSingleton<ICommandHandler, ModelsCommandHandler>();
+        services.AddSingleton<ICommandHandler, ConnectCommandHandler>();
+        services.AddSingleton<ICommandHandler, AgentsCommandHandler>();
+        services.AddSingleton<ICommandHandler, ShareCommandHandler>();
+        services.AddSingleton<ICommandHandler, UnshareCommandHandler>();
+        services.AddSingleton<ICommandHandler, CompactCommandHandler>();
+        services.AddSingleton<ICommandHandler, ServeCommandHandler>();
         services.AddSingleton<ICommandHandler, CommandsCommandHandler>();
         services.AddSingleton<ICommandHandler, McpCommandHandler>();
         services.AddSingleton<ICommandHandler, PluginsCommandHandler>();
@@ -41,7 +49,15 @@ public static class CliServiceCollectionExtensions
 
         services.AddSingleton<ISlashCommandHandler, StatusCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, DoctorCommandHandler>();
-        services.AddSingleton<ISlashCommandHandler, SessionCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler>(serviceProvider => serviceProvider.GetRequiredService<SessionCommandHandler>());
+        services.AddSingleton<ISlashCommandHandler, SessionsSlashCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, ModelsCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, ConnectCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, AgentsCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, ShareCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, UnshareCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, CompactCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, ServeCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, CommandsCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ModeSlashCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, EditorSlashCommandHandler>();

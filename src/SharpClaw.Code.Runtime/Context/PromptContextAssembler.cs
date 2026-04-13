@@ -21,6 +21,7 @@ public sealed class PromptContextAssembler(
     IGitWorkspaceService gitWorkspaceService,
     IPromptReferenceResolver promptReferenceResolver,
     ISpecWorkflowService specWorkflowService,
+    IWorkspaceDiagnosticsService workspaceDiagnosticsService,
     IEventStore eventStore) : IPromptContextAssembler
 {
     /// <inheritdoc />
@@ -41,13 +42,15 @@ public sealed class PromptContextAssembler(
         var sessionSummaryTask = sessionSummaryService.BuildSummaryAsync(session, cancellationToken);
         var skillsTask = skillRegistry.ListAsync(workspaceRoot, cancellationToken);
         var gitTask = gitWorkspaceService.GetSnapshotAsync(workspaceRoot, cancellationToken);
+        var diagnosticsTask = workspaceDiagnosticsService.BuildSnapshotAsync(workspaceRoot, cancellationToken);
 
-        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask).ConfigureAwait(false);
+        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask).ConfigureAwait(false);
 
         var memoryContext = await memoryContextTask.ConfigureAwait(false);
         var sessionSummary = await sessionSummaryTask.ConfigureAwait(false);
         var skills = await skillsTask.ConfigureAwait(false);
         var gitSnapshot = await gitTask.ConfigureAwait(false);
+        var diagnostics = await diagnosticsTask.ConfigureAwait(false);
 
         var metadata = request.Metadata is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
@@ -113,6 +116,18 @@ public sealed class PromptContextAssembler(
         }
 
         sections.Add(gitSnapshot.RenderForPrompt());
+        if (diagnostics.Diagnostics.Count > 0 || diagnostics.ConfiguredLspServers.Count > 0)
+        {
+            var topDiagnostics = diagnostics.Diagnostics.Take(5)
+                .Select(item => $"- {item.Severity}: {item.Message}" + (string.IsNullOrWhiteSpace(item.FilePath) ? string.Empty : $" ({item.FilePath})"));
+            sections.Add(
+                "Workspace diagnostics:\n"
+                + $"Configured sources: {diagnostics.ConfiguredLspServers.Count}\n"
+                + $"Errors: {diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Error)}, "
+                + $"Warnings: {diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Warning)}\n"
+                + string.Join(Environment.NewLine, topDiagnostics));
+        }
+
         if (effectivePrimary == Protocol.Enums.PrimaryMode.Spec)
         {
             sections.Add(specWorkflowService.BuildPromptInstructions());

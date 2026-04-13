@@ -1,5 +1,6 @@
 using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Agents.Models;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Agents.Agents;
 
@@ -31,13 +32,23 @@ public abstract class SharpClawAgentBase(IAgentFrameworkBridge agentFrameworkBri
 
     /// <inheritdoc />
     public virtual Task<AgentRunResult> RunAsync(AgentRunContext context, CancellationToken cancellationToken)
-        => agentFrameworkBridge.RunAsync(
+    {
+        var instructions = Instructions;
+        if (context.Metadata is not null
+            && context.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.AgentInstructionAppendix, out var appendix)
+            && !string.IsNullOrWhiteSpace(appendix))
+        {
+            instructions = $"{instructions}{Environment.NewLine}{Environment.NewLine}{appendix.Trim()}";
+        }
+
+        return agentFrameworkBridge.RunAsync(
             new AgentFrameworkRequest(
                 AgentId,
                 AgentKind,
                 Name,
                 Description,
-                Instructions,
+                instructions,
                 context),
             cancellationToken);
+    }
 }

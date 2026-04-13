@@ -50,4 +50,12 @@ public static class SessionStorageLayout
     /// <summary>Returns the workspace attachment pointer (<c>active-session.json</c>).</summary>
     public static string GetWorkspaceActiveSessionPath(IPathService pathService, string workspacePath)
         => pathService.Combine(GetSharpClawRoot(pathService, workspacePath), "active-session.json");
+
+    /// <summary>Returns the share snapshot directory.</summary>
+    public static string GetSharesRoot(IPathService pathService, string workspacePath)
+        => pathService.Combine(GetSharpClawRoot(pathService, workspacePath), "shares");
+
+    /// <summary>Returns a shared session snapshot payload path.</summary>
+    public static string GetShareSnapshotPath(IPathService pathService, string workspacePath, string shareId)
+        => pathService.Combine(GetSharesRoot(pathService, workspacePath), $"{shareId}.json");
 }

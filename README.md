@@ -71,6 +71,17 @@ dotnet run --project src/SharpClaw.Code.Cli -- --output-format json doctor
 
 Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, `/commands`, `/mode`, `/editor`, `/export`, `/undo`, `/redo`, and `/version`. Use `/help` to see the active command set, including discovered workspace custom commands.
 
+Parity-oriented commands now include:
+
+- `models` / `/models`
+- `connect` / `/connect`
+- `agents` / `/agents`
+- `share` / `/share`
+- `unshare` / `/unshare`
+- `compact` / `/compact`
+- `serve` / `/serve`
+- `/sessions` as a friendlier alias over `/session list`
+
 Primary workflow modes:
 
 - `build`: normal coding-agent execution
@@ -89,6 +100,10 @@ Primary workflow modes:
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
 | Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
+| Embedded local server | Expose prompt, session, status, doctor, and share endpoints for editor or automation clients |
+| Config + agent catalog | Layer user/workspace JSONC config with typed agent defaults, tool allowlists, and runtime hooks |
+| Session sharing | Create self-hosted share links and durable sanitized share snapshots under `.sharpclaw/` |
+| Diagnostics context | Surface configured diagnostics sources into prompt context, status, and machine-readable output |
 
 ## Good Fit For
 
@@ -145,8 +160,9 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--output-format text\|json` | Human-readable or structured output |
 | `--primary-mode <mode>` | Workflow bias for prompts: `build`, `plan`, or `spec` |
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
+| `--agent <id>` | Select the active agent for prompt execution |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `models`, `connect`, `agents`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 
@@ -167,7 +183,17 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`,
 
 ## Configuration
 
-SharpClaw Code uses the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args). Key configuration sections:
+SharpClaw Code uses both the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args) and layered SharpClaw JSONC config files:
+
+- user config: `~/.config/sharpclaw/config.jsonc` on Unix-like systems
+- Windows user config: `%AppData%\\SharpClaw\\config.jsonc`
+- workspace config: `<workspace>/sharpclaw.jsonc`
+
+Precedence is:
+
+`CLI args > workspace sharpclaw.jsonc > user config.jsonc > appsettings/environment defaults`
+
+Key runtime configuration sections:
 
 | Section | Purpose |
 |---|---|
@@ -177,13 +203,24 @@ SharpClaw Code uses the standard .NET configuration stack (`appsettings.json`, e
 | `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
 | `SharpClaw:Telemetry` | Runtime event ring buffer capacity |
 
+Key `sharpclaw.jsonc` capabilities:
+
+- `shareMode`: `manual`, `auto`, or `disabled`
+- `server`: host, port, and optional public base URL for share links
+- `defaultAgentId`: default prompt agent
+- `agents`: typed agent catalog entries with model defaults, tool allowlists, and instruction appendices
+- `lspServers`: configured diagnostics sources
+- `hooks`: lifecycle hooks for turn/tool/share/server events
+- `connectLinks`: browser entry points for provider or external auth flows
+
 All options are validated at startup via `IValidateOptions` implementations.
 
 ## Current Scope
 
 - The shared tooling layer is permission-aware across the runtime.
-- The current Agent Framework bridge is focused on provider-backed runs rather than a full tool-calling loop inside the framework path.
+- The current runtime includes multi-turn provider-backed tool execution with durable conversation history.
 - Operational commands support stable JSON output via `--output-format json`, which makes them useful in scripts and automation.
+- The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
 
 ## Contributing
 

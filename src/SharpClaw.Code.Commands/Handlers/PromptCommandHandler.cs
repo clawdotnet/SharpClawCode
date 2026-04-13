@@ -61,7 +61,8 @@ public sealed class PromptCommandHandler(
             context.PermissionMode,
             context.OutputFormat,
             context.PrimaryMode,
-            context.SessionId);
+            context.SessionId,
+            context.AgentId);
 
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
