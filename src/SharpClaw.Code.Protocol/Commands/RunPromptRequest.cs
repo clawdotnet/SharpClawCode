@@ -15,6 +15,7 @@ namespace SharpClaw.Code.Protocol.Commands;
 /// <param name="PrimaryMode">When null, the runtime uses session metadata or defaults to <see cref="PrimaryMode.Build"/>.</param>
 /// <param name="AgentId">When non-null, selects the registered agent id for the turn.</param>
 /// <param name="DelegatedTask">When non-null, supplies the bounded contract for <c>sub-agent-worker</c> runs.</param>
+/// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
 public sealed record RunPromptRequest(
     string Prompt,
     string? SessionId,
@@ -24,4 +25,5 @@ public sealed record RunPromptRequest(
     Dictionary<string, string>? Metadata,
     PrimaryMode? PrimaryMode = null,
     string? AgentId = null,
-    DelegatedTaskContract? DelegatedTask = null);
+    DelegatedTaskContract? DelegatedTask = null,
+    bool IsInteractive = true);

@@ -11,10 +11,12 @@ namespace SharpClaw.Code.Commands.Models;
 /// <param name="OutputFormat">The requested output format.</param>
 /// <param name="PrimaryMode">Build, plan, or spec workflow from global CLI options.</param>
 /// <param name="SessionId">Optional explicit session id for prompts and session-scoped commands.</param>
+/// <param name="AgentId">Optional explicit agent id for prompt execution.</param>
 public sealed record CommandExecutionContext(
     string WorkingDirectory,
     string? Model,
     PermissionMode PermissionMode,
     OutputFormat OutputFormat,
     PrimaryMode PrimaryMode,
-    string? SessionId = null);
+    string? SessionId = null,
+    string? AgentId = null);

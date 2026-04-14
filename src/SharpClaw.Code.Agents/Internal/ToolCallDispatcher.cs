@@ -1,6 +1,5 @@
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
-using SharpClaw.Code.Telemetry.Abstractions;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.Models;
 
@@ -11,8 +10,7 @@ namespace SharpClaw.Code.Agents.Internal;
 /// and returns content blocks for the provider conversation.
 /// </summary>
 public sealed class ToolCallDispatcher(
-    IToolExecutor toolExecutor,
-    IRuntimeEventPublisher eventPublisher)
+    IToolExecutor toolExecutor)
 {
     /// <summary>
     /// Executes a tool call and returns a tool-result content block.
@@ -38,34 +36,11 @@ public sealed class ToolCallDispatcher(
         var toolInputJson = toolUseEvent.ToolInputJson ?? "{}";
         var toolUseId = toolUseEvent.ToolUseId;
 
-        var collectedEvents = new List<RuntimeEvent>();
-
-        // 1. Execute the tool (this builds the real ToolExecutionRequest internally with correct approval/destructive metadata)
+        // Execute the tool — ToolExecutor already publishes ToolStartedEvent and ToolCompletedEvent
+        // via IRuntimeEventPublisher, so we do NOT re-publish here to avoid duplicates.
         var envelope = await toolExecutor.ExecuteAsync(toolName, toolInputJson, context, cancellationToken);
 
-        // 2. Publish ToolStartedEvent using the real request from the executor (has correct approval scope, destructive flag, etc.)
-        var startedEvent = new ToolStartedEvent(
-            EventId: $"event-{Guid.NewGuid():N}",
-            SessionId: context.SessionId,
-            TurnId: context.TurnId,
-            OccurredAtUtc: DateTimeOffset.UtcNow,
-            Request: envelope.Request);
-
-        await eventPublisher.PublishAsync(startedEvent, cancellationToken: cancellationToken);
-        collectedEvents.Add(startedEvent);
-
-        // 3. Publish ToolCompletedEvent
-        var completedEvent = new ToolCompletedEvent(
-            EventId: $"event-{Guid.NewGuid():N}",
-            SessionId: context.SessionId,
-            TurnId: context.TurnId,
-            OccurredAtUtc: DateTimeOffset.UtcNow,
-            Result: envelope.Result);
-
-        await eventPublisher.PublishAsync(completedEvent, cancellationToken: cancellationToken);
-        collectedEvents.Add(completedEvent);
-
-        // 4. Convert ToolResult to ContentBlock
+        // Convert ToolResult to ContentBlock
         ContentBlock resultBlock;
         if (envelope.Result.Succeeded)
         {
@@ -88,7 +63,7 @@ public sealed class ToolCallDispatcher(
                 true);
         }
 
-        // 5. Return
-        return (resultBlock, envelope.Result, collectedEvents);
+        // Events are already published by ToolExecutor; return empty list to avoid duplicates.
+        return (resultBlock, envelope.Result, []);
     }
 }

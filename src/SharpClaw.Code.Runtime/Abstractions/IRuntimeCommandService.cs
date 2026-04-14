@@ -126,6 +126,21 @@ public interface IRuntimeCommandService
     /// Clears explicit workspace session attachment.
     /// </summary>
     Task<CommandResult> DetachSessionAsync(RuntimeCommandContext context, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Creates or refreshes a self-hosted share snapshot for a session.
+    /// </summary>
+    Task<CommandResult> ShareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes a self-hosted share snapshot for a session.
+    /// </summary>
+    Task<CommandResult> UnshareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Compacts a session into a reusable summary and refreshed title.
+    /// </summary>
+    Task<CommandResult> CompactSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken);
 }
 
 /// <summary>
@@ -137,10 +152,14 @@ public interface IRuntimeCommandService
 /// <param name="OutputFormat">The requested output format.</param>
 /// <param name="PrimaryMode">Optional primary mode; when null the session/request default applies.</param>
 /// <param name="SessionId">Optional explicit session id (e.g. from <c>--session</c>); when null, attachment/latest resolution applies.</param>
+/// <param name="AgentId">Optional effective agent id.</param>
+/// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
 public sealed record RuntimeCommandContext(
     string WorkingDirectory,
     string? Model,
     PermissionMode PermissionMode,
     OutputFormat OutputFormat,
     PrimaryMode? PrimaryMode = null,
-    string? SessionId = null);
+    string? SessionId = null,
+    string? AgentId = null,
+    bool IsInteractive = true);

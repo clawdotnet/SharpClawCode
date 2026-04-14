@@ -53,6 +53,12 @@ public sealed class GlobalCliOptions
             Description = "Targets a specific SharpClaw session id for prompts.",
             Recursive = true
         };
+
+        AgentOption = new Option<string?>("--agent")
+        {
+            Description = "Selects the effective agent id for prompt execution.",
+            Recursive = true
+        };
     }
 
     /// <summary>
@@ -86,9 +92,14 @@ public sealed class GlobalCliOptions
     public Option<string?> SessionOption { get; }
 
     /// <summary>
+    /// Gets the optional agent id option.
+    /// </summary>
+    public Option<string?> AgentOption { get; }
+
+    /// <summary>
     /// Gets all global options.
     /// </summary>
-    public IEnumerable<Option> All => [OutputFormatOption, WorkingDirectoryOption, ModelOption, PermissionModeOption, PrimaryModeOption, SessionOption];
+    public IEnumerable<Option> All => [OutputFormatOption, WorkingDirectoryOption, ModelOption, PermissionModeOption, PrimaryModeOption, SessionOption, AgentOption];
 
     /// <summary>
     /// Resolves a command execution context from a parse result.
@@ -111,7 +122,8 @@ public sealed class GlobalCliOptions
             PermissionMode: ParsePermissionMode(permissionModeText),
             OutputFormat: ParseOutputFormat(outputFormatText),
             PrimaryMode: ParsePrimaryMode(primaryText),
-            SessionId: parseResult.GetValue(SessionOption));
+            SessionId: parseResult.GetValue(SessionOption),
+            AgentId: parseResult.GetValue(AgentOption));
     }
 
     private static OutputFormat ParseOutputFormat(string value)

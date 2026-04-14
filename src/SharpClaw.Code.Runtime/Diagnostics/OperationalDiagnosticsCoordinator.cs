@@ -6,6 +6,7 @@ using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Operational;
+using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Mutations;
 using SharpClaw.Code.Sessions.Abstractions;
 
@@ -22,6 +23,7 @@ public sealed class OperationalDiagnosticsCoordinator(
     IMcpRegistry mcpRegistry,
     IPluginManager pluginManager,
     IEventStore eventStore,
+    IWorkspaceDiagnosticsService workspaceDiagnosticsService,
     IConfiguration? configuration = null) : IOperationalDiagnosticsCoordinator
 {
     private readonly IOperationalCheck[] orderedChecks = checks.ToArray();
@@ -78,6 +80,7 @@ public sealed class OperationalDiagnosticsCoordinator(
         var latest = await sessionStore.GetLatestAsync(workspacePath, cancellationToken).ConfigureAwait(false);
         var mcpServers = await mcpRegistry.ListAsync(workspacePath, cancellationToken).ConfigureAwait(false);
         var plugins = await pluginManager.ListAsync(workspacePath, cancellationToken).ConfigureAwait(false);
+        var diagnostics = await workspaceDiagnosticsService.BuildSnapshotAsync(workspacePath, cancellationToken).ConfigureAwait(false);
 
         var primaryMode = ResolvePrimaryModeForStatus(input, latest);
 
@@ -96,6 +99,9 @@ public sealed class OperationalDiagnosticsCoordinator(
             McpFaultedCount: mcpServers.Count(s => s.Status.State == McpLifecycleState.Faulted),
             PluginInstalledCount: plugins.Count,
             PluginEnabledCount: plugins.Count(p => p.State == PluginLifecycleState.Enabled),
+            LspServerCount: diagnostics.ConfiguredLspServers.Count,
+            DiagnosticsErrorCount: diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Error),
+            DiagnosticsWarningCount: diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Warning),
             Checks: quickChecks);
     }
 

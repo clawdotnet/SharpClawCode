@@ -47,27 +47,26 @@ public static class ContextWindowManager
         var systemMessage = messages.FirstOrDefault(m =>
             string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase));
 
-        // Build a mutable working list of non-system messages.
+        // Build a list of non-system messages with precomputed token estimates.
         var working = messages
             .Where(m => !string.Equals(m.Role, "system", StringComparison.OrdinalIgnoreCase))
             .ToList();
 
-        // Drop oldest messages until budget is satisfied.
-        // Always preserve at least the last message (most recent user turn).
-        while (working.Count > 1)
+        var systemTokens = systemMessage is not null ? EstimateTokens(systemMessage) : 0;
+        var runningTotal = working.Sum(EstimateTokens) + systemTokens;
+
+        // Drop oldest messages until budget is satisfied (O(n) via running total).
+        // Always preserve at least the last message (most recent non-system turn).
+        var dropIndex = 0;
+        while (dropIndex < working.Count - 1 && runningTotal > maxTokenBudget)
         {
-            var totalEstimate = EstimateTokens(working);
-            if (systemMessage is not null)
-            {
-                totalEstimate += EstimateTokens(systemMessage);
-            }
+            runningTotal -= EstimateTokens(working[dropIndex]);
+            dropIndex++;
+        }
 
-            if (totalEstimate <= maxTokenBudget)
-            {
-                break;
-            }
-
-            working.RemoveAt(0);
+        if (dropIndex > 0)
+        {
+            working = working.GetRange(dropIndex, working.Count - dropIndex);
         }
 
         // Reassemble with system message first (if present).

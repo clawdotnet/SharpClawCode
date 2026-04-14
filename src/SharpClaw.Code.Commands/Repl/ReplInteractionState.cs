@@ -11,4 +11,9 @@ public sealed class ReplInteractionState
     /// When set, wins over <see cref="Models.CommandExecutionContext.PrimaryMode"/> for REPL turns.
     /// </summary>
     public PrimaryMode? PrimaryModeOverride { get; set; }
+
+    /// <summary>
+    /// When set, wins over <see cref="Models.CommandExecutionContext.AgentId"/> for REPL turns.
+    /// </summary>
+    public string? AgentIdOverride { get; set; }
 }

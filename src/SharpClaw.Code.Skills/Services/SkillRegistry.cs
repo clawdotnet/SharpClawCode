@@ -120,6 +120,21 @@ public sealed class SkillRegistry(
         return new ResolvedSkill(definition, request.PromptTemplate, metadata);
     }
 
+    /// <inheritdoc />
+    public Task<bool> UninstallAsync(string workspaceRoot, string skillId, CancellationToken cancellationToken)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(skillId);
+
+        var skillDirectory = pathService.Combine(EnsureSkillsRoot(workspaceRoot), skillId);
+        if (!fileSystem.DirectoryExists(skillDirectory))
+        {
+            return Task.FromResult(false);
+        }
+
+        fileSystem.DeleteDirectoryRecursive(skillDirectory);
+        return Task.FromResult(true);
+    }
+
     private async Task<ResolvedSkill?> ResolveFromDirectoryAsync(string directory, CancellationToken cancellationToken)
     {
         var manifestPath = pathService.Combine(directory, ManifestFileName);

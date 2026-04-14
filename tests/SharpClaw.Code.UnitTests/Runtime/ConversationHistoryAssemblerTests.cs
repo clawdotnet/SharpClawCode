@@ -38,13 +38,13 @@ public sealed class ConversationHistoryAssemblerTests
             OccurredAtUtc: Now,
             Turn: MakeTurn(turnId, input));
 
-    private static TurnCompletedEvent MakeCompleted(string turnId, string input, string summary) =>
+    private static TurnCompletedEvent MakeCompleted(string turnId, string input, string summary, string? output = null) =>
         new(
             EventId: $"evt-completed-{turnId}",
             SessionId: "session-1",
             TurnId: turnId,
             OccurredAtUtc: Now,
-            Turn: MakeTurn(turnId, input),
+            Turn: MakeTurn(turnId, input, output ?? summary),
             Succeeded: true,
             Summary: summary);
 
@@ -147,6 +147,22 @@ public sealed class ConversationHistoryAssemblerTests
         result.Should().HaveCount(2);
         result[1].Role.Should().Be("assistant");
         result[1].Content.Should().ContainSingle(b => b.Text == "Hello world.");
+    }
+
+    [Fact]
+    public void Prefers_persisted_turn_output_over_summary_text()
+    {
+        var events = new RuntimeEvent[]
+        {
+            MakeStarted("turn-1", "Summarize the run"),
+            MakeCompleted("turn-1", "Summarize the run", "Short summary", "Actual assistant output"),
+        };
+
+        var result = ConversationHistoryAssembler.Assemble(events);
+
+        result.Should().HaveCount(2);
+        result[1].Role.Should().Be("assistant");
+        result[1].Content.Should().ContainSingle(b => b.Text == "Actual assistant output");
     }
 
     [Fact]

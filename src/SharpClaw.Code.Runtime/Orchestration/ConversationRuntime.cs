@@ -47,6 +47,11 @@ public sealed class ConversationRuntime(
     ISessionCoordinator sessionCoordinator,
     IPortableSessionBundleService portableSessionBundleService,
     ISpecWorkflowService specWorkflowService,
+    ISharpClawConfigService sharpClawConfigService,
+    IAgentCatalogService agentCatalogService,
+    IShareSessionService shareSessionService,
+    IConversationCompactionService conversationCompactionService,
+    IHookDispatcher hookDispatcher,
     ILogger<ConversationRuntime> logger) : IConversationRuntime, IRuntimeCommandService
 {
     private const string LastTurnSequenceKey = "lastTurnSequence";
@@ -101,6 +106,7 @@ public sealed class ConversationRuntime(
 
         var workspacePath = NormalizeWorkspacePath(request.WorkingDirectory);
         request = EnrichRequestWithEditorIngress(workspacePath, request);
+        request = await ApplyAgentAndConfigDefaultsAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
         var runtimeEvents = new List<RuntimeEvent>();
         var session = await ResolveSessionAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
         var isNewSession = false;
@@ -205,6 +211,10 @@ public sealed class ConversationRuntime(
         var metadataAtTurnStart = CloneMetadata(session.Metadata);
         metadataAtTurnStart[LastTurnSequenceKey] = turnSequenceNumber.ToString(CultureInfo.InvariantCulture);
         metadataAtTurnStart["lastTurnId"] = turnId;
+        if (!string.IsNullOrWhiteSpace(request.AgentId))
+        {
+            metadataAtTurnStart[SharpClawWorkflowMetadataKeys.ActiveAgentId] = request.AgentId!;
+        }
         session = session with
         {
             ActiveTurnId = turnId,
@@ -306,6 +316,10 @@ public sealed class ConversationRuntime(
             var metadata = CloneMetadata(session.Metadata);
             metadata[LastTurnSequenceKey] = turnSequenceNumber.ToString(CultureInfo.InvariantCulture);
             metadata["lastTurnId"] = turnId;
+            if (!string.IsNullOrWhiteSpace(request.AgentId))
+            {
+                metadata[SharpClawWorkflowMetadataKeys.ActiveAgentId] = request.AgentId!;
+            }
 
             session = session with
             {
@@ -346,6 +360,28 @@ public sealed class ConversationRuntime(
             await sessionStore.SaveAsync(workspacePath, session, cancellationToken).ConfigureAwait(false);
             logger.LogInformation("Completed prompt turn {TurnId} for session {SessionId}.", turnId, session.Id);
 
+            SpecArtifactSet? finalSpecArtifacts = specArtifacts;
+            if (await ShouldAutoShareAsync(workspacePath, cancellationToken).ConfigureAwait(false))
+            {
+                try
+                {
+                    var share = await shareSessionService.CreateShareAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
+                    session = await sessionStore.GetByIdAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false) ?? session;
+                    finalSpecArtifacts = specArtifacts;
+                    runtimeEvents.Add(
+                        new ShareCreatedEvent(
+                            EventId: CreateIdentifier("event"),
+                            SessionId: session.Id,
+                            TurnId: turnId,
+                            OccurredAtUtc: share.CreatedAtUtc,
+                            Share: share));
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception, "Auto-share failed for session {SessionId}.", session.Id);
+                }
+            }
+
             return new TurnExecutionResult(
                 Session: session,
                 Turn: completedTurn,
@@ -354,7 +390,7 @@ public sealed class ConversationRuntime(
                 Usage: turnRunResult.Usage,
                 Checkpoint: checkpoint,
                 Events: runtimeEvents.ToArray(),
-                SpecArtifacts: specArtifacts);
+                SpecArtifacts: finalSpecArtifacts);
         }
         catch (OperationCanceledException exception)
         {
@@ -428,7 +464,8 @@ public sealed class ConversationRuntime(
                 .Where(pair => pair.Value is not null)
                 .ToDictionary(pair => pair.Key, pair => pair.Value!),
                 PrimaryMode: context.PrimaryMode,
-                AgentId: null),
+                AgentId: context.AgentId,
+                IsInteractive: context.IsInteractive),
             cancellationToken);
 
     /// <inheritdoc />
@@ -472,7 +509,8 @@ public sealed class ConversationRuntime(
                 OutputFormat: context.OutputFormat,
                 Metadata: metadata,
                 PrimaryMode: primary,
-                AgentId: definition.AgentId),
+                AgentId: definition.AgentId,
+                IsInteractive: context.IsInteractive),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -793,6 +831,91 @@ public sealed class ConversationRuntime(
     }
 
     /// <inheritdoc />
+    public async Task<CommandResult> ShareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
+            var sid = await ResolveCommandSessionIdAsync(workspace, sessionId, context.SessionId, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(sid))
+            {
+                return new CommandResult(false, 1, context.OutputFormat, "No session resolved for sharing.", null);
+            }
+
+            var share = await ExecuteWithSessionLockAsync(
+                    workspace,
+                    sid,
+                    ct => shareSessionService.CreateShareAsync(workspace, sid, ct),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var payload = JsonSerializer.Serialize(share, ProtocolJsonContext.Default.ShareSessionRecord);
+            return new CommandResult(true, 0, context.OutputFormat, $"Shared session '{sid}' at {share.Url}.", payload);
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(false, 1, context.OutputFormat, ex.Message, null);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<CommandResult> UnshareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
+            var sid = await ResolveCommandSessionIdAsync(workspace, sessionId, context.SessionId, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(sid))
+            {
+                return new CommandResult(false, 1, context.OutputFormat, "No session resolved for unshare.", null);
+            }
+
+            var removed = await ExecuteWithSessionLockAsync(
+                    workspace,
+                    sid,
+                    ct => shareSessionService.RemoveShareAsync(workspace, sid, ct),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            return new CommandResult(
+                removed,
+                removed ? 0 : 1,
+                context.OutputFormat,
+                removed ? $"Removed share for session '{sid}'." : $"Session '{sid}' is not currently shared.",
+                null);
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(false, 1, context.OutputFormat, ex.Message, null);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<CommandResult> CompactSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
+            var sid = await ResolveCommandSessionIdAsync(workspace, sessionId, context.SessionId, cancellationToken).ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(sid))
+            {
+                return new CommandResult(false, 1, context.OutputFormat, "No session resolved for compaction.", null);
+            }
+
+            var result = await ExecuteWithSessionLockAsync(
+                    workspace,
+                    sid,
+                    ct => conversationCompactionService.CompactAsync(workspace, sid, ct),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            var payload = JsonSerializer.Serialize(result.Session, ProtocolJsonContext.Default.ConversationSession);
+            return new CommandResult(true, 0, context.OutputFormat, result.Summary, payload);
+        }
+        catch (Exception ex)
+        {
+            return new CommandResult(false, 1, context.OutputFormat, ex.Message, null);
+        }
+    }
+
+    /// <inheritdoc />
     public async Task<ConversationSession> ForkSessionAsync(string workspacePath, string? sourceSessionId, CancellationToken cancellationToken)
     {
         var normalized = NormalizeWorkspacePath(workspacePath);
@@ -903,7 +1026,8 @@ public sealed class ConversationRuntime(
             : $"{report.LatestSessionId} ({report.LatestSessionState})";
         var headline =
             $"Ready · {report.WorkspaceRoot} · model {report.SelectedModel} · mode {report.PrimaryMode} · latest {sessionLabel} · "
-            + $"MCP {report.McpReadyCount}/{report.McpServerCount} · plugins {report.PluginEnabledCount}/{report.PluginInstalledCount}";
+            + $"MCP {report.McpReadyCount}/{report.McpServerCount} · plugins {report.PluginEnabledCount}/{report.PluginInstalledCount} · "
+            + $"LSP {report.LspServerCount} · diagnostics {report.DiagnosticsErrorCount} error(s), {report.DiagnosticsWarningCount} warning(s)";
         var notable = report.Checks.FirstOrDefault(static c
             => c.Status is not OperationalCheckStatus.Ok and not OperationalCheckStatus.Skipped);
         return notable is null ? headline : $"{headline}{Environment.NewLine}[{notable.Status}] {notable.Id}: {notable.Summary}";
@@ -991,6 +1115,7 @@ public sealed class ConversationRuntime(
                 cancellationToken)
             .ConfigureAwait(false);
         collectedEvents.Add(runtimeEvent);
+        await DispatchHookAsync(workspacePath, runtimeEvent, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task AppendRuntimeEventsAsync(
@@ -1186,6 +1311,104 @@ public sealed class ConversationRuntime(
 
         var latest = await sessionStore.GetLatestAsync(workspacePath, cancellationToken).ConfigureAwait(false);
         return latest?.Id;
+    }
+
+    private async Task<RunPromptRequest> ApplyAgentAndConfigDefaultsAsync(
+        string workspacePath,
+        RunPromptRequest request,
+        CancellationToken cancellationToken)
+    {
+        var config = await sharpClawConfigService.GetConfigAsync(workspacePath, cancellationToken).ConfigureAwait(false);
+        var resolvedAgentId = string.IsNullOrWhiteSpace(request.AgentId)
+            ? await ResolvePersistedAgentIdAsync(workspacePath, request.SessionId, cancellationToken).ConfigureAwait(false)
+            : request.AgentId;
+        var agent = await agentCatalogService
+            .ResolveAsync(workspacePath, resolvedAgentId, resolvedAgentId, cancellationToken)
+            .ConfigureAwait(false);
+        var metadata = CloneMetadata(request.Metadata);
+
+        resolvedAgentId = agent.Id;
+        if (!string.IsNullOrWhiteSpace(agent.InstructionAppendix))
+        {
+            metadata[SharpClawWorkflowMetadataKeys.AgentInstructionAppendix] = agent.InstructionAppendix!;
+        }
+
+        if (!string.IsNullOrWhiteSpace(agent.Model)
+            && (!metadata.TryGetValue("model", out var currentModel) || string.IsNullOrWhiteSpace(currentModel)))
+        {
+            metadata["model"] = agent.Model!;
+        }
+
+        if (agent.AllowedTools is { Length: > 0 })
+        {
+            metadata[SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson] = JsonSerializer.Serialize(
+                agent.AllowedTools,
+                ProtocolJsonContext.Default.StringArray);
+        }
+
+        metadata[SharpClawWorkflowMetadataKeys.ActiveAgentId] = agent.Id;
+
+        if (request.PrimaryMode is null && agent.PrimaryMode is not null)
+        {
+            request = request with { PrimaryMode = agent.PrimaryMode };
+        }
+
+        if ((config.Document.ShareMode ?? ShareMode.Manual) != ShareMode.Manual)
+        {
+            metadata["shareMode"] = config.Document.ShareMode!.Value.ToString();
+        }
+
+        return request with
+        {
+            AgentId = resolvedAgentId,
+            Metadata = metadata,
+        };
+    }
+
+    private async Task<string?> ResolvePersistedAgentIdAsync(string workspacePath, string? sessionId, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(sessionId))
+        {
+            return null;
+        }
+
+        var session = await sessionStore.GetByIdAsync(workspacePath, sessionId, cancellationToken).ConfigureAwait(false);
+        if (session?.Metadata is null
+            || !session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.ActiveAgentId, out var agentId)
+            || string.IsNullOrWhiteSpace(agentId))
+        {
+            return null;
+        }
+
+        return agentId;
+    }
+
+    private async Task<bool> ShouldAutoShareAsync(string workspacePath, CancellationToken cancellationToken)
+    {
+        var config = await sharpClawConfigService.GetConfigAsync(workspacePath, cancellationToken).ConfigureAwait(false);
+        return (config.Document.ShareMode ?? ShareMode.Manual) == ShareMode.Auto;
+    }
+
+    private Task DispatchHookAsync(string workspacePath, RuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+    {
+        var trigger = runtimeEvent switch
+        {
+            TurnStartedEvent => HookTriggerKind.TurnStarted,
+            TurnCompletedEvent => HookTriggerKind.TurnCompleted,
+            ToolStartedEvent => HookTriggerKind.ToolStarted,
+            ToolCompletedEvent => HookTriggerKind.ToolCompleted,
+            ShareCreatedEvent => HookTriggerKind.ShareCreated,
+            ShareRemovedEvent => HookTriggerKind.ShareRemoved,
+            _ => (HookTriggerKind?)null
+        };
+
+        if (trigger is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var payload = JsonSerializer.Serialize(runtimeEvent, runtimeEvent.GetType(), ProtocolJsonContext.Default);
+        return hookDispatcher.DispatchAsync(workspacePath, trigger.Value, payload, cancellationToken);
     }
 
     private string NormalizeWorkspacePath(string? workspacePath)

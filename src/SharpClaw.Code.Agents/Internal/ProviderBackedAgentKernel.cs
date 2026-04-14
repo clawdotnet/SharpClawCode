@@ -126,7 +126,8 @@ public sealed class ProviderBackedAgentKernel(
             UsageSnapshot? terminalUsage = null;
             ProviderRequest? lastProviderRequest = null;
 
-            for (var iteration = 0; iteration < options.MaxToolIterations; iteration++)
+            var iteration = 0;
+            for (; iteration < options.MaxToolIterations; iteration++)
             {
                 UsageSnapshot? iterationUsage = null;
 
@@ -250,6 +251,16 @@ public sealed class ProviderBackedAgentKernel(
                 {
                     outputSegments.Add(iterationText);
                 }
+            }
+
+            // Detect if the loop was exhausted (provider kept requesting tools every iteration).
+            if (iteration >= options.MaxToolIterations)
+            {
+                logger.LogWarning(
+                    "Tool-calling loop reached maximum iterations ({MaxIterations}) for session {SessionId}; output may be incomplete.",
+                    options.MaxToolIterations,
+                    request.Context.SessionId);
+                outputSegments.Add($"\n\n[Tool-calling loop reached the maximum of {options.MaxToolIterations} iterations. Output may be incomplete.]");
             }
 
             var output = string.Concat(outputSegments);

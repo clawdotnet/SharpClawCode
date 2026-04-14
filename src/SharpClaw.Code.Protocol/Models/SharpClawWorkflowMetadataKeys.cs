@@ -37,4 +37,28 @@ public static class SharpClawWorkflowMetadataKeys
 
     /// <summary>Workspace key for attaching editor/IDE context (normalized path).</summary>
     public const string EditorContextJson = "sharpclaw.editorContextJson";
+
+    /// <summary>Active agent id persisted for the session.</summary>
+    public const string ActiveAgentId = "sharpclaw.activeAgentId";
+
+    /// <summary>Optional compacted session summary persisted for prompt reuse.</summary>
+    public const string CompactedSummary = "sharpclaw.compactedSummary";
+
+    /// <summary>Optional share id associated with the session.</summary>
+    public const string ShareId = "sharpclaw.shareId";
+
+    /// <summary>Optional share URL associated with the session.</summary>
+    public const string ShareUrl = "sharpclaw.shareUrl";
+
+    /// <summary>UTC ISO timestamp when the session was shared.</summary>
+    public const string SharedAtUtc = "sharpclaw.sharedAtUtc";
+
+    /// <summary>Additional configured system instructions for the effective agent.</summary>
+    public const string AgentInstructionAppendix = "sharpclaw.agentInstructionAppendix";
+
+    /// <summary>JSON array of allowed tool names resolved for the effective agent.</summary>
+    public const string AgentAllowedToolsJson = "sharpclaw.agentAllowedToolsJson";
+
+    /// <summary>JSON array of session-scoped <see cref="TodoItem"/> records.</summary>
+    public const string SessionTodosJson = "sharpclaw.sessionTodosJson";
 }

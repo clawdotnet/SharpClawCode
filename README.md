@@ -7,9 +7,9 @@
 
 SharpClaw Code is a C# and .NET-native coding agent runtime for teams building AI developer tools, agentic CLIs, and MCP-enabled workflows.
 
-It combines durable sessions, permission-aware tool execution, provider abstraction, structured telemetry, and an automation-friendly command-line surface in a codebase designed for production-quality .NET systems, not toy demos.
+It combines durable sessions, permission-aware tool execution, provider abstraction, structured telemetry, and an automation-friendly command-line surface in a runtime shaped for real .NET systems: explicit, testable, and operationally legible.
 
-## What SharpClaw Code Is
+## What It Is
 
 SharpClaw Code is an open-source runtime for building and operating coding-agent experiences in the .NET ecosystem.
 
@@ -27,7 +27,7 @@ It is designed for:
 - **Durable runtime model**: sessions, checkpoints, append-only event logs, export/import flows, and recovery-aware orchestration
 - **Safety by default**: permission modes, approval gates, workspace-boundary enforcement, and mediated tool execution
 - **Extensible surface**: providers, MCP servers, plugins, skills, ACP hosting, and runtime commands integrate through explicit seams
-- **Good fit for automation**: JSON-friendly command output, stable operational commands, and a clean CLI-first workflow
+- **Automation-ready interface**: stable JSON output, operational commands, and a clean CLI-first workflow that works for both humans and scripts
 
 ## Quick Start
 
@@ -71,6 +71,23 @@ dotnet run --project src/SharpClaw.Code.Cli -- --output-format json doctor
 
 Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, `/commands`, `/mode`, `/editor`, `/export`, `/undo`, `/redo`, and `/version`. Use `/help` to see the active command set, including discovered workspace custom commands.
 
+Parity-oriented commands now include:
+
+- `models` / `/models`
+- `usage` / `/usage`
+- `cost` / `/cost`
+- `stats` / `/stats`
+- `connect` / `/connect`
+- `hooks` / `/hooks`
+- `skills` / `/skills`
+- `agents` / `/agents`
+- `todo` / `/todo`
+- `share` / `/share`
+- `unshare` / `/unshare`
+- `compact` / `/compact`
+- `serve` / `/serve`
+- `/sessions` as a friendlier alias over `/session list`
+
 Primary workflow modes:
 
 - `build`: normal coding-agent execution
@@ -89,6 +106,10 @@ Primary workflow modes:
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
 | Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
+| Embedded local server | Expose prompt, session, status, doctor, and share endpoints for editor or automation clients |
+| Config + agent catalog | Layer user/workspace JSONC config with typed agent defaults, tool allowlists, and runtime hooks |
+| Session sharing | Create self-hosted share links and durable sanitized share snapshots under `.sharpclaw/` |
+| Diagnostics context | Surface configured diagnostics sources into prompt context, status, and machine-readable output |
 
 ## Good Fit For
 
@@ -96,7 +117,7 @@ Primary workflow modes:
 - running a **local or hosted coding-agent CLI**
 - creating a **.NET MCP client/runtime**
 - adding **session persistence and auditability** to agent workflows
-- experimenting with **Agent Framework-backed orchestration** without pushing core runtime logic into the framework layer
+- building on **Microsoft Agent Framework** without pushing your application core into framework-specific code
 
 ## Solution Layout
 
@@ -145,8 +166,9 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--output-format text\|json` | Human-readable or structured output |
 | `--primary-mode <mode>` | Workflow bias for prompts: `build`, `plan`, or `spec` |
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
+| `--agent <id>` | Select the active agent for prompt execution |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 
@@ -167,7 +189,17 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `commands`,
 
 ## Configuration
 
-SharpClaw Code uses the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args). Key configuration sections:
+SharpClaw Code uses both the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args) and layered SharpClaw JSONC config files:
+
+- user config: `~/.config/sharpclaw/config.jsonc` on Unix-like systems
+- Windows user config: `%AppData%\\SharpClaw\\config.jsonc`
+- workspace config: `<workspace>/sharpclaw.jsonc`
+
+Precedence is:
+
+`CLI args > workspace sharpclaw.jsonc > user config.jsonc > appsettings/environment defaults`
+
+Key runtime configuration sections:
 
 | Section | Purpose |
 |---|---|
@@ -177,13 +209,25 @@ SharpClaw Code uses the standard .NET configuration stack (`appsettings.json`, e
 | `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
 | `SharpClaw:Telemetry` | Runtime event ring buffer capacity |
 
+Key `sharpclaw.jsonc` capabilities:
+
+- `shareMode`: `manual`, `auto`, or `disabled`
+- `server`: host, port, and optional public base URL for share links
+- `defaultAgentId`: default prompt agent
+- `agents`: typed agent catalog entries with model defaults, tool allowlists, and instruction appendices
+- `lspServers`: configured diagnostics sources
+- `hooks`: lifecycle hooks for turn/tool/share/server events
+- `connectLinks`: browser entry points for provider or external auth flows
+
 All options are validated at startup via `IValidateOptions` implementations.
 
 ## Current Scope
 
 - The shared tooling layer is permission-aware across the runtime.
-- The current Agent Framework bridge is focused on provider-backed runs rather than a full tool-calling loop inside the framework path.
-- Operational commands support stable JSON output via `--output-format json`, which makes them useful in scripts and automation.
+- The current runtime includes multi-turn provider-backed tool execution, session-backed prompt replay, and durable conversation history.
+- Agent-driven tool calls flow through the same approval and allowlist enforcement path used by direct tool execution, including caller-aware interactive approval behavior.
+- Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
+- The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
 
 ## Contributing
 

@@ -19,6 +19,9 @@ namespace SharpClaw.Code.Protocol.Operational;
 /// <param name="McpFaultedCount">Servers faulted.</param>
 /// <param name="PluginInstalledCount">Installed plugins.</param>
 /// <param name="PluginEnabledCount">Enabled plugins.</param>
+/// <param name="LspServerCount">Configured diagnostics sources.</param>
+/// <param name="DiagnosticsErrorCount">Current workspace diagnostic error count.</param>
+/// <param name="DiagnosticsWarningCount">Current workspace diagnostic warning count.</param>
 /// <param name="Checks">Lightweight health snapshot (subset of doctor).</param>
 public sealed record RuntimeStatusReport(
     string SchemaVersion,
@@ -35,4 +38,7 @@ public sealed record RuntimeStatusReport(
     int McpFaultedCount,
     int PluginInstalledCount,
     int PluginEnabledCount,
+    int LspServerCount,
+    int DiagnosticsErrorCount,
+    int DiagnosticsWarningCount,
     IReadOnlyList<OperationalCheckItem> Checks);

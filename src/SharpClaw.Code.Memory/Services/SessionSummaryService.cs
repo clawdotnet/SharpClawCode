@@ -13,6 +13,13 @@ public sealed class SessionSummaryService : ISessionSummaryService
     {
         ArgumentNullException.ThrowIfNull(session);
 
+        if (session.Metadata is not null
+            && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.CompactedSummary, out var compacted)
+            && !string.IsNullOrWhiteSpace(compacted))
+        {
+            return Task.FromResult<string?>(compacted);
+        }
+
         var fragments = new List<string>
         {
             $"State: {session.State}.",

@@ -229,6 +229,30 @@ public sealed class ToolUseStreamAdapterTests
     }
 
     [Fact]
+    public void OpenAi_message_builder_prepends_system_prompt_when_supplied_for_multi_turn_requests()
+    {
+        var messages = new[]
+        {
+            new ProtocolModels.ChatMessage("user", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "Hello", null, null, null, null),
+            }),
+            new ProtocolModels.ChatMessage("assistant", new[]
+            {
+                new ProtocolModels.ContentBlock(ProtocolModels.ContentBlockKind.Text, "Hi there", null, null, null, null),
+            }),
+        };
+
+        var result = OpenAiMessageBuilder.BuildMessages(messages, "You are a coding agent.");
+
+        result.Should().HaveCount(3);
+        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.System);
+        result[0].Text.Should().Be("You are a coding agent.");
+        result[1].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.User);
+        result[2].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.Assistant);
+    }
+
+    [Fact]
     public void OpenAi_message_builder_maps_tool_use_to_function_call_content()
     {
         var messages = new[]

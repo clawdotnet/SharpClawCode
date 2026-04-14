@@ -184,7 +184,8 @@ public sealed class ReplHost(
             context.PermissionMode,
             context.OutputFormat,
             replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
-            context.SessionId);
+            context.SessionId,
+            replInteractionState.AgentIdOverride ?? context.AgentId);
 
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
