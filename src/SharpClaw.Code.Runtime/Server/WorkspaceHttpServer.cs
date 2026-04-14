@@ -227,12 +227,13 @@ public sealed class WorkspaceHttpServer(
 
     private static async Task<int> WriteCommandResultAsync(HttpListenerResponse response, CommandResult result, CancellationToken cancellationToken)
     {
+        var parsedData = TryParseData(result.DataJson);
         var envelope = new ServerCommandEnvelope(
             result.Succeeded,
             result.ExitCode,
             result.Message,
-            TryParseData(result.DataJson),
-            result.DataJson is not null && TryParseData(result.DataJson) is null ? result.DataJson : null);
+            parsedData,
+            result.DataJson is not null && parsedData is null ? result.DataJson : null);
         var statusCode = result.Succeeded ? 200 : 400;
         await WriteJsonAsync(response, statusCode, envelope, cancellationToken).ConfigureAwait(false);
         return statusCode;
@@ -256,12 +257,18 @@ public sealed class WorkspaceHttpServer(
         }
     }
 
+    private static readonly JsonSerializerOptions ServerJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
+    };
+
     private static async Task WriteJsonAsync(HttpListenerResponse response, int statusCode, object payload, CancellationToken cancellationToken)
     {
         response.StatusCode = statusCode;
         response.ContentType = "application/json";
         response.ContentEncoding = Encoding.UTF8;
-        var json = JsonSerializer.Serialize(payload);
+        var json = JsonSerializer.Serialize(payload, payload.GetType(), ServerJsonOptions);
         await using var writer = new StreamWriter(response.OutputStream, new UTF8Encoding(false), leaveOpen: true);
         await writer.WriteAsync(json.AsMemory(), cancellationToken).ConfigureAwait(false);
         await writer.FlushAsync(cancellationToken).ConfigureAwait(false);

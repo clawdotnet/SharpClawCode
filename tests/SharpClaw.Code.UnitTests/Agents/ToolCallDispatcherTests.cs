@@ -2,10 +2,7 @@ using FluentAssertions;
 using SharpClaw.Code.Agents.Internal;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Enums;
-using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
-using SharpClaw.Code.Telemetry;
-using SharpClaw.Code.Telemetry.Abstractions;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.Models;
 
@@ -27,8 +24,8 @@ public sealed class ToolCallDispatcherTests
         var result = new ToolResult("req-1", "read_file", true, OutputFormat.Text, "file contents", null, 0, 100, null);
         var envelope = BuildEnvelope("read_file", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
-        var publisher = new StubEventPublisher();
-        var dispatcher = new ToolCallDispatcher(executor, publisher);
+
+        var dispatcher = new ToolCallDispatcher(executor);
 
         var providerEvent = BuildToolUseEvent("tool-use-id-1", "read_file", "{}");
         var context = BuildContext();
@@ -52,8 +49,8 @@ public sealed class ToolCallDispatcherTests
         var result = new ToolResult("req-2", "write_file", false, OutputFormat.Text, null, "Permission denied", null, null, null);
         var envelope = BuildEnvelope("write_file", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
-        var publisher = new StubEventPublisher();
-        var dispatcher = new ToolCallDispatcher(executor, publisher);
+
+        var dispatcher = new ToolCallDispatcher(executor);
 
         var providerEvent = BuildToolUseEvent("tool-use-id-2", "write_file", "{\"path\":\"x\"}");
         var context = BuildContext();
@@ -68,35 +65,43 @@ public sealed class ToolCallDispatcherTests
     }
 
     /// <summary>
-    /// Ensures a <see cref="ToolStartedEvent"/> and a <see cref="ToolCompletedEvent"/> are published
-    /// in the correct order with matching session and turn identifiers.
+    /// Ensures the dispatcher does not publish events itself (ToolExecutor handles event publishing)
+    /// and returns an empty events list to avoid duplicates.
     /// </summary>
     [Fact]
-    public async Task DispatchAsync_publishes_started_and_completed_events()
+    public async Task DispatchAsync_returns_empty_events_to_avoid_duplicates()
     {
         var result = new ToolResult("req-3", "bash", true, OutputFormat.Text, "done", null, 0, 50, null);
         var envelope = BuildEnvelope("bash", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
-        var publisher = new StubEventPublisher();
-        var dispatcher = new ToolCallDispatcher(executor, publisher);
+        var dispatcher = new ToolCallDispatcher(executor);
 
         var providerEvent = BuildToolUseEvent("tool-use-id-3", "bash", "{\"command\":\"ls\"}");
         var context = BuildContext();
 
         var (_, _, events) = await dispatcher.DispatchAsync(providerEvent, context, CancellationToken.None);
 
-        publisher.Published.Should().HaveCount(2);
-        events.Should().HaveCount(2);
+        // ToolCallDispatcher delegates event publishing to ToolExecutor; returns empty list.
+        events.Should().BeEmpty();
+    }
 
-        var startedEvent = publisher.Published[0].Should().BeOfType<ToolStartedEvent>().Subject;
-        startedEvent.SessionId.Should().Be("s1");
-        startedEvent.TurnId.Should().Be("t1");
-        startedEvent.Request.ToolName.Should().Be("bash");
+    /// <summary>
+    /// Ensures the dispatcher returns an error block when ToolName is missing.
+    /// </summary>
+    [Fact]
+    public async Task DispatchAsync_returns_error_when_tool_name_missing()
+    {
+        var executor = new StubToolExecutor();
+        var dispatcher = new ToolCallDispatcher(executor);
 
-        var completedEvent = publisher.Published[1].Should().BeOfType<ToolCompletedEvent>().Subject;
-        completedEvent.SessionId.Should().Be("s1");
-        completedEvent.TurnId.Should().Be("t1");
-        completedEvent.Result.Succeeded.Should().BeTrue();
+        var providerEvent = BuildToolUseEvent("tool-use-id-4", null!, "{}");
+        var context = BuildContext();
+
+        var (resultBlock, _, _) = await dispatcher.DispatchAsync(providerEvent, context, CancellationToken.None);
+
+        resultBlock.Kind.Should().Be(ContentBlockKind.ToolResult);
+        resultBlock.IsError.Should().Be(true);
+        resultBlock.Text.Should().Contain("tool name");
     }
 
     private static ProviderEvent BuildToolUseEvent(string toolUseId, string toolName, string toolInputJson)
@@ -158,19 +163,4 @@ public sealed class ToolCallDispatcherTests
             => Task.FromResult(ReturnValue!);
     }
 
-    private sealed class StubEventPublisher : IRuntimeEventPublisher
-    {
-        public List<RuntimeEvent> Published { get; } = [];
-
-        public ValueTask PublishAsync(
-            RuntimeEvent runtimeEvent,
-            RuntimeEventPublishOptions? options = null,
-            CancellationToken cancellationToken = default)
-        {
-            Published.Add(runtimeEvent);
-            return ValueTask.CompletedTask;
-        }
-
-        public IReadOnlyList<RuntimeEvent> GetRecentEventsSnapshot() => Published;
-    }
 }

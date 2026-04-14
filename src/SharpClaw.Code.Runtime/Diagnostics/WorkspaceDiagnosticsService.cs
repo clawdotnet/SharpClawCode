@@ -19,6 +19,7 @@ public sealed partial class WorkspaceDiagnosticsService(
 {
     private static readonly ConcurrentDictionary<string, WorkspaceDiagnosticsSnapshot> Cache = new(StringComparer.Ordinal);
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromSeconds(15);
+    private const int MaxCacheEntries = 50;
 
     /// <inheritdoc />
     public async Task<WorkspaceDiagnosticsSnapshot> BuildSnapshotAsync(string workspaceRoot, CancellationToken cancellationToken)
@@ -58,6 +59,7 @@ public sealed partial class WorkspaceDiagnosticsService(
 
         var snapshot = new WorkspaceDiagnosticsSnapshot(workspaceRoot, systemClock.UtcNow, configuredServers, diagnostics);
         Cache[workspaceRoot] = snapshot;
+        EvictStaleCacheEntries();
         return snapshot;
     }
 
@@ -95,6 +97,23 @@ public sealed partial class WorkspaceDiagnosticsService(
 
     private static string? NullIfEmpty(string value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private void EvictStaleCacheEntries()
+    {
+        if (Cache.Count <= MaxCacheEntries)
+        {
+            return;
+        }
+
+        var now = systemClock.UtcNow;
+        foreach (var key in Cache.Keys)
+        {
+            if (Cache.TryGetValue(key, out var entry) && now - entry.GeneratedAtUtc > CacheLifetime)
+            {
+                Cache.TryRemove(key, out _);
+            }
+        }
+    }
 
     [GeneratedRegex(@"^(?<path>.*?)(?:\((?<line>\d+),(?<column>\d+)\))?:\s*(?<severity>error|warning)\s*(?<code>[A-Z]{2,}\d+)?\s*:?\s*(?<message>.+)$", RegexOptions.Multiline | RegexOptions.IgnoreCase)]
     private static partial Regex DotnetDiagnosticRegex();

@@ -120,6 +120,9 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         var unsharedSession = await sessionStore.GetByIdAsync(workspaceRoot, session.Id, CancellationToken.None);
 
         share.Url.Should().Be("http://127.0.0.1:7345/s/" + share.ShareId);
+        // The share snapshot is written under the normalized/canonical workspace path (via pathService.GetFullPath),
+        // which on macOS resolves /var -> /private/var. The raw workspaceRoot path won't match the snapshot location.
+        // This assertion verifies that checking the raw path correctly returns false (path normalization is working).
         fileSystem.FileExists(SessionStorageLayout.GetShareSnapshotPath(pathService, workspaceRoot, share.ShareId)).Should().BeFalse();
         sharedSession!.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.ShareId);
         compacted.Session.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.CompactedSummary);

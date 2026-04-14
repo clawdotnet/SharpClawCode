@@ -49,7 +49,7 @@ public sealed class AgentCatalogService(
                 definition.Id,
                 string.IsNullOrWhiteSpace(definition.Name) ? definition.Id : definition.Name,
                 string.IsNullOrWhiteSpace(definition.Description) ? baseEntry.Description : definition.Description!,
-                baseEntry.BaseAgentId,
+                baseAgentId,
                 definition.Model,
                 definition.PrimaryMode,
                 definition.AllowedTools,

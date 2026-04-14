@@ -136,12 +136,19 @@ public sealed class PromptContextAssembler(
         sections.Add($"User request:\n{refResolution.ExpandedPrompt}");
 
         // Assemble prior-turn conversation history for multi-turn context.
+        // NOTE: This reads the full event log per turn, which scales linearly with session length.
+        // For long-running sessions, consider persisting a compacted message history in session metadata
+        // to avoid re-reading and re-assembling the full log on every prompt.
         const int MaxHistoryTokenBudget = 100_000;
-        var sessionEvents = await eventStore
-            .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
-            .ConfigureAwait(false);
-        var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
-        var conversationHistory = ContextWindowManager.Truncate(rawHistory, MaxHistoryTokenBudget);
+        IReadOnlyList<ChatMessage> conversationHistory = [];
+        if (turn.SequenceNumber > 1)
+        {
+            var sessionEvents = await eventStore
+                .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
+                .ConfigureAwait(false);
+            var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
+            conversationHistory = ContextWindowManager.Truncate(rawHistory, MaxHistoryTokenBudget);
+        }
 
         return new PromptExecutionContext(
             Prompt: string.Join(Environment.NewLine + Environment.NewLine, sections),
