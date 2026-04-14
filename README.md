@@ -7,9 +7,9 @@
 
 SharpClaw Code is a C# and .NET-native coding agent runtime for teams building AI developer tools, agentic CLIs, and MCP-enabled workflows.
 
-It combines durable sessions, permission-aware tool execution, provider abstraction, structured telemetry, and an automation-friendly command-line surface in a codebase designed for production-quality .NET systems, not toy demos.
+It combines durable sessions, permission-aware tool execution, provider abstraction, structured telemetry, and an automation-friendly command-line surface in a runtime shaped for real .NET systems: explicit, testable, and operationally legible.
 
-## What SharpClaw Code Is
+## What It Is
 
 SharpClaw Code is an open-source runtime for building and operating coding-agent experiences in the .NET ecosystem.
 
@@ -27,7 +27,7 @@ It is designed for:
 - **Durable runtime model**: sessions, checkpoints, append-only event logs, export/import flows, and recovery-aware orchestration
 - **Safety by default**: permission modes, approval gates, workspace-boundary enforcement, and mediated tool execution
 - **Extensible surface**: providers, MCP servers, plugins, skills, ACP hosting, and runtime commands integrate through explicit seams
-- **Good fit for automation**: JSON-friendly command output, stable operational commands, and a clean CLI-first workflow
+- **Automation-ready interface**: stable JSON output, operational commands, and a clean CLI-first workflow that works for both humans and scripts
 
 ## Quick Start
 
@@ -117,7 +117,7 @@ Primary workflow modes:
 - running a **local or hosted coding-agent CLI**
 - creating a **.NET MCP client/runtime**
 - adding **session persistence and auditability** to agent workflows
-- experimenting with **Agent Framework-backed orchestration** without pushing core runtime logic into the framework layer
+- building on **Microsoft Agent Framework** without pushing your application core into framework-specific code
 
 ## Solution Layout
 
@@ -224,9 +224,9 @@ All options are validated at startup via `IValidateOptions` implementations.
 ## Current Scope
 
 - The shared tooling layer is permission-aware across the runtime.
-- The current runtime includes multi-turn provider-backed tool execution with durable conversation history and session-backed prompt replay.
+- The current runtime includes multi-turn provider-backed tool execution, session-backed prompt replay, and durable conversation history.
 - Agent-driven tool calls flow through the same approval and allowlist enforcement path used by direct tool execution, including caller-aware interactive approval behavior.
-- Operational commands support stable JSON output via `--output-format json`, which makes them useful in scripts and automation.
+- Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
 - The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
 
 ## Contributing
