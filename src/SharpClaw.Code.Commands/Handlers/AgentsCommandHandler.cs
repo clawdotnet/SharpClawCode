@@ -72,7 +72,7 @@ public sealed class AgentsCommandHandler(
             0,
             context.OutputFormat,
             message,
-            JsonSerializer.Serialize(agents, ProtocolJsonContext.Default.ListAgentCatalogEntry));
+            JsonSerializer.Serialize(agents.ToList(), ProtocolJsonContext.Default.ListAgentCatalogEntry));
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return 0;
     }

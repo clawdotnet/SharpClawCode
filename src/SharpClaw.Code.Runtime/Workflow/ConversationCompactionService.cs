@@ -13,6 +13,7 @@ namespace SharpClaw.Code.Runtime.Workflow;
 public sealed class ConversationCompactionService(
     ISessionStore sessionStore,
     IEventStore eventStore,
+    ITodoService todoService,
     ISystemClock systemClock) : IConversationCompactionService
 {
     /// <inheritdoc />
@@ -25,7 +26,8 @@ public sealed class ConversationCompactionService(
             ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
         var events = await eventStore.ReadAllAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
 
-        var summary = BuildSummary(events);
+        var todos = await todoService.GetSnapshotAsync(workspaceRoot, session.Id, cancellationToken).ConfigureAwait(false);
+        var summary = BuildSummary(events, todos);
         var title = BuildTitle(events, session.Title);
         var metadata = session.Metadata is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
@@ -43,11 +45,16 @@ public sealed class ConversationCompactionService(
         return (updated, summary);
     }
 
-    private static string BuildSummary(IReadOnlyList<RuntimeEvent> events)
+    private static string BuildSummary(IReadOnlyList<RuntimeEvent> events, TodoSnapshot todos)
     {
         var userPrompts = events.OfType<TurnStartedEvent>().Select(static e => e.Turn.Input).Where(static text => !string.IsNullOrWhiteSpace(text)).TakeLast(4).ToArray();
         var outputs = events.OfType<TurnCompletedEvent>().Select(static e => e.Turn.Output).Where(static text => !string.IsNullOrWhiteSpace(text)).TakeLast(3).ToArray();
         var toolNames = events.OfType<ToolCompletedEvent>().Select(static e => e.Result.ToolName).Distinct(StringComparer.OrdinalIgnoreCase).Take(6).ToArray();
+        var activeTodos = todos.SessionTodos
+            .Concat(todos.WorkspaceTodos)
+            .Where(static item => item.Status != TodoStatus.Done)
+            .Take(5)
+            .ToArray();
 
         var builder = new StringBuilder();
         if (userPrompts.Length > 0)
@@ -68,6 +75,18 @@ public sealed class ConversationCompactionService(
         {
             builder.Append("Tools used: ");
             builder.Append(string.Join(", ", toolNames));
+            builder.Append('.');
+        }
+
+        if (activeTodos.Length > 0)
+        {
+            if (builder.Length > 0)
+            {
+                builder.Append(' ');
+            }
+
+            builder.Append("Active tasks: ");
+            builder.Append(string.Join(" | ", activeTodos.Select(static item => TrimSentence(item.Title))));
             builder.Append('.');
         }
 

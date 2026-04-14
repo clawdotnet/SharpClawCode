@@ -464,7 +464,8 @@ public sealed class ConversationRuntime(
                 .Where(pair => pair.Value is not null)
                 .ToDictionary(pair => pair.Key, pair => pair.Value!),
                 PrimaryMode: context.PrimaryMode,
-                AgentId: context.AgentId),
+                AgentId: context.AgentId,
+                IsInteractive: context.IsInteractive),
             cancellationToken);
 
     /// <inheritdoc />
@@ -508,7 +509,8 @@ public sealed class ConversationRuntime(
                 OutputFormat: context.OutputFormat,
                 Metadata: metadata,
                 PrimaryMode: primary,
-                AgentId: definition.AgentId),
+                AgentId: definition.AgentId,
+                IsInteractive: context.IsInteractive),
             cancellationToken).ConfigureAwait(false);
     }
 

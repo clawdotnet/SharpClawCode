@@ -22,9 +22,15 @@ internal static class OpenAiMessageBuilder
     ///   <item><term>user</term><description>→ <see cref="ChatRole.User"/> with <see cref="TextContent"/> or <see cref="FunctionResultContent"/></description></item>
     /// </list>
     /// </remarks>
-    public static List<MeaiChatMessage> BuildMessages(IReadOnlyList<ProtocolChatMessage> messages)
+    public static List<MeaiChatMessage> BuildMessages(IReadOnlyList<ProtocolChatMessage> messages, string? systemPrompt = null)
     {
-        var result = new List<MeaiChatMessage>(messages.Count);
+        var result = new List<MeaiChatMessage>(messages.Count + (string.IsNullOrWhiteSpace(systemPrompt) ? 0 : 1));
+        if (!string.IsNullOrWhiteSpace(systemPrompt)
+            && !HasLeadingSystemMessage(messages))
+        {
+            result.Add(new MeaiChatMessage(ChatRole.System, systemPrompt));
+        }
+
         foreach (var message in messages)
         {
             var meaiMessage = BuildMeaiMessage(message);
@@ -36,6 +42,9 @@ internal static class OpenAiMessageBuilder
 
         return result;
     }
+
+    private static bool HasLeadingSystemMessage(IReadOnlyList<ProtocolChatMessage> messages)
+        => messages.Count > 0 && string.Equals(messages[0].Role, "system", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Converts an array of <see cref="ProviderToolDefinition"/> records into MEAI <see cref="AITool"/> instances.

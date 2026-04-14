@@ -24,6 +24,7 @@ namespace SharpClaw.Code.Agents.Models;
 /// Prior-turn messages assembled from session events. When non-empty these are prepended
 /// to the provider request so the model has multi-turn context.
 /// </param>
+/// <param name="IsInteractive">Whether tool approvals can interact with the caller.</param>
 public sealed record AgentRunContext(
     string SessionId,
     string TurnId,
@@ -38,4 +39,5 @@ public sealed record AgentRunContext(
     DelegatedTaskContract? DelegatedTask = null,
     PrimaryMode PrimaryMode = PrimaryMode.Build,
     IToolMutationRecorder? ToolMutationRecorder = null,
-    IReadOnlyList<ChatMessage>? ConversationHistory = null);
+    IReadOnlyList<ChatMessage>? ConversationHistory = null,
+    bool IsInteractive = true);

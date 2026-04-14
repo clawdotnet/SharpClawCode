@@ -22,6 +22,7 @@ public sealed class PromptContextAssembler(
     IPromptReferenceResolver promptReferenceResolver,
     ISpecWorkflowService specWorkflowService,
     IWorkspaceDiagnosticsService workspaceDiagnosticsService,
+    ITodoService todoService,
     IEventStore eventStore) : IPromptContextAssembler
 {
     /// <inheritdoc />
@@ -43,14 +44,16 @@ public sealed class PromptContextAssembler(
         var skillsTask = skillRegistry.ListAsync(workspaceRoot, cancellationToken);
         var gitTask = gitWorkspaceService.GetSnapshotAsync(workspaceRoot, cancellationToken);
         var diagnosticsTask = workspaceDiagnosticsService.BuildSnapshotAsync(workspaceRoot, cancellationToken);
+        var todoTask = todoService.GetSnapshotAsync(workspaceRoot, session.Id, cancellationToken);
 
-        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask).ConfigureAwait(false);
+        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask, todoTask).ConfigureAwait(false);
 
         var memoryContext = await memoryContextTask.ConfigureAwait(false);
         var sessionSummary = await sessionSummaryTask.ConfigureAwait(false);
         var skills = await skillsTask.ConfigureAwait(false);
         var gitSnapshot = await gitTask.ConfigureAwait(false);
         var diagnostics = await diagnosticsTask.ConfigureAwait(false);
+        var todoSnapshot = await todoTask.ConfigureAwait(false);
 
         var metadata = request.Metadata is null
             ? new Dictionary<string, string>(StringComparer.Ordinal)
@@ -87,7 +90,7 @@ public sealed class PromptContextAssembler(
                 turn,
                 request,
                 effectivePrimary,
-                isInteractive: true,
+                isInteractive: request.IsInteractive,
                 cancellationToken)
             .ConfigureAwait(false);
 
@@ -113,6 +116,26 @@ public sealed class PromptContextAssembler(
             sections.Add(
                 "Available skills:\n"
                 + string.Join(Environment.NewLine, skills.Select(skill => $"- {skill.Id}: {skill.Description}")));
+        }
+
+        var activeSessionTodos = todoSnapshot.SessionTodos.Where(static item => item.Status != TodoStatus.Done).Take(5).ToArray();
+        var activeWorkspaceTodos = todoSnapshot.WorkspaceTodos.Where(static item => item.Status != TodoStatus.Done).Take(5).ToArray();
+        if (activeSessionTodos.Length > 0 || activeWorkspaceTodos.Length > 0)
+        {
+            var lines = new List<string>();
+            if (activeSessionTodos.Length > 0)
+            {
+                lines.Add("Session tasks:");
+                lines.AddRange(activeSessionTodos.Select(static item => $"- [{item.Status}] {item.Title}"));
+            }
+
+            if (activeWorkspaceTodos.Length > 0)
+            {
+                lines.Add("Workspace tasks:");
+                lines.AddRange(activeWorkspaceTodos.Select(static item => $"- [{item.Status}] {item.Title}"));
+            }
+
+            sections.Add(string.Join(Environment.NewLine, lines));
         }
 
         sections.Add(gitSnapshot.RenderForPrompt());

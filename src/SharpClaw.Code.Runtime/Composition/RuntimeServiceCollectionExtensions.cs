@@ -115,6 +115,8 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IShareSessionService, ShareSessionService>();
         services.AddSingleton<IConversationCompactionService, ConversationCompactionService>();
         services.AddSingleton<IHookDispatcher, HookDispatcher>();
+        services.AddSingleton<ITodoService, TodoService>();
+        services.AddSingleton<IWorkspaceInsightsService, WorkspaceInsightsService>();
         services.AddSingleton<IWorkspaceHttpServer, WorkspaceHttpServer>();
         services.AddSingleton<ISessionExportService, SessionExportService>();
         services.AddSingleton<IPromptContextAssembler, PromptContextAssembler>();

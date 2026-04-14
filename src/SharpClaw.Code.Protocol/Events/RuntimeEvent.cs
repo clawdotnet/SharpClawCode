@@ -35,6 +35,7 @@ namespace SharpClaw.Code.Protocol.Events;
 [JsonDerivedType(typeof(RecoveryAttemptedEvent), "recoveryAttempted")]
 [JsonDerivedType(typeof(ShareCreatedEvent), "shareCreated")]
 [JsonDerivedType(typeof(ShareRemovedEvent), "shareRemoved")]
+[JsonDerivedType(typeof(TodoChangedEvent), "todoChanged")]
 [JsonDerivedType(typeof(MutationSetRecordedEvent), "mutationSetRecorded")]
 [JsonDerivedType(typeof(UndoRequestedEvent), "undoRequested")]
 [JsonDerivedType(typeof(UndoCompletedEvent), "undoCompleted")]

@@ -21,6 +21,7 @@ public static class PluginsServiceCollectionExtensions
         services.AddSharpClawTelemetry();
         services.AddSharpClawInfrastructure();
         services.AddSingleton<PluginManifestValidator>();
+        services.AddSingleton<IPluginManifestImportService, PluginManifestImportService>();
         services.AddSingleton<IPluginProcessRunner, PluginProcessRunner>();
         services.AddSingleton<IPluginLoader, OutOfProcessPluginLoader>();
         services.AddSingleton<IPluginManager, PluginManager>();

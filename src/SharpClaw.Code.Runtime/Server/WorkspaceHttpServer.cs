@@ -179,7 +179,8 @@ public sealed class WorkspaceHttpServer(
             OutputFormat: payload.OutputFormat ?? OutputFormat.Json,
             PrimaryMode: payload.PrimaryMode ?? defaultContext.PrimaryMode,
             SessionId: payload.SessionId ?? defaultContext.SessionId,
-            AgentId: payload.AgentId ?? defaultContext.AgentId);
+            AgentId: payload.AgentId ?? defaultContext.AgentId,
+            IsInteractive: false);
 
         var result = await runtimeCommandService.ExecutePromptAsync(payload.Prompt, commandContext, cancellationToken).ConfigureAwait(false);
         var accept = request.Headers["Accept"];

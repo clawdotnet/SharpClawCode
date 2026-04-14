@@ -61,6 +61,36 @@ public enum HookTriggerKind
 }
 
 /// <summary>
+/// Scope for a tracked todo item.
+/// </summary>
+public enum TodoScope
+{
+    /// <summary>Task belongs to a single session.</summary>
+    Session,
+
+    /// <summary>Task belongs to the workspace.</summary>
+    Workspace,
+}
+
+/// <summary>
+/// Lifecycle state for a tracked todo item.
+/// </summary>
+public enum TodoStatus
+{
+    /// <summary>Task is open and not yet started.</summary>
+    Open,
+
+    /// <summary>Task is actively being worked.</summary>
+    InProgress,
+
+    /// <summary>Task is blocked on another dependency.</summary>
+    Blocked,
+
+    /// <summary>Task is completed.</summary>
+    Done,
+}
+
+/// <summary>
 /// Describes a configured agent override or workspace-defined specialist agent.
 /// </summary>
 /// <param name="Id">Stable agent id.</param>
@@ -220,7 +250,9 @@ public sealed record ConnectTargetStatus(
     string DisplayName,
     string Kind,
     bool IsAuthenticated,
-    string? ConnectUrl);
+    string? ConnectUrl,
+    DateTimeOffset? ExpiresAtUtc = null,
+    string? StatusDetail = null);
 
 /// <summary>
 /// One workspace diagnostic item surfaced to prompts, CLI, and APIs.
@@ -300,3 +332,123 @@ public sealed record SharedSessionSnapshot(
     ShareSessionRecord Record,
     ConversationSession Session,
     RuntimeEvent[] Events);
+
+/// <summary>
+/// Usage summary for one session.
+/// </summary>
+public sealed record SessionUsageReport(
+    string SessionId,
+    string Title,
+    bool IsAttached,
+    bool IsCurrent,
+    UsageSnapshot Usage);
+
+/// <summary>
+/// Workspace usage report.
+/// </summary>
+public sealed record WorkspaceUsageReport(
+    string WorkspaceRoot,
+    string? CurrentSessionId,
+    string? AttachedSessionId,
+    UsageSnapshot WorkspaceTotal,
+    IReadOnlyList<SessionUsageReport> Sessions);
+
+/// <summary>
+/// Cost summary for one session.
+/// </summary>
+public sealed record SessionCostReport(
+    string SessionId,
+    string Title,
+    bool IsAttached,
+    bool IsCurrent,
+    decimal? EstimatedCostUsd);
+
+/// <summary>
+/// Workspace cost report.
+/// </summary>
+public sealed record WorkspaceCostReport(
+    string WorkspaceRoot,
+    string? CurrentSessionId,
+    string? AttachedSessionId,
+    decimal? WorkspaceEstimatedCostUsd,
+    IReadOnlyList<SessionCostReport> Sessions);
+
+/// <summary>
+/// Workspace execution stats report.
+/// </summary>
+public sealed record WorkspaceStatsReport(
+    string WorkspaceRoot,
+    string? CurrentSessionId,
+    string? AttachedSessionId,
+    int SessionCount,
+    int TurnStartedCount,
+    int TurnCompletedCount,
+    int ToolExecutionCount,
+    int ProviderRequestCount,
+    int SharedSessionCount,
+    int ActiveTodoCount);
+
+/// <summary>
+/// Configured hook status.
+/// </summary>
+public sealed record HookStatusRecord(
+    string Name,
+    HookTriggerKind Trigger,
+    string Command,
+    string[] Arguments,
+    bool Enabled,
+    DateTimeOffset? LastTestedAtUtc = null,
+    bool? LastTestSucceeded = null,
+    string? LastTestMessage = null);
+
+/// <summary>
+/// Result of testing a configured hook.
+/// </summary>
+public sealed record HookTestResult(
+    string Name,
+    HookTriggerKind Trigger,
+    bool Succeeded,
+    string Message,
+    DateTimeOffset TestedAtUtc);
+
+/// <summary>
+/// Skill inspection payload.
+/// </summary>
+public sealed record SkillInspectionRecord(
+    SkillDefinition Definition,
+    string PromptTemplate,
+    IReadOnlyDictionary<string, string> Metadata);
+
+/// <summary>
+/// Normalized imported plugin manifest payload.
+/// </summary>
+public sealed record ImportedPluginManifestResult(
+    string SourceFormat,
+    string PluginId,
+    string Name,
+    string Version,
+    string EntryPoint,
+    int ToolCount,
+    string[] Warnings);
+
+/// <summary>
+/// Single durable todo item.
+/// </summary>
+public sealed record TodoItem(
+    string Id,
+    string Title,
+    TodoStatus Status,
+    TodoScope Scope,
+    DateTimeOffset CreatedAtUtc,
+    DateTimeOffset UpdatedAtUtc,
+    string? OwnerAgentId,
+    string? LinkedSessionId);
+
+/// <summary>
+/// Snapshot of workspace and session tasks.
+/// </summary>
+public sealed record TodoSnapshot(
+    string WorkspaceRoot,
+    string? SessionId,
+    IReadOnlyList<TodoItem> SessionTodos,
+    IReadOnlyList<TodoItem> WorkspaceTodos);

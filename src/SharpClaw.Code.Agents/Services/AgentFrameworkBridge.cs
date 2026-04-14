@@ -44,7 +44,7 @@ public sealed class AgentFrameworkBridge(
             EnvironmentVariables: null,
             AllowedTools: allowedTools,
             AllowDangerousBypass: false,
-            IsInteractive: false,
+            IsInteractive: request.Context.IsInteractive,
             SourceKind: PermissionRequestSourceKind.Runtime,
             SourceName: null,
             TrustedPluginNames: null,
@@ -57,7 +57,7 @@ public sealed class AgentFrameworkBridge(
             request.Context.WorkingDirectory,
             cancellationToken).ConfigureAwait(false);
 
-        var providerTools = registryTools
+        var providerTools = FilterAdvertisedTools(registryTools, allowedTools)
             .Select(t => new ProviderToolDefinition(t.Name, t.Description, t.InputSchemaJson))
             .ToList();
 
@@ -157,5 +157,17 @@ public sealed class AgentFrameworkBridge(
         {
             return null;
         }
+    }
+
+    private static IEnumerable<ToolDefinition> FilterAdvertisedTools(
+        IReadOnlyList<ToolDefinition> registryTools,
+        IReadOnlyCollection<string>? allowedTools)
+    {
+        if (allowedTools is null || allowedTools.Count == 0)
+        {
+            return registryTools;
+        }
+
+        return registryTools.Where(tool => allowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase));
     }
 }

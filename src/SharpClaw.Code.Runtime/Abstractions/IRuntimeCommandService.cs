@@ -153,6 +153,7 @@ public interface IRuntimeCommandService
 /// <param name="PrimaryMode">Optional primary mode; when null the session/request default applies.</param>
 /// <param name="SessionId">Optional explicit session id (e.g. from <c>--session</c>); when null, attachment/latest resolution applies.</param>
 /// <param name="AgentId">Optional effective agent id.</param>
+/// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
 public sealed record RuntimeCommandContext(
     string WorkingDirectory,
     string? Model,
@@ -160,4 +161,5 @@ public sealed record RuntimeCommandContext(
     OutputFormat OutputFormat,
     PrimaryMode? PrimaryMode = null,
     string? SessionId = null,
-    string? AgentId = null);
+    string? AgentId = null,
+    bool IsInteractive = true);

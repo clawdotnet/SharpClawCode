@@ -101,6 +101,9 @@ public sealed class PromptContextAssemblyTests
 
         public Task<ResolvedSkill> InstallAsync(string workspaceRoot, SkillInstallRequest request, CancellationToken cancellationToken)
             => throw new NotSupportedException();
+
+        public Task<bool> UninstallAsync(string workspaceRoot, string skillId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
     }
 
     private sealed class StubGitWorkspaceService : IGitWorkspaceService

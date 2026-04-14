@@ -33,4 +33,9 @@ public interface ISkillRegistry
     /// <param name="cancellationToken">The cancellation token.</param>
     /// <returns>The installed skill.</returns>
     Task<ResolvedSkill> InstallAsync(string workspaceRoot, SkillInstallRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Removes an installed skill from the local skills directory.
+    /// </summary>
+    Task<bool> UninstallAsync(string workspaceRoot, string skillId, CancellationToken cancellationToken);
 }

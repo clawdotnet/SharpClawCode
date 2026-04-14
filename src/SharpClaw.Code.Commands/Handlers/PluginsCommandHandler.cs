@@ -14,6 +14,7 @@ namespace SharpClaw.Code.Commands;
 /// </summary>
 public sealed class PluginsCommandHandler(
     IPluginManager pluginManager,
+    IPluginManifestImportService pluginManifestImportService,
     OutputRendererDispatcher outputRendererDispatcher) : ICommandHandler
 {
     /// <inheritdoc />
@@ -29,6 +30,7 @@ public sealed class PluginsCommandHandler(
         command.Subcommands.Add(BuildListCommand(globalOptions));
         command.Subcommands.Add(BuildInstallCommand(globalOptions, isUpdate: false));
         command.Subcommands.Add(BuildInstallCommand(globalOptions, isUpdate: true));
+        command.Subcommands.Add(BuildImportCommand(globalOptions));
         command.Subcommands.Add(BuildEnableCommand(globalOptions));
         command.Subcommands.Add(BuildDisableCommand(globalOptions));
         command.Subcommands.Add(BuildUninstallCommand(globalOptions));
@@ -119,6 +121,53 @@ public sealed class PluginsCommandHandler(
                 DataJson: JsonSerializer.Serialize(
                     new Dictionary<string, string> { ["id"] = pluginId },
                     ProtocolJsonContext.Default.DictionaryStringString));
+            await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
+            return 0;
+        });
+
+        return command;
+    }
+
+    private Command BuildImportCommand(GlobalCliOptions globalOptions)
+    {
+        var command = new Command("import", "Imports an external manifest into the local SharpClaw plugin format.");
+        var manifestOption = new Option<string>("--manifest")
+        {
+            Required = true,
+            Description = "The path to the external or SharpClaw plugin manifest JSON file."
+        };
+        var formatOption = new Option<string?>("--format")
+        {
+            Description = "Manifest format hint: auto, sharpclaw, or external."
+        };
+        var updateOption = new Option<bool>("--update")
+        {
+            Description = "Updates the plugin when already installed."
+        };
+
+        command.Options.Add(manifestOption);
+        command.Options.Add(formatOption);
+        command.Options.Add(updateOption);
+        command.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var context = globalOptions.Resolve(parseResult);
+            var manifestPath = parseResult.GetValue(manifestOption) ?? throw new InvalidOperationException("The --manifest option is required.");
+            var format = parseResult.GetValue(formatOption);
+            var update = parseResult.GetValue(updateOption);
+            var (request, importResult) = await pluginManifestImportService.ImportAsync(manifestPath, format, cancellationToken).ConfigureAwait(false);
+            var plugin = update
+                ? await pluginManager.UpdateAsync(context.WorkingDirectory, request, cancellationToken).ConfigureAwait(false)
+                : await pluginManager.InstallAsync(context.WorkingDirectory, request, cancellationToken).ConfigureAwait(false);
+
+            var message = importResult.Warnings.Length == 0
+                ? $"Imported plugin '{plugin.Descriptor.Id}' from {importResult.SourceFormat} manifest."
+                : $"Imported plugin '{plugin.Descriptor.Id}' from {importResult.SourceFormat} manifest with {importResult.Warnings.Length} warning(s).";
+            var result = new CommandResult(
+                true,
+                0,
+                context.OutputFormat,
+                message,
+                JsonSerializer.Serialize(importResult, ProtocolJsonContext.Default.ImportedPluginManifestResult));
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return 0;
         });

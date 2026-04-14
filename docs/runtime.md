@@ -31,7 +31,7 @@ The agent stack is described in [agents.md](agents.md).
 
 ## Context assembly
 
-**`PromptContextAssembler`** pulls workspace/session-aware data (skills registry, memory hooks, git context as wired today) into the prompt path before the agent runs.
+**`PromptContextAssembler`** pulls workspace/session-aware data (skills registry, todo state, memory hooks, git context as wired today) into the prompt path before the agent runs.
 
 It also includes a compact diagnostics summary from **`IWorkspaceDiagnosticsService`**, which currently surfaces configured diagnostics sources and build-derived findings for .NET workspaces.
 
@@ -73,7 +73,9 @@ The parity layer adds several runtime-owned services:
 - **`IAgentCatalogService`** — overlays configured specialist agents on top of built-in agents
 - **`IConversationCompactionService`** — creates durable session summaries stored in session metadata
 - **`IShareSessionService`** — creates and removes self-hosted share snapshots
-- **`IHookDispatcher`** — executes configured hook processes for turn/tool/share/server events
+- **`IHookDispatcher`** — executes configured hook processes for turn/tool/share/server events and exposes hook inspection/testing
+- **`ITodoService`** — persists session and workspace todo items under session metadata and `.sharpclaw/tasks.json`
+- **`IWorkspaceInsightsService`** — reconstructs durable usage, cost, and execution stats from persisted event logs
 
 These services are intentionally small and runtime-owned rather than separate orchestration subsystems.
 

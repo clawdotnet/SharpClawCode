@@ -110,7 +110,14 @@ public sealed class ConnectCommandHandler(
         {
             var auth = await authFlowService.GetStatusAsync(provider.ProviderName, cancellationToken).ConfigureAwait(false);
             var configuredUrl = config.Document.ConnectLinks?.FirstOrDefault(link => string.Equals(link.Target, provider.ProviderName, StringComparison.OrdinalIgnoreCase))?.Url;
-            results.Add(new ConnectTargetStatus(provider.ProviderName, provider.ProviderName, "provider", auth.IsAuthenticated, configuredUrl));
+            var detail = auth.IsAuthenticated
+                ? string.IsNullOrWhiteSpace(auth.SubjectId)
+                    ? "authenticated"
+                    : $"authenticated as {auth.SubjectId}"
+                : auth.ExpiresAtUtc is { } expiresAt && expiresAt <= DateTimeOffset.UtcNow
+                    ? "authentication expired"
+                    : "not authenticated";
+            results.Add(new ConnectTargetStatus(provider.ProviderName, provider.ProviderName, "provider", auth.IsAuthenticated, configuredUrl, auth.ExpiresAtUtc, detail));
         }
 
         foreach (var link in config.Document.ConnectLinks ?? [])
@@ -120,7 +127,7 @@ public sealed class ConnectCommandHandler(
                 continue;
             }
 
-            results.Add(new ConnectTargetStatus(link.Target, link.DisplayName, "external", false, link.Url));
+            results.Add(new ConnectTargetStatus(link.Target, link.DisplayName, "external", false, link.Url, null, "manual browser flow"));
         }
 
         return results.OrderBy(static item => item.Target, StringComparer.OrdinalIgnoreCase).ToList();

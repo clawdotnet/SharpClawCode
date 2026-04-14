@@ -58,4 +58,7 @@ public static class SharpClawWorkflowMetadataKeys
 
     /// <summary>JSON array of allowed tool names resolved for the effective agent.</summary>
     public const string AgentAllowedToolsJson = "sharpclaw.agentAllowedToolsJson";
+
+    /// <summary>JSON array of session-scoped <see cref="TodoItem"/> records.</summary>
+    public const string SessionTodosJson = "sharpclaw.sessionTodosJson";
 }

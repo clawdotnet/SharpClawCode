@@ -74,8 +74,14 @@ Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, 
 Parity-oriented commands now include:
 
 - `models` / `/models`
+- `usage` / `/usage`
+- `cost` / `/cost`
+- `stats` / `/stats`
 - `connect` / `/connect`
+- `hooks` / `/hooks`
+- `skills` / `/skills`
 - `agents` / `/agents`
+- `todo` / `/todo`
 - `share` / `/share`
 - `unshare` / `/unshare`
 - `compact` / `/compact`
@@ -162,7 +168,7 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
 | `--agent <id>` | Select the active agent for prompt execution |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `models`, `connect`, `agents`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 
@@ -218,7 +224,8 @@ All options are validated at startup via `IValidateOptions` implementations.
 ## Current Scope
 
 - The shared tooling layer is permission-aware across the runtime.
-- The current runtime includes multi-turn provider-backed tool execution with durable conversation history.
+- The current runtime includes multi-turn provider-backed tool execution with durable conversation history and session-backed prompt replay.
+- Agent-driven tool calls flow through the same approval and allowlist enforcement path used by direct tool execution, including caller-aware interactive approval behavior.
 - Operational commands support stable JSON output via `--output-format json`, which makes them useful in scripts and automation.
 - The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
 

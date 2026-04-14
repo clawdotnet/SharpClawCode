@@ -190,7 +190,8 @@ public sealed class AcpStdioHost(
                     WorkingDirectory: workspace,
                     PermissionMode: PermissionMode.WorkspaceWrite,
                     OutputFormat: OutputFormat.Json,
-                    Metadata: new Dictionary<string, string> { ["acp"] = "true" }),
+                    Metadata: new Dictionary<string, string> { ["acp"] = "true" },
+                    IsInteractive: false),
                 cancellationToken)
             .ConfigureAwait(false);
 

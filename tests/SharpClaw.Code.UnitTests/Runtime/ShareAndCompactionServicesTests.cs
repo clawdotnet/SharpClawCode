@@ -111,7 +111,9 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
             new FixedConfigService(workspaceRoot),
             publisher,
             hooks);
-        var compactionService = new ConversationCompactionService(sessionStore, eventStore, clock);
+        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, clock);
+        _ = await todoService.AddAsync(workspaceRoot, TodoScope.Session, "Follow up on diagnostics UX", session.Id, "primary-coding-agent", CancellationToken.None);
+        var compactionService = new ConversationCompactionService(sessionStore, eventStore, todoService, clock);
 
         var share = await shareService.CreateShareAsync(workspaceRoot, session.Id, CancellationToken.None);
         var sharedSession = await sessionStore.GetByIdAsync(workspaceRoot, session.Id, CancellationToken.None);
@@ -127,6 +129,7 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         sharedSession!.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.ShareId);
         compacted.Session.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.CompactedSummary);
         compacted.Summary.Should().Contain("Recent requests:");
+        compacted.Summary.Should().Contain("Active tasks:");
         compacted.Session.Title.Should().Contain("Add diagnostics support");
         removed.Should().BeTrue();
         unsharedSession!.Metadata.Should().NotContainKey(SharpClawWorkflowMetadataKeys.ShareId);
@@ -174,5 +177,11 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
             Invocations.Add((workspaceRoot, trigger, payloadJson));
             return Task.CompletedTask;
         }
+
+        public Task<IReadOnlyList<HookStatusRecord>> ListAsync(string workspaceRoot, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<HookStatusRecord>>([]);
+
+        public Task<HookTestResult> TestAsync(string workspaceRoot, string hookName, string payloadJson, CancellationToken cancellationToken)
+            => Task.FromResult(new HookTestResult(hookName, HookTriggerKind.ShareCreated, true, "ok", DateTimeOffset.UtcNow));
     }
 }

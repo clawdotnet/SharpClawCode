@@ -40,7 +40,7 @@ Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHa
 4. **`SharpClawAgentBase`** delegates to **`AgentFrameworkBridge.RunAsync`**, which drives **`ProviderBackedAgentKernel`** (streaming `IModelProvider`, auth checks, **`ProviderExecutionException`** on hard failures).
 5. Turn completion updates session, checkpoints as implemented in **`ConversationRuntime`**, publishes events via **`IRuntimeEventPublisher`**.
 
-**Note:** `AgentRunContext` carries **`IToolExecutor`**, but the current **`AgentFrameworkBridge`** path does not attach SharpClaw tools to the Microsoft Agent Framework chat loop; **`AgentRunResult.ToolResults`** is empty in that bridge. Tools are still fully usable via **`IToolExecutor`** (tests and parity harness call it directly).
+**Note:** `AgentRunContext` carries **`IToolExecutor`**, and the current **`AgentFrameworkBridge`** path advertises the resolved tool set to the provider, executes tool calls through the permission-aware executor, and records tool results in the agent run result. Prompt references and tool approvals respect the caller's normalized interactivity mode.
 
 ### Operational commands
 

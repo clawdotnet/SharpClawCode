@@ -48,7 +48,7 @@ public sealed class OpenAiCompatibleProvider(
         using var chatClient = nativeClient.AsIChatClient();
 
         var messages = request.Messages is not null
-            ? OpenAiMessageBuilder.BuildMessages(request.Messages)
+            ? OpenAiMessageBuilder.BuildMessages(request.Messages, request.SystemPrompt)
             : BuildChatMessages(request);
 
         var chatOptions = new ChatOptions();

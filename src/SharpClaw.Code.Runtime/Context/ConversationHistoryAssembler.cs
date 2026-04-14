@@ -69,11 +69,11 @@ public static class ConversationHistoryAssembler
                 "user",
                 [new ContentBlock(ContentBlockKind.Text, userInput, null, null, null, null)]));
 
-            // Assistant message: prefer the turn summary; fall back to accumulated deltas.
+            // Assistant message: prefer the persisted turn output; fall back to accumulated deltas.
             string assistantText;
-            if (!string.IsNullOrWhiteSpace(completed.Summary))
+            if (!string.IsNullOrWhiteSpace(completed.Turn.Output))
             {
-                assistantText = completed.Summary;
+                assistantText = completed.Turn.Output!;
             }
             else
             {
