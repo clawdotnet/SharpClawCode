@@ -59,7 +59,7 @@ public sealed partial class WorkspaceDiagnosticsService(
 
         var snapshot = new WorkspaceDiagnosticsSnapshot(workspaceRoot, systemClock.UtcNow, configuredServers, diagnostics);
         Cache[workspaceRoot] = snapshot;
-        EvictStaleCacheEntries();
+        EvictCacheEntries();
         return snapshot;
     }
 
@@ -98,13 +98,8 @@ public sealed partial class WorkspaceDiagnosticsService(
     private static string? NullIfEmpty(string value)
         => string.IsNullOrWhiteSpace(value) ? null : value;
 
-    private void EvictStaleCacheEntries()
+    private void EvictCacheEntries()
     {
-        if (Cache.Count <= MaxCacheEntries)
-        {
-            return;
-        }
-
         var now = systemClock.UtcNow;
         foreach (var key in Cache.Keys)
         {
@@ -112,6 +107,23 @@ public sealed partial class WorkspaceDiagnosticsService(
             {
                 Cache.TryRemove(key, out _);
             }
+        }
+
+        if (Cache.Count <= MaxCacheEntries)
+        {
+            return;
+        }
+
+        var overflowKeys = Cache
+            .OrderBy(static pair => pair.Value.GeneratedAtUtc)
+            .ThenBy(static pair => pair.Key, StringComparer.Ordinal)
+            .Take(Cache.Count - MaxCacheEntries)
+            .Select(static pair => pair.Key)
+            .ToArray();
+
+        foreach (var key in overflowKeys)
+        {
+            Cache.TryRemove(key, out _);
         }
     }
 

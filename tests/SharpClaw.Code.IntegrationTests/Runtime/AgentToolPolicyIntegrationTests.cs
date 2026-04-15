@@ -1,6 +1,7 @@
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Agents.Configuration;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Models;
 using SharpClaw.Code.Permissions.Abstractions;
@@ -9,6 +10,7 @@ using SharpClaw.Code.Plugins.Abstractions;
 using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Models;
@@ -200,14 +202,55 @@ public sealed class AgentToolPolicyIntegrationTests
         shellExecutor.CallCount.Should().Be(0);
     }
 
+    /// <summary>
+    /// Ensures callers can distinguish an incomplete provider result when the tool loop hits its iteration cap.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_surface_tool_loop_exhaustion()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "README.md"), "SharpClaw");
+
+        var provider = new CapturingToolPolicyProvider(ToolPolicyScenario.ExhaustToolLoop);
+        using var serviceProvider = CreateServiceProvider(provider, configureLoop: options => options.MaxToolIterations = 2);
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var result = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "keep reading the file",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = TestProviderName,
+                    ["model"] = "tool-policy-model",
+                    [SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson] = """["read_file"]""",
+                    [ScenarioMetadataKey] = ToolPolicyScenario.ExhaustToolLoop,
+                },
+                IsInteractive: true),
+            CancellationToken.None);
+
+        result.FinalOutput.Should().Contain("maximum of 2 iterations");
+        var completedEvent = result.Events.OfType<AgentCompletedEvent>().Should().ContainSingle().Subject;
+        completedEvent.Summary.Should().Contain("maximum of 2 iterations");
+    }
+
     private static ServiceProvider CreateServiceProvider(
         CapturingToolPolicyProvider provider,
         RecordingApprovalService? approvalService = null,
         RecordingShellExecutor? shellExecutor = null,
-        IPluginManager? pluginManager = null)
+        IPluginManager? pluginManager = null,
+        Action<AgentLoopOptions>? configureLoop = null)
     {
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        if (configureLoop is not null)
+        {
+            services.Configure(configureLoop);
+        }
+
         services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
         services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
         services.AddSingleton<IModelProviderResolver>(_ => new StaticModelProviderResolver(provider));
@@ -244,6 +287,7 @@ public sealed class AgentToolPolicyIntegrationTests
     {
         public const string CaptureOnly = "capture-only";
         public const string ToolRoundTrip = "tool-round-trip";
+        public const string ExhaustToolLoop = "exhaust-tool-loop";
     }
 
     private sealed class PassthroughPreflight : IProviderRequestPreflight
@@ -313,6 +357,24 @@ public sealed class AgentToolPolicyIntegrationTests
                     ToolName: "bash",
                     ToolInputJson: """{"command":"echo hi"}""");
                 yield return new ProviderEvent("provider-event-1-terminal", request.Id, "completed", DateTimeOffset.UtcNow, null, true, new UsageSnapshot(1, 2, 0, 3, null));
+                yield break;
+            }
+
+            if (string.Equals(scenario, ToolPolicyScenario.ExhaustToolLoop, StringComparison.Ordinal))
+            {
+                yield return new ProviderEvent(
+                    "provider-event-loop",
+                    request.Id,
+                    "tool_use",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    false,
+                    null,
+                    BlockType: "tool_use",
+                    ToolUseId: $"toolu_read_{request.Messages?.Count ?? 0:D3}",
+                    ToolName: "read_file",
+                    ToolInputJson: """{"path":"README.md"}""");
+                yield return new ProviderEvent("provider-event-loop-terminal", request.Id, "completed", DateTimeOffset.UtcNow, null, true, new UsageSnapshot(1, 2, 0, 3, null));
                 yield break;
             }
 

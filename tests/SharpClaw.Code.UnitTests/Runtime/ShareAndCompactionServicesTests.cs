@@ -39,7 +39,10 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
             UpdatedAtUtc: clock.UtcNow.AddMinutes(-5),
             ActiveTurnId: null,
             LastCheckpointId: null,
-            Metadata: new Dictionary<string, string>(StringComparer.Ordinal));
+            Metadata: new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                [SharpClawWorkflowMetadataKeys.EditorContextJson] = """{"selectedPath":"secret.txt"}"""
+            });
         await sessionStore.SaveAsync(workspaceRoot, session, CancellationToken.None);
 
         await eventStore.AppendAsync(
@@ -118,14 +121,16 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         var share = await shareService.CreateShareAsync(workspaceRoot, session.Id, CancellationToken.None);
         var sharedSession = await sessionStore.GetByIdAsync(workspaceRoot, session.Id, CancellationToken.None);
         var compacted = await compactionService.CompactAsync(workspaceRoot, session.Id, CancellationToken.None);
+        var snapshot = await shareService.GetSharedSnapshotAsync(workspaceRoot, share.ShareId, CancellationToken.None);
         var removed = await shareService.RemoveShareAsync(workspaceRoot, session.Id, CancellationToken.None);
         var unsharedSession = await sessionStore.GetByIdAsync(workspaceRoot, session.Id, CancellationToken.None);
 
         share.Url.Should().Be("http://127.0.0.1:7345/s/" + share.ShareId);
-        // The share snapshot is written under the normalized/canonical workspace path (via pathService.GetFullPath),
-        // which on macOS resolves /var -> /private/var. The raw workspaceRoot path won't match the snapshot location.
-        // This assertion verifies that checking the raw path correctly returns false (path normalization is working).
-        fileSystem.FileExists(SessionStorageLayout.GetShareSnapshotPath(pathService, workspaceRoot, share.ShareId)).Should().BeFalse();
+        snapshot.Should().NotBeNull();
+        snapshot!.Record.ShareId.Should().Be(share.ShareId);
+        snapshot.Session.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.ShareId);
+        snapshot.Session.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.ShareUrl);
+        snapshot.Session.Metadata.Should().NotContainKey(SharpClawWorkflowMetadataKeys.EditorContextJson);
         sharedSession!.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.ShareId);
         compacted.Session.Metadata.Should().ContainKey(SharpClawWorkflowMetadataKeys.CompactedSummary);
         compacted.Summary.Should().Contain("Recent requests:");

@@ -162,15 +162,19 @@ public sealed class PromptContextAssembler(
         // NOTE: This reads the full event log per turn, which scales linearly with session length.
         // For long-running sessions, consider persisting a compacted message history in session metadata
         // to avoid re-reading and re-assembling the full log on every prompt.
-        const int MaxHistoryTokenBudget = 100_000;
         IReadOnlyList<ChatMessage> conversationHistory = [];
         if (turn.SequenceNumber > 1)
         {
-            var sessionEvents = await eventStore
-                .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
-                .ConfigureAwait(false);
-            var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
-            conversationHistory = ContextWindowManager.Truncate(rawHistory, MaxHistoryTokenBudget);
+            var targetSequence = turn.SequenceNumber - 1;
+            if (!ConversationHistoryCache.TryGet(workspaceRoot, session.Id, targetSequence, out conversationHistory))
+            {
+                var sessionEvents = await eventStore
+                    .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
+                    .ConfigureAwait(false);
+                var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
+                conversationHistory = ContextWindowManager.Truncate(rawHistory, ConversationHistoryCache.MaxHistoryTokenBudget);
+                ConversationHistoryCache.Store(workspaceRoot, session.Id, targetSequence, conversationHistory);
+            }
         }
 
         return new PromptExecutionContext(

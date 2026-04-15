@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Git.Abstractions;
 using SharpClaw.Code.Git.Models;
 using SharpClaw.Code.Memory.Abstractions;
@@ -12,6 +13,8 @@ using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Runtime;
 using SharpClaw.Code.Runtime.Abstractions;
+using SharpClaw.Code.Sessions.Abstractions;
+using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Skills.Abstractions;
 using SharpClaw.Code.Skills.Models;
 
@@ -63,6 +66,60 @@ public sealed class PromptContextAssemblyTests
         providerStarted.Request.Prompt.Should().Contain("Git context");
         providerStarted.Request.Prompt.Should().Contain("Branch: main");
         providerStarted.Request.Prompt.Should().Contain("Session summary");
+    }
+
+    /// <summary>
+    /// Ensures follow-up turns reuse the in-process conversation-history cache instead of rereading the event log.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_reuse_in_process_conversation_history_cache()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var countingEventStore = new CountingEventStore(new NdjsonEventStore(new LocalFileSystem(), new PathService()));
+        var services = new ServiceCollection();
+        services.AddSharpClawRuntime();
+        services.AddSingleton<IProjectMemoryService>(new StubProjectMemoryService());
+        services.AddSingleton<ISessionSummaryService>(new StubSessionSummaryService());
+        services.AddSingleton<ISkillRegistry>(new StubSkillRegistry());
+        services.AddSingleton<IGitWorkspaceService>(new StubGitWorkspaceService());
+        services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+        services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
+        services.AddSingleton<IModelProviderResolver, StubModelProviderResolver>();
+        services.AddSingleton<IEventStore>(countingEventStore);
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+        var firstTurn = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "start the session",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = "stub-provider",
+                    ["model"] = "stub-model"
+                }),
+            CancellationToken.None);
+
+        countingEventStore.ReadAllCount.Should().Be(0);
+
+        _ = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "continue the session",
+                SessionId: firstTurn.Session.Id,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = "stub-provider",
+                    ["model"] = "stub-model"
+                }),
+            CancellationToken.None);
+
+        countingEventStore.ReadAllCount.Should().Be(0);
     }
 
     private static string CreateTemporaryWorkspace()
@@ -151,6 +208,20 @@ public sealed class PromptContextAssemblyTests
             yield return new ProviderEvent("provider-event-1", request.Id, "delta", DateTimeOffset.UtcNow, "Context applied.", false, null);
             await Task.Yield();
             yield return new ProviderEvent("provider-event-2", request.Id, "completed", DateTimeOffset.UtcNow, null, true, new UsageSnapshot(1, 2, 0, 3, null));
+        }
+    }
+
+    private sealed class CountingEventStore(IEventStore inner) : IEventStore
+    {
+        public int ReadAllCount { get; private set; }
+
+        public Task AppendAsync(string workspacePath, string sessionId, RuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+            => inner.AppendAsync(workspacePath, sessionId, runtimeEvent, cancellationToken);
+
+        public async Task<IReadOnlyList<RuntimeEvent>> ReadAllAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
+        {
+            ReadAllCount++;
+            return await inner.ReadAllAsync(workspacePath, sessionId, cancellationToken);
         }
     }
 }
