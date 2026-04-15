@@ -14,6 +14,7 @@ using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.CustomCommands;
 using SharpClaw.Code.Runtime.Diagnostics;
 using SharpClaw.Code.Runtime.Export;
+using SharpClaw.Code.Runtime.Context;
 using SharpClaw.Code.Runtime.Lifecycle;
 using SharpClaw.Code.Runtime.Mutations;
 using SharpClaw.Code.Runtime.Turns;
@@ -269,6 +270,7 @@ public sealed class ConversationRuntime(
                 CompletedAtUtc = completedAtUtc,
                 Usage = turnRunResult.Usage,
             };
+            ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
 
             await AppendRuntimeEventsAsync(
                 workspacePath,

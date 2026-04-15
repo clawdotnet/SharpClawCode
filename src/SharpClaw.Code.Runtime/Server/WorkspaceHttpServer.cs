@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
@@ -258,11 +259,7 @@ public sealed class WorkspaceHttpServer(
         }
     }
 
-    private static readonly JsonSerializerOptions ServerJsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-        Converters = { new System.Text.Json.Serialization.JsonStringEnumConverter() },
-    };
+    private static readonly JsonSerializerOptions ServerJsonOptions = CreateServerJsonOptions();
 
     private static async Task WriteJsonAsync(HttpListenerResponse response, int statusCode, object payload, CancellationToken cancellationToken)
     {
@@ -283,8 +280,20 @@ public sealed class WorkspaceHttpServer(
                 path,
                 statusCode,
                 succeeded,
-                DateTimeOffset.UtcNow));
+                DateTimeOffset.UtcNow),
+            ServerJsonOptions);
         return hookDispatcher.DispatchAsync(workspaceRoot, HookTriggerKind.ServerRequestCompleted, payload, CancellationToken.None);
+    }
+
+    private static JsonSerializerOptions CreateServerJsonOptions()
+    {
+        var options = new JsonSerializerOptions(ProtocolJsonContext.Default.Options)
+        {
+            TypeInfoResolver = JsonTypeInfoResolver.Combine(
+                ProtocolJsonContext.Default,
+                new DefaultJsonTypeInfoResolver()),
+        };
+        return options;
     }
 
     private sealed record ServerCommandEnvelope(

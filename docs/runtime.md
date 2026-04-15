@@ -11,8 +11,8 @@ Registration: `RuntimeServiceCollectionExtensions.AddSharpClawRuntime`.
 
 **`DefaultTurnRunner`** is the **`ITurnRunner`** implementation used for prompt turns. It:
 
-1. Calls **`IPromptContextAssembler.AssembleAsync`** to build **`PromptContext`** (prompt text, metadata such as resolved **`model`**).
-2. Maps **`RunPromptRequest`** + session into **`AgentRunContext`** (session/turn ids, working directory, permission mode, output format, **`IToolExecutor`**, metadata).
+1. Calls **`IPromptContextAssembler.AssembleAsync`** to build **`PromptContext`** (prompt text, metadata such as resolved **`model`**, and prior-turn conversation history assembled from persisted runtime events).
+2. Maps **`RunPromptRequest`** + session into **`AgentRunContext`** (session/turn ids, working directory, permission mode, output format, **`IToolExecutor`**, metadata, and normalized caller interactivity).
 3. Invokes **`PrimaryCodingAgent.RunAsync`**.
 
 Before the agent runs, **`ConversationRuntime`** also layers in:
@@ -23,6 +23,17 @@ Before the agent runs, **`ConversationRuntime`** also layers in:
 - auto-share policy checks (`ShareMode.Auto`)
 
 The agent stack is described in [agents.md](agents.md).
+
+## Agent tool loop
+
+The current runtime supports provider-driven tool calling through the normal agent path.
+
+- **`AgentFrameworkBridge`** resolves the effective allowed-tool set from agent metadata.
+- It advertises only that filtered tool set to the provider.
+- **`ProviderBackedAgentKernel`** runs the provider loop, dispatches tool-use events through **`IToolExecutor`**, and feeds tool results back into the next provider iteration.
+- Tool execution still goes through the normal permission engine, so allowlists, approval requirements, plugin trust, MCP trust, and primary-mode mutation restrictions all apply consistently.
+
+This means the model-visible tool surface and the executor-visible tool surface are derived from the same resolved policy input.
 
 ## Lifecycle and state
 
@@ -35,7 +46,14 @@ The agent stack is described in [agents.md](agents.md).
 
 It also includes a compact diagnostics summary from **`IWorkspaceDiagnosticsService`**, which currently surfaces configured diagnostics sources and build-derived findings for .NET workspaces.
 
+Prompt references are resolved before provider execution. Outside-workspace file references are evaluated through the permission engine, and the approval path now respects the normalized caller interactivity mode:
+
+- interactive CLI and REPL callers can participate in approval prompts
+- non-interactive surfaces such as ACP and the embedded HTTP server cannot
+
 When the effective **`PrimaryMode`** is **`Spec`**, the assembler appends a structured output contract that requires the model to return machine-readable requirements, design, and task content.
+
+Conversation history is rebuilt from persisted session events and truncated by token budget before being attached to the next provider request. Assistant history prefers the persisted final turn output and only falls back to streamed provider deltas when needed.
 
 ## Spec workflow
 

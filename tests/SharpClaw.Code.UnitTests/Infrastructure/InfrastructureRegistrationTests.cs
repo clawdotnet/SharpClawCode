@@ -42,7 +42,7 @@ public sealed class InfrastructureRegistrationTests
         var combined = pathService.Combine("/tmp", "sharpclaw", "sessions");
         var normalized = pathService.GetFullPath(".");
 
-        combined.Should().EndWith("/tmp/sharpclaw/sessions");
+        combined.Should().Be(Path.Combine("/tmp", "sharpclaw", "sessions"));
         normalized.Should().NotBeNullOrWhiteSpace();
     }
 

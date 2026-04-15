@@ -1,12 +1,16 @@
 using System.Runtime.CompilerServices;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Agents.Configuration;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Models;
 using SharpClaw.Code.Permissions.Abstractions;
 using SharpClaw.Code.Permissions.Models;
+using SharpClaw.Code.Plugins.Abstractions;
+using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Models;
@@ -50,6 +54,42 @@ public sealed class AgentToolPolicyIntegrationTests
         provider.CapturedRequests.Should().NotBeEmpty();
         provider.CapturedRequests[0].Tools.Should().NotBeNull();
         provider.CapturedRequests[0].Tools!.Select(static tool => tool.Name).Should().Equal("read_file");
+    }
+
+    /// <summary>
+    /// Ensures plugin-backed tools are filtered through the same explicit allow list as built-ins.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_filter_plugin_tools_through_same_allow_list_path()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var provider = new CapturingToolPolicyProvider(ToolPolicyScenario.CaptureOnly);
+        using var serviceProvider = CreateServiceProvider(
+            provider,
+            pluginManager: new StubPluginManager([
+                new PluginToolDescriptor("plugin_echo", "Echo via plugin.", "Plugin payload.", ["plugin"]),
+            ]));
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "list available tools",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = TestProviderName,
+                    ["model"] = "tool-policy-model",
+                    [SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson] = """["plugin_echo"]""",
+                    [ScenarioMetadataKey] = ToolPolicyScenario.CaptureOnly,
+                }),
+            CancellationToken.None);
+
+        provider.CapturedRequests.Should().NotBeEmpty();
+        provider.CapturedRequests[0].Tools.Should().NotBeNull();
+        provider.CapturedRequests[0].Tools!.Select(static tool => tool.Name).Should().Equal("plugin_echo");
     }
 
     /// <summary>
@@ -124,13 +164,93 @@ public sealed class AgentToolPolicyIntegrationTests
         shellExecutor.CallCount.Should().Be(0);
     }
 
+    /// <summary>
+    /// Ensures a tool requested outside the explicit allow list is denied even if the provider emits it.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_deny_provider_requested_tool_that_is_not_in_allow_list()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var provider = new CapturingToolPolicyProvider(ToolPolicyScenario.ToolRoundTrip);
+        var approvalService = new RecordingApprovalService(approve: true);
+        var shellExecutor = new RecordingShellExecutor();
+        using var serviceProvider = CreateServiceProvider(provider, approvalService, shellExecutor);
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var result = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "run bash",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = TestProviderName,
+                    ["model"] = "tool-policy-model",
+                    [SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson] = """["read_file"]""",
+                    [ScenarioMetadataKey] = ToolPolicyScenario.ToolRoundTrip,
+                },
+                IsInteractive: true),
+            CancellationToken.None);
+
+        result.FinalOutput.Should().Contain("Tool result received");
+        result.ToolResults.Should().ContainSingle();
+        result.ToolResults[0].Succeeded.Should().BeFalse();
+        result.ToolResults[0].ErrorMessage.Should().Contain("allow list");
+        approvalService.Requests.Should().BeEmpty();
+        shellExecutor.CallCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Ensures callers can distinguish an incomplete provider result when the tool loop hits its iteration cap.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_surface_tool_loop_exhaustion()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "README.md"), "SharpClaw");
+
+        var provider = new CapturingToolPolicyProvider(ToolPolicyScenario.ExhaustToolLoop);
+        using var serviceProvider = CreateServiceProvider(provider, configureLoop: options => options.MaxToolIterations = 2);
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var result = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "keep reading the file",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = TestProviderName,
+                    ["model"] = "tool-policy-model",
+                    [SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson] = """["read_file"]""",
+                    [ScenarioMetadataKey] = ToolPolicyScenario.ExhaustToolLoop,
+                },
+                IsInteractive: true),
+            CancellationToken.None);
+
+        result.FinalOutput.Should().Contain("maximum of 2 iterations");
+        var completedEvent = result.Events.OfType<AgentCompletedEvent>().Should().ContainSingle().Subject;
+        completedEvent.Summary.Should().Contain("maximum of 2 iterations");
+    }
+
     private static ServiceProvider CreateServiceProvider(
         CapturingToolPolicyProvider provider,
         RecordingApprovalService? approvalService = null,
-        RecordingShellExecutor? shellExecutor = null)
+        RecordingShellExecutor? shellExecutor = null,
+        IPluginManager? pluginManager = null,
+        Action<AgentLoopOptions>? configureLoop = null)
     {
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        if (configureLoop is not null)
+        {
+            services.Configure(configureLoop);
+        }
+
         services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
         services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
         services.AddSingleton<IModelProviderResolver>(_ => new StaticModelProviderResolver(provider));
@@ -142,6 +262,11 @@ public sealed class AgentToolPolicyIntegrationTests
         if (shellExecutor is not null)
         {
             services.AddSingleton<IShellExecutor>(shellExecutor);
+        }
+
+        if (pluginManager is not null)
+        {
+            services.AddSingleton<IPluginManager>(pluginManager);
         }
 
         return services.BuildServiceProvider();
@@ -161,6 +286,7 @@ public sealed class AgentToolPolicyIntegrationTests
     {
         public const string CaptureOnly = "capture-only";
         public const string ToolRoundTrip = "tool-round-trip";
+        public const string ExhaustToolLoop = "exhaust-tool-loop";
     }
 
     private sealed class PassthroughPreflight : IProviderRequestPreflight
@@ -233,6 +359,24 @@ public sealed class AgentToolPolicyIntegrationTests
                 yield break;
             }
 
+            if (string.Equals(scenario, ToolPolicyScenario.ExhaustToolLoop, StringComparison.Ordinal))
+            {
+                yield return new ProviderEvent(
+                    "provider-event-loop",
+                    request.Id,
+                    "tool_use",
+                    DateTimeOffset.UtcNow,
+                    null,
+                    false,
+                    null,
+                    BlockType: "tool_use",
+                    ToolUseId: $"toolu_read_{request.Messages?.Count ?? 0:D3}",
+                    ToolName: "read_file",
+                    ToolInputJson: """{"path":"README.md"}""");
+                yield return new ProviderEvent("provider-event-loop-terminal", request.Id, "completed", DateTimeOffset.UtcNow, null, true, new UsageSnapshot(1, 2, 0, 3, null));
+                yield break;
+            }
+
             yield return new ProviderEvent("provider-event-1", request.Id, "delta", DateTimeOffset.UtcNow, "ok", false, null);
             await Task.Yield();
             yield return new ProviderEvent("provider-event-2", request.Id, "completed", DateTimeOffset.UtcNow, null, true, new UsageSnapshot(1, 2, 0, 3, null));
@@ -279,5 +423,32 @@ public sealed class AgentToolPolicyIntegrationTests
             var now = DateTimeOffset.UtcNow;
             return Task.FromResult(new ProcessRunResult(0, "hi", string.Empty, now, now));
         }
+    }
+
+    private sealed class StubPluginManager(IReadOnlyList<PluginToolDescriptor> descriptors) : IPluginManager
+    {
+        public Task<IReadOnlyList<LoadedPlugin>> ListAsync(string workspaceRoot, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<LoadedPlugin>>([]);
+
+        public Task<LoadedPlugin> InstallAsync(string workspaceRoot, PluginInstallRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<LoadedPlugin> EnableAsync(string workspaceRoot, string pluginId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<LoadedPlugin> DisableAsync(string workspaceRoot, string pluginId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task UninstallAsync(string workspaceRoot, string pluginId, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<LoadedPlugin> UpdateAsync(string workspaceRoot, PluginInstallRequest request, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<IReadOnlyList<PluginToolDescriptor>> ListToolDescriptorsAsync(string workspaceRoot, CancellationToken cancellationToken)
+            => Task.FromResult(descriptors);
+
+        public Task<ToolResult> ExecuteToolAsync(string workspaceRoot, string toolName, ToolExecutionRequest request, CancellationToken cancellationToken)
+            => Task.FromResult(new ToolResult(request.Id, toolName, true, OutputFormat.Text, "plugin", null, 0, null, null));
     }
 }

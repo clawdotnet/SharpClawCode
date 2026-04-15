@@ -9,6 +9,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
 {
     private readonly string? originalHome = Environment.GetEnvironmentVariable("HOME");
     private readonly string? originalUserProfile = Environment.GetEnvironmentVariable("USERPROFILE");
+    private readonly string? originalAppData = Environment.GetEnvironmentVariable("APPDATA");
     private readonly string tempRoot = Path.Combine(Path.GetTempPath(), $"sharpclaw-config-{Guid.NewGuid():N}");
 
     [Fact]
@@ -16,15 +17,20 @@ public sealed class SharpClawConfigServiceTests : IDisposable
     {
         Directory.CreateDirectory(tempRoot);
         var home = Path.Combine(tempRoot, "home");
+        var appData = Path.Combine(tempRoot, "appdata", "roaming");
         var workspace = Path.Combine(tempRoot, "workspace");
         Directory.CreateDirectory(Path.Combine(home, ".config", "sharpclaw"));
+        Directory.CreateDirectory(Path.Combine(appData, "SharpClaw"));
         Directory.CreateDirectory(workspace);
 
         Environment.SetEnvironmentVariable("HOME", home);
         Environment.SetEnvironmentVariable("USERPROFILE", home);
+        Environment.SetEnvironmentVariable("APPDATA", appData);
 
         await File.WriteAllTextAsync(
-            Path.Combine(home, ".config", "sharpclaw", "config.jsonc"),
+            OperatingSystem.IsWindows()
+                ? Path.Combine(appData, "SharpClaw", "config.jsonc")
+                : Path.Combine(home, ".config", "sharpclaw", "config.jsonc"),
             """
             {
               // user defaults
@@ -86,6 +92,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
     {
         Environment.SetEnvironmentVariable("HOME", originalHome);
         Environment.SetEnvironmentVariable("USERPROFILE", originalUserProfile);
+        Environment.SetEnvironmentVariable("APPDATA", originalAppData);
         if (Directory.Exists(tempRoot))
         {
             Directory.Delete(tempRoot, recursive: true);

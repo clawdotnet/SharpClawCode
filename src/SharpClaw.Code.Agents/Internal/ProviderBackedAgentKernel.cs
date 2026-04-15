@@ -254,7 +254,8 @@ public sealed class ProviderBackedAgentKernel(
             }
 
             // Detect if the loop was exhausted (provider kept requesting tools every iteration).
-            if (iteration >= options.MaxToolIterations)
+            var toolLoopExhausted = iteration >= options.MaxToolIterations;
+            if (toolLoopExhausted)
             {
                 logger.LogWarning(
                     "Tool-calling loop reached maximum iterations ({MaxIterations}) for session {SessionId}; output may be incomplete.",
@@ -280,10 +281,14 @@ public sealed class ProviderBackedAgentKernel(
                 TotalTokens: request.Context.Prompt.Length + output.Length,
                 EstimatedCostUsd: null);
 
+            var summary = toolLoopExhausted
+                ? $"Provider response from {resolvedProviderName}/{requestedModel} is incomplete because the tool-calling loop reached the maximum of {options.MaxToolIterations} iterations."
+                : $"Streamed provider response from {resolvedProviderName}/{requestedModel}.";
+
             return new ProviderInvocationResult(
                 Output: output,
                 Usage: usage,
-                Summary: $"Streamed provider response from {resolvedProviderName}/{requestedModel}.",
+                Summary: summary,
                 ProviderRequest: lastProviderRequest,
                 ProviderEvents: allProviderEvents,
                 ToolResults: allToolResults.Count > 0 ? allToolResults : null,
