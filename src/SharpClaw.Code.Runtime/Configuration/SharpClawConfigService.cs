@@ -119,7 +119,12 @@ public sealed class SharpClawConfigService(
     {
         if (OperatingSystem.IsWindows())
         {
-            var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            var roaming = Environment.GetEnvironmentVariable("APPDATA");
+            if (string.IsNullOrWhiteSpace(roaming))
+            {
+                roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+            }
+
             return Path.Combine(roaming, "SharpClaw", "config.jsonc");
         }
 

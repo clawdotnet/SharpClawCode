@@ -22,8 +22,8 @@ public sealed class SpecWorkflowServiceTests
         var first = await service.MaterializeAsync(workspace, "Add offline sync support", payload, CancellationToken.None);
         var second = await service.MaterializeAsync(workspace, "Add offline sync support", payload, CancellationToken.None);
 
-        first.RootPath.Should().EndWith("/2026-04-08-add-offline-sync-support");
-        second.RootPath.Should().EndWith("/2026-04-08-add-offline-sync-support-2");
+        Path.GetFileName(first.RootPath).Should().Be("2026-04-08-add-offline-sync-support");
+        Path.GetFileName(second.RootPath).Should().Be("2026-04-08-add-offline-sync-support-2");
         File.ReadAllText(first.RequirementsPath).Should().Contain("## Requirements");
         File.ReadAllText(first.RequirementsPath).Should().Contain("the system shall");
         File.ReadAllText(first.DesignPath).Should().Contain("## Architecture");
