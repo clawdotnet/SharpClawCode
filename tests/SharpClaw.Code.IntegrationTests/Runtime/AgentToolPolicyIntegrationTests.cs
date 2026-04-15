@@ -266,7 +266,6 @@ public sealed class AgentToolPolicyIntegrationTests
 
         if (pluginManager is not null)
         {
-            services.AddSingleton(pluginManager);
             services.AddSingleton<IPluginManager>(pluginManager);
         }
 

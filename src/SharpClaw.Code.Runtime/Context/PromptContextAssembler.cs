@@ -158,10 +158,9 @@ public sealed class PromptContextAssembler(
 
         sections.Add($"User request:\n{refResolution.ExpandedPrompt}");
 
-        // Assemble prior-turn conversation history for multi-turn context.
-        // NOTE: This reads the full event log per turn, which scales linearly with session length.
-        // For long-running sessions, consider persisting a compacted message history in session metadata
-        // to avoid re-reading and re-assembling the full log on every prompt.
+        // Prefer cached history for the previous turn when available; on a cache miss,
+        // fall back to reading the full event log and re-assembling the history for caching.
+        // The fallback path still scales linearly with session length for long-running sessions.
         IReadOnlyList<ChatMessage> conversationHistory = [];
         if (turn.SequenceNumber > 1)
         {

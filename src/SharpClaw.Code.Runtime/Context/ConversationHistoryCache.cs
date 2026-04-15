@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Threading;
 using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Runtime.Context;
@@ -12,6 +13,7 @@ internal static class ConversationHistoryCache
     internal const int MaxHistoryTokenBudget = 100_000;
     private const int MaxCacheEntries = 100;
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.Ordinal);
+    private static long accessCounter;
 
     public static bool TryGet(
         string workspaceRoot,
@@ -19,11 +21,14 @@ internal static class ConversationHistoryCache
         int completedTurnSequence,
         out IReadOnlyList<ChatMessage> history)
     {
+        var key = CreateKey(workspaceRoot, sessionId);
         if (completedTurnSequence >= 0
-            && Cache.TryGetValue(CreateKey(workspaceRoot, sessionId), out var entry)
+            && Cache.TryGetValue(key, out var entry)
             && entry.CompletedTurnSequence == completedTurnSequence)
         {
-            history = entry.History;
+            var touchedEntry = entry with { AccessOrder = NextAccessOrder() };
+            Cache.TryUpdate(key, touchedEntry, entry);
+            history = touchedEntry.History;
             return true;
         }
 
@@ -37,7 +42,8 @@ internal static class ConversationHistoryCache
         int completedTurnSequence,
         IReadOnlyList<ChatMessage> history)
     {
-        Cache[CreateKey(workspaceRoot, sessionId)] = new CacheEntry(completedTurnSequence, [.. history]);
+        var key = CreateKey(workspaceRoot, sessionId);
+        Cache[key] = new CacheEntry(completedTurnSequence, [.. history], NextAccessOrder());
         EvictOverflow();
     }
 
@@ -85,9 +91,11 @@ internal static class ConversationHistoryCache
             return;
         }
 
-        var overflowKeys = Cache.Keys
-            .OrderBy(static key => key, StringComparer.Ordinal)
+        var overflowKeys = Cache
+            .OrderBy(static pair => pair.Value.AccessOrder)
+            .ThenBy(static pair => pair.Key, StringComparer.Ordinal)
             .Take(Cache.Count - MaxCacheEntries)
+            .Select(static pair => pair.Key)
             .ToArray();
 
         foreach (var key in overflowKeys)
@@ -96,5 +104,7 @@ internal static class ConversationHistoryCache
         }
     }
 
-    private sealed record CacheEntry(int CompletedTurnSequence, ChatMessage[] History);
+    private static long NextAccessOrder() => Interlocked.Increment(ref accessCounter);
+
+    private sealed record CacheEntry(int CompletedTurnSequence, ChatMessage[] History, long AccessOrder);
 }
