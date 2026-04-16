@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
     <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Telemetry\SharpClaw.Code.Telemetry.csproj" />

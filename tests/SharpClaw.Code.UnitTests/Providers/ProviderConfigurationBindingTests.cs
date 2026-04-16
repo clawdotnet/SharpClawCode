@@ -5,6 +5,7 @@ using Microsoft.Extensions.Options;
 using SharpClaw.Code.Infrastructure;
 using SharpClaw.Code.Providers;
 using SharpClaw.Code.Providers.Configuration;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.UnitTests.Providers;
 
@@ -28,7 +29,17 @@ public sealed class ProviderConfigurationBindingTests
                 ["SharpClaw:Providers:Anthropic:ApiKey"] = "anthropic-key",
                 ["SharpClaw:Providers:Anthropic:BaseUrl"] = "https://anthropic.example.com",
                 ["SharpClaw:Providers:OpenAiCompatible:ApiKey"] = "openai-key",
-                ["SharpClaw:Providers:OpenAiCompatible:BaseUrl"] = "https://openai.example.com/v1"
+                ["SharpClaw:Providers:OpenAiCompatible:BaseUrl"] = "https://openai.example.com/v1",
+                ["SharpClaw:Providers:OpenAiCompatible:AuthMode"] = "Optional",
+                ["SharpClaw:Providers:OpenAiCompatible:DefaultEmbeddingModel"] = "text-embedding-3-small",
+                ["SharpClaw:Providers:OpenAiCompatible:SupportsEmbeddings"] = "true",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:Kind"] = "Ollama",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:BaseUrl"] = "http://127.0.0.1:11434/v1/",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:DefaultChatModel"] = "qwen2.5-coder",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:DefaultEmbeddingModel"] = "nomic-embed-text",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:AuthMode"] = "Optional",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:SupportsToolCalls"] = "true",
+                ["SharpClaw:Providers:OpenAiCompatible:LocalRuntimes:ollama:SupportsEmbeddings"] = "true"
             })
             .Build();
 
@@ -47,5 +58,12 @@ public sealed class ProviderConfigurationBindingTests
         anthropic.BaseUrl.Should().Be("https://anthropic.example.com");
         openAi.ApiKey.Should().Be("openai-key");
         openAi.BaseUrl.Should().Be("https://openai.example.com/v1");
+        openAi.AuthMode.Should().Be(ProviderAuthMode.Optional);
+        openAi.DefaultEmbeddingModel.Should().Be("text-embedding-3-small");
+        openAi.SupportsEmbeddings.Should().BeTrue();
+        openAi.LocalRuntimes.Should().ContainKey("ollama");
+        openAi.LocalRuntimes["ollama"].Kind.Should().Be(LocalRuntimeKind.Ollama);
+        openAi.LocalRuntimes["ollama"].DefaultChatModel.Should().Be("qwen2.5-coder");
+        openAi.LocalRuntimes["ollama"].DefaultEmbeddingModel.Should().Be("nomic-embed-text");
     }
 }

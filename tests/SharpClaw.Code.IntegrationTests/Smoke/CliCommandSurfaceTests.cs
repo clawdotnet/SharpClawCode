@@ -41,6 +41,7 @@ public sealed class CliCommandSurfaceTests
                 "commands",
                 "connect",
                 "mcp",
+                "memory",
                 "models",
                 "plugins",
                 "prompt",
@@ -49,6 +50,7 @@ public sealed class CliCommandSurfaceTests
                 "share",
                 "status",
                 "doctor",
+                "index",
                 "unshare",
                 "version",
                 "repl"

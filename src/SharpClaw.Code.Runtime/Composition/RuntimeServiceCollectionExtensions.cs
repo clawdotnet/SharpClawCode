@@ -138,6 +138,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IOperationalCheck, ShellAvailabilityCheck>();
         services.AddSingleton<IOperationalCheck, GitAvailabilityCheck>();
         services.AddSingleton<IOperationalCheck, ProviderAuthenticationCheck>();
+        services.AddSingleton<IOperationalCheck, LocalRuntimeCatalogCheck>();
         services.AddSingleton<IOperationalCheck>(sp => new McpRegistryHealthCheck(
             sp.GetRequiredService<IMcpRegistry>(),
             sp.GetService<IMcpServerHost>()));

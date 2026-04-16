@@ -37,6 +37,7 @@ public sealed class ConsoleApprovalService : IApprovalService
             ResolvedBy: "console",
             Reason: approved ? "Approved via interactive console." : "Denied via interactive console.",
             ResolvedAtUtc: DateTimeOffset.UtcNow,
-            ExpiresAtUtc: null));
+            ExpiresAtUtc: null,
+            RememberForSession: approved && request.CanRememberDecision));
     }
 }

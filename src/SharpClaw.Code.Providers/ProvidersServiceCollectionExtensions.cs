@@ -28,6 +28,7 @@ public static class ProvidersServiceCollectionExtensions
     /// <param name="configureCatalog">Optional provider catalog configuration.</param>
     /// <param name="configureAnthropic">Optional Anthropic provider configuration.</param>
     /// <param name="configureOpenAiCompatible">Optional OpenAI-compatible provider configuration.</param>
+    /// <param name="configureResilience">Optional provider resilience configuration.</param>
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawProviders(
         this IServiceCollection services,
@@ -58,6 +59,7 @@ public static class ProvidersServiceCollectionExtensions
     /// <param name="configureCatalog">Optional provider catalog configuration.</param>
     /// <param name="configureAnthropic">Optional Anthropic provider configuration.</param>
     /// <param name="configureOpenAiCompatible">Optional OpenAI-compatible provider configuration.</param>
+    /// <param name="configureResilience">Optional provider resilience configuration.</param>
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawProviders(
         this IServiceCollection services,
@@ -112,6 +114,7 @@ public static class ProvidersServiceCollectionExtensions
         services.AddSingleton<IProviderRequestPreflight, ProviderRequestPreflight>();
         services.AddSingleton<IModelProviderResolver, ModelProviderResolver>();
         services.AddSingleton<IAuthFlowService, AuthFlowService>();
+        services.AddSingleton<IProviderCatalogService, ProviderCatalogService>();
 
         services.AddSingleton<IModelProvider>(serviceProvider =>
             WrapWithResilience(serviceProvider, serviceProvider.GetRequiredService<AnthropicProvider>()));

@@ -46,7 +46,11 @@ public sealed class AgentFrameworkBridge(
             AllowDangerousBypass: false,
             IsInteractive: request.Context.IsInteractive,
             SourceKind: PermissionRequestSourceKind.Runtime,
-            SourceName: null,
+            SourceName: request.Context.Metadata is not null
+                && request.Context.Metadata.TryGetValue("acp", out var acp)
+                && string.Equals(acp, "true", StringComparison.OrdinalIgnoreCase)
+                ? "acp"
+                : null,
             TrustedPluginNames: null,
             TrustedMcpServerNames: null,
             PrimaryMode: request.Context.PrimaryMode,

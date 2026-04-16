@@ -21,5 +21,6 @@ public sealed class NonInteractiveApprovalService : IApprovalService
             ResolvedBy: "non-interactive",
             Reason: "Approval was required but the caller is non-interactive.",
             ResolvedAtUtc: DateTimeOffset.UtcNow,
-            ExpiresAtUtc: null));
+            ExpiresAtUtc: null,
+            RememberForSession: false));
 }

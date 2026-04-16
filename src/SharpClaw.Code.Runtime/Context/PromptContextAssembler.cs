@@ -16,12 +16,14 @@ namespace SharpClaw.Code.Runtime.Context;
 /// </summary>
 public sealed class PromptContextAssembler(
     IProjectMemoryService projectMemoryService,
+    IMemoryRecallService memoryRecallService,
     ISessionSummaryService sessionSummaryService,
     ISkillRegistry skillRegistry,
     IGitWorkspaceService gitWorkspaceService,
     IPromptReferenceResolver promptReferenceResolver,
     ISpecWorkflowService specWorkflowService,
     IWorkspaceDiagnosticsService workspaceDiagnosticsService,
+    IWorkspaceIndexService workspaceIndexService,
     ITodoService todoService,
     IEventStore eventStore) : IPromptContextAssembler
 {
@@ -44,15 +46,17 @@ public sealed class PromptContextAssembler(
         var skillsTask = skillRegistry.ListAsync(workspaceRoot, cancellationToken);
         var gitTask = gitWorkspaceService.GetSnapshotAsync(workspaceRoot, cancellationToken);
         var diagnosticsTask = workspaceDiagnosticsService.BuildSnapshotAsync(workspaceRoot, cancellationToken);
+        var indexStatusTask = workspaceIndexService.GetStatusAsync(workspaceRoot, cancellationToken);
         var todoTask = todoService.GetSnapshotAsync(workspaceRoot, session.Id, cancellationToken);
 
-        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask, todoTask).ConfigureAwait(false);
+        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask, indexStatusTask, todoTask).ConfigureAwait(false);
 
         var memoryContext = await memoryContextTask.ConfigureAwait(false);
         var sessionSummary = await sessionSummaryTask.ConfigureAwait(false);
         var skills = await skillsTask.ConfigureAwait(false);
         var gitSnapshot = await gitTask.ConfigureAwait(false);
         var diagnostics = await diagnosticsTask.ConfigureAwait(false);
+        var indexStatus = await indexStatusTask.ConfigureAwait(false);
         var todoSnapshot = await todoTask.ConfigureAwait(false);
 
         var metadata = request.Metadata is null
@@ -78,6 +82,13 @@ public sealed class PromptContextAssembler(
             metadata["gitBranch"] = gitSnapshot.CurrentBranch ?? string.Empty;
         }
 
+        if (indexStatus.RefreshedAtUtc is { } refreshedAtUtc)
+        {
+            metadata["workspaceIndexRefreshedAtUtc"] = refreshedAtUtc.ToString("O", System.Globalization.CultureInfo.InvariantCulture);
+            metadata["workspaceIndexChunkCount"] = indexStatus.ChunkCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            metadata["workspaceIndexSymbolCount"] = indexStatus.SymbolCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
         var workDir = string.IsNullOrWhiteSpace(request.WorkingDirectory)
             ? session.WorkingDirectory ?? workspaceRoot
             : request.WorkingDirectory;
@@ -98,12 +109,24 @@ public sealed class PromptContextAssembler(
         metadata[SharpClawWorkflowMetadataKeys.PromptReferencesJson] = JsonSerializer.Serialize(
             refResolution.References,
             ProtocolJsonContext.Default.ListPromptReference);
+        var recalledMemory = await memoryRecallService
+            .RecallAsync(workspaceRoot, refResolution.ExpandedPrompt, limit: 5, cancellationToken)
+            .ConfigureAwait(false);
 
         var sections = new List<string>();
         var memorySection = memoryContext.RenderForPrompt();
         if (!string.IsNullOrWhiteSpace(memorySection))
         {
             sections.Add(memorySection);
+        }
+
+        if (recalledMemory.Count > 0)
+        {
+            sections.Add(
+                "Relevant memory:\n"
+                + string.Join(
+                    Environment.NewLine,
+                    recalledMemory.Select(static entry => $"- [{entry.Scope}] {entry.Content.Trim()}")));
         }
 
         if (!string.IsNullOrWhiteSpace(sessionSummary))
@@ -149,6 +172,14 @@ public sealed class PromptContextAssembler(
                 + $"Errors: {diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Error)}, "
                 + $"Warnings: {diagnostics.Diagnostics.Count(item => item.Severity == WorkspaceDiagnosticSeverity.Warning)}\n"
                 + string.Join(Environment.NewLine, topDiagnostics));
+        }
+
+        if (indexStatus.RefreshedAtUtc is { } refreshedAt)
+        {
+            sections.Add(
+                "Workspace knowledge:\n"
+                + $"Refreshed: {refreshedAt:O}\n"
+                + $"Indexed files: {indexStatus.IndexedFileCount}, chunks: {indexStatus.ChunkCount}, symbols: {indexStatus.SymbolCount}");
         }
 
         if (effectivePrimary == Protocol.Enums.PrimaryMode.Spec)

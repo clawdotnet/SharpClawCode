@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Infrastructure;
 using SharpClaw.Code.Permissions;
 using SharpClaw.Code.Permissions.Abstractions;
+using SharpClaw.Code.Memory;
 using SharpClaw.Code.Plugins;
 using SharpClaw.Code.Plugins.Abstractions;
 using SharpClaw.Code.Tools.Abstractions;
@@ -31,6 +32,7 @@ public static class ToolsServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
         services.AddSharpClawTelemetry(configuration);
         services.AddSharpClawInfrastructure();
+        services.AddSharpClawMemory();
         services.AddSharpClawPermissions();
         services.AddSharpClawPlugins();
         services.AddSharpClawWeb(configuration);
@@ -46,6 +48,7 @@ public static class ToolsServiceCollectionExtensions
     {
         services.AddSharpClawTelemetry();
         services.AddSharpClawInfrastructure();
+        services.AddSharpClawMemory();
         services.AddSharpClawPermissions();
         services.AddSharpClawPlugins();
         services.AddSharpClawWeb();
@@ -62,6 +65,8 @@ public static class ToolsServiceCollectionExtensions
         services.AddSingleton<BashTool>();
         services.AddSingleton<WebSearchTool>();
         services.AddSingleton<WebFetchTool>();
+        services.AddSingleton<WorkspaceSearchTool>();
+        services.AddSingleton<SymbolSearchTool>();
         services.AddSingleton<ToolSearchTool>(serviceProvider =>
             new ToolSearchTool(() => serviceProvider.GetRequiredService<IToolRegistry>()));
 
@@ -73,6 +78,8 @@ public static class ToolsServiceCollectionExtensions
         services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<BashTool>());
         services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<WebSearchTool>());
         services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<WebFetchTool>());
+        services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<WorkspaceSearchTool>());
+        services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<SymbolSearchTool>());
         services.AddSingleton<ISharpClawTool>(serviceProvider => serviceProvider.GetRequiredService<ToolSearchTool>());
 
         services.AddSingleton<IToolRegistry>(serviceProvider => new ToolRegistry(

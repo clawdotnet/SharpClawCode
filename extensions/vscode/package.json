@@ -1,0 +1,83 @@
+{
+  "name": "sharpclaw-code",
+  "displayName": "SharpClaw Code",
+  "description": "VS Code integration for the SharpClaw ACP runtime.",
+  "version": "0.1.0",
+  "publisher": "clawdotnet",
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:sharpClaw.prompt",
+    "onCommand:sharpClaw.refreshIndex",
+    "onCommand:sharpClaw.searchWorkspace",
+    "onCommand:sharpClaw.saveMemory",
+    "onCommand:sharpClaw.listMemory",
+    "onCommand:sharpClaw.selectModel"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sharpClaw.prompt",
+        "title": "SharpClaw: Prompt"
+      },
+      {
+        "command": "sharpClaw.refreshIndex",
+        "title": "SharpClaw: Refresh Index"
+      },
+      {
+        "command": "sharpClaw.searchWorkspace",
+        "title": "SharpClaw: Search Workspace"
+      },
+      {
+        "command": "sharpClaw.saveMemory",
+        "title": "SharpClaw: Save Memory"
+      },
+      {
+        "command": "sharpClaw.listMemory",
+        "title": "SharpClaw: List Memory"
+      },
+      {
+        "command": "sharpClaw.selectModel",
+        "title": "SharpClaw: Select Model"
+      }
+    ],
+    "configuration": {
+      "title": "SharpClaw Code",
+      "properties": {
+        "sharpClaw.cliCommand": {
+          "type": "string",
+          "default": "dotnet",
+          "description": "Command used to launch the SharpClaw ACP host."
+        },
+        "sharpClaw.cliArgs": {
+          "type": "array",
+          "default": [
+            "run",
+            "--project",
+            "src/SharpClaw.Code.Cli",
+            "--",
+            "acp"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Arguments passed to the SharpClaw CLI command."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.3",
+    "@types/vscode": "^1.100.0",
+    "typescript": "^5.8.3"
+  }
+}

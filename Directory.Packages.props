@@ -21,6 +21,8 @@
     <PackageVersion Include="Microsoft.Extensions.AI" Version="10.4.1" />
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1" />
     <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0" />
     <PackageVersion Include="Spectre.Console" Version="0.55.0" />
     <PackageVersion Include="System.CommandLine" Version="2.0.5" />
     <PackageVersion Include="xunit" Version="2.9.3" />

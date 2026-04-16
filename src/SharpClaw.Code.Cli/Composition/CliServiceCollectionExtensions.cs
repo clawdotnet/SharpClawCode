@@ -17,6 +17,7 @@ public static class CliServiceCollectionExtensions
     /// <returns>The updated service collection.</returns>
     public static IServiceCollection AddSharpClawCli(this IServiceCollection services)
     {
+        services.AddSharpClawAcp();
         services.AddSingleton<GlobalCliOptions>();
         services.AddSingleton<ReplInteractionState>();
         services.AddSingleton<CliCommandFactory>();
@@ -27,8 +28,6 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<IReplTerminal, Terminal.SpectreReplTerminal>();
         services.AddSingleton<ReplCommandHandler>();
         services.AddSingleton<SessionCommandHandler>();
-        services.AddSingleton<AcpStdioHost>();
-
         services.AddSingleton<ICommandHandler, PromptCommandHandler>();
         services.AddSingleton<ICommandHandler, StatusCommandHandler>();
         services.AddSingleton<ICommandHandler, DoctorCommandHandler>();
@@ -38,7 +37,9 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ICommandHandler, CostCommandHandler>();
         services.AddSingleton<ICommandHandler, StatsCommandHandler>();
         services.AddSingleton<ICommandHandler, ConnectCommandHandler>();
+        services.AddSingleton<ICommandHandler, IndexCommandHandler>();
         services.AddSingleton<ICommandHandler, HooksCommandHandler>();
+        services.AddSingleton<ICommandHandler, MemoryCommandHandler>();
         services.AddSingleton<ICommandHandler, SkillsCommandHandler>();
         services.AddSingleton<ICommandHandler, AgentsCommandHandler>();
         services.AddSingleton<ICommandHandler, TodoCommandHandler>();
@@ -62,7 +63,9 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ISlashCommandHandler, CostCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, StatsCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ConnectCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, IndexCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, HooksCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, MemoryCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, SkillsCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, AgentsCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, TodoCommandHandler>();

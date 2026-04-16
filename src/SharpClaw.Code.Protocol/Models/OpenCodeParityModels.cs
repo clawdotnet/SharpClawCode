@@ -231,11 +231,19 @@ public sealed record AgentCatalogEntry(
 /// <param name="DefaultModel">Provider default model.</param>
 /// <param name="Aliases">Aliases that resolve to this provider.</param>
 /// <param name="AuthStatus">Current authentication state.</param>
+/// <param name="SupportsToolCalls">Whether tool calling is supported.</param>
+/// <param name="SupportsEmbeddings">Whether embeddings are supported.</param>
+/// <param name="AvailableModels">Discovered models for the provider.</param>
+/// <param name="LocalRuntimeProfiles">Configured local runtime profiles, if any.</param>
 public sealed record ProviderModelCatalogEntry(
     string ProviderName,
     string DefaultModel,
     string[] Aliases,
-    AuthStatus AuthStatus);
+    AuthStatus AuthStatus,
+    bool SupportsToolCalls = true,
+    bool SupportsEmbeddings = false,
+    ProviderDiscoveredModel[]? AvailableModels = null,
+    LocalRuntimeProfileSummary[]? LocalRuntimeProfiles = null);
 
 /// <summary>
 /// Summarizes a browser-connectable target.

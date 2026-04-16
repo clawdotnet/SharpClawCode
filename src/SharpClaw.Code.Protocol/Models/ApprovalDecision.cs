@@ -12,6 +12,7 @@ namespace SharpClaw.Code.Protocol.Models;
 /// <param name="Reason">A concise explanation for the approval outcome, if available.</param>
 /// <param name="ResolvedAtUtc">The UTC timestamp when the approval was resolved.</param>
 /// <param name="ExpiresAtUtc">An optional UTC expiration timestamp for the approval.</param>
+/// <param name="RememberForSession">Whether the approval should be remembered for the current session when allowed.</param>
 public sealed record ApprovalDecision(
     ApprovalScope Scope,
     bool Approved,
@@ -19,4 +20,5 @@ public sealed record ApprovalDecision(
     string? ResolvedBy,
     string? Reason,
     DateTimeOffset ResolvedAtUtc,
-    DateTimeOffset? ExpiresAtUtc);
+    DateTimeOffset? ExpiresAtUtc,
+    bool RememberForSession = false);

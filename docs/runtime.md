@@ -42,7 +42,7 @@ This means the model-visible tool surface and the executor-visible tool surface 
 
 ## Context assembly
 
-**`PromptContextAssembler`** pulls workspace/session-aware data (skills registry, todo state, memory hooks, git context as wired today) into the prompt path before the agent runs.
+**`PromptContextAssembler`** pulls workspace/session-aware data (skills registry, todo state, durable project/user memory, workspace index status, and git context) into the prompt path before the agent runs.
 
 It also includes a compact diagnostics summary from **`IWorkspaceDiagnosticsService`**, which currently surfaces configured diagnostics sources and build-derived findings for .NET workspaces.
 
@@ -54,6 +54,14 @@ Prompt references are resolved before provider execution. Outside-workspace file
 When the effective **`PrimaryMode`** is **`Spec`**, the assembler appends a structured output contract that requires the model to return machine-readable requirements, design, and task content.
 
 Conversation history is rebuilt from persisted session events and truncated by token budget before being attached to the next provider request. Assistant history prefers the persisted final turn output and only falls back to streamed provider deltas when needed.
+
+Cross-session memory is sourced from:
+
+- manual project instructions such as `SHARPCLAW.md`
+- structured project memory stored under `.sharpclaw/knowledge/knowledge.db`
+- structured user memory stored under the SharpClaw user root
+
+The runtime injects only compact recall text and index freshness metadata. Detailed retrieval happens through explicit workspace-search tools and ACP/CLI search calls.
 
 ## Spec workflow
 
@@ -73,7 +81,7 @@ Each spec-mode prompt creates a fresh folder. If the same slug already exists, t
 
 **`OperationalDiagnosticsCoordinator`** runs injectable **`IOperationalCheck`** implementations:
 
-- Workspace, configuration, session store, shell, git, provider auth, MCP registry/host, plugin registry.
+- Workspace, configuration, session store, shell, git, provider auth, local runtime catalog health, MCP registry/host, plugin registry.
 
 Used by **`GetStatusAsync`**, **`RunDoctorAsync`**, and **`InspectSessionAsync`** to build **Protocol** reports (`DoctorReport`, `RuntimeStatusReport`, `SessionInspectionReport`).
 
@@ -90,6 +98,7 @@ The parity layer adds several runtime-owned services:
 - **`ISharpClawConfigService`** — loads user/workspace `config.jsonc` + `sharpclaw.jsonc` and merges them by precedence
 - **`IAgentCatalogService`** — overlays configured specialist agents on top of built-in agents
 - **`IConversationCompactionService`** — creates durable session summaries stored in session metadata
+- compaction also promotes a project-scoped summary memory entry for later session recall
 - **`IShareSessionService`** — creates and removes self-hosted share snapshots
 - **`IHookDispatcher`** — executes configured hook processes for turn/tool/share/server events and exposes hook inspection/testing
 - **`ITodoService`** — persists session and workspace todo items under session metadata and `.sharpclaw/tasks.json`

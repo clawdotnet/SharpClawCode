@@ -9,14 +9,25 @@ namespace SharpClaw.Code.Permissions.Services;
 /// </summary>
 public sealed class ApprovalService(
     ConsoleApprovalService consoleApprovalService,
-    NonInteractiveApprovalService nonInteractiveApprovalService) : IApprovalService
+    NonInteractiveApprovalService nonInteractiveApprovalService,
+    IEnumerable<IApprovalTransport> approvalTransports) : IApprovalService
 {
+    private readonly IApprovalTransport[] approvalTransports = approvalTransports.ToArray();
+
     /// <inheritdoc />
     public Task<ApprovalDecision> RequestApprovalAsync(
         ApprovalRequest request,
         PermissionEvaluationContext context,
         CancellationToken cancellationToken)
-        => context.IsInteractive
+    {
+        var transport = approvalTransports.FirstOrDefault(candidate => candidate.CanHandle(context));
+        if (transport is not null)
+        {
+            return transport.RequestApprovalAsync(request, context, cancellationToken);
+        }
+
+        return context.IsInteractive
             ? consoleApprovalService.RequestApprovalAsync(request, context, cancellationToken)
             : nonInteractiveApprovalService.RequestApprovalAsync(request, context, cancellationToken);
+    }
 }

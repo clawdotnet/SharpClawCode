@@ -135,7 +135,7 @@ public sealed class PermissionPolicyEngine(
             CanRememberDecision: ruleResult.CanRememberApproval);
 
         var approvalDecision = await approvalService.RequestApprovalAsync(approvalRequest, context, cancellationToken).ConfigureAwait(false);
-        if (approvalDecision.Approved && ruleResult.CanRememberApproval)
+        if (approvalDecision.Approved && ruleResult.CanRememberApproval && approvalDecision.RememberForSession)
         {
             sessionApprovalMemory.Store(context.SessionId, approvalKey, new ApprovalMemoryEntry(approvalDecision));
         }

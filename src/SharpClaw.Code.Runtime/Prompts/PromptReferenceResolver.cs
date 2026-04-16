@@ -68,6 +68,9 @@ public sealed partial class PromptReferenceResolver(
                     request.PermissionMode,
                     primaryMode,
                     isInteractive,
+                    request.Metadata is not null
+                        && request.Metadata.TryGetValue("acp", out var acp)
+                        && string.Equals(acp, "true", StringComparison.OrdinalIgnoreCase),
                     resolvedFull,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -110,6 +113,7 @@ public sealed partial class PromptReferenceResolver(
         PermissionMode permissionMode,
         PrimaryMode primaryMode,
         bool isInteractive,
+        bool isAcp,
         string absolutePath,
         CancellationToken cancellationToken)
     {
@@ -136,7 +140,7 @@ public sealed partial class PromptReferenceResolver(
             AllowDangerousBypass: false,
             IsInteractive: isInteractive,
             SourceKind: PermissionRequestSourceKind.Runtime,
-            SourceName: null,
+            SourceName: isAcp ? "acp" : null,
             TrustedPluginNames: null,
             TrustedMcpServerNames: null,
             PrimaryMode: primaryMode);

@@ -11,6 +11,7 @@
   <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Code.Acp\SharpClaw.Code.Acp.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Memory\SharpClaw.Code.Memory.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Mcp\SharpClaw.Code.Mcp.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Plugins\SharpClaw.Code.Plugins.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />

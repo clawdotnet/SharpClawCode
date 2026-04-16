@@ -1,5 +1,6 @@
 using System.Text;
 using SharpClaw.Code.Infrastructure.Abstractions;
+using SharpClaw.Code.Memory.Abstractions;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
@@ -14,6 +15,7 @@ public sealed class ConversationCompactionService(
     ISessionStore sessionStore,
     IEventStore eventStore,
     ITodoService todoService,
+    IPersistentMemoryStore persistentMemoryStore,
     ISystemClock systemClock) : IConversationCompactionService
 {
     /// <inheritdoc />
@@ -42,6 +44,22 @@ public sealed class ConversationCompactionService(
         };
 
         await sessionStore.SaveAsync(workspaceRoot, updated, cancellationToken).ConfigureAwait(false);
+        await persistentMemoryStore.SaveAsync(
+            workspaceRoot,
+            new MemoryEntry(
+                Id: $"session-summary-{session.Id}",
+                Scope: MemoryScope.Project,
+                Content: summary,
+                Source: "session-compaction",
+                SourceSessionId: session.Id,
+                SourceTurnId: null,
+                Tags: ["compaction", "summary"],
+                Confidence: 0.85d,
+                RelatedFilePath: null,
+                RelatedSymbolName: null,
+                CreatedAtUtc: systemClock.UtcNow,
+                UpdatedAtUtc: systemClock.UtcNow),
+            cancellationToken).ConfigureAwait(false);
         return (updated, summary);
     }
 

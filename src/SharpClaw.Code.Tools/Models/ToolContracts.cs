@@ -115,6 +115,22 @@ public sealed record ToolSearchToolArguments(string? Query, int? Limit);
 public sealed record ToolSearchToolResult(ToolDefinition[] Tools);
 
 /// <summary>
+/// Arguments for hybrid workspace search.
+/// </summary>
+/// <param name="Query">Search query.</param>
+/// <param name="Limit">Maximum number of hits.</param>
+/// <param name="IncludeSymbols">Whether symbol hits should be included.</param>
+/// <param name="IncludeSemantic">Whether semantic hits should be included.</param>
+public sealed record WorkspaceSearchToolArguments(string Query, int? Limit, bool IncludeSymbols = true, bool IncludeSemantic = true);
+
+/// <summary>
+/// Arguments for symbol-only workspace search.
+/// </summary>
+/// <param name="Query">Symbol query.</param>
+/// <param name="Limit">Maximum number of hits.</param>
+public sealed record SymbolSearchToolArguments(string Query, int? Limit);
+
+/// <summary>
 /// Arguments for performing a structured web search.
 /// </summary>
 /// <param name="Query">The search query to execute.</param>

@@ -65,6 +65,14 @@ dotnet run --project src/SharpClaw.Code.Cli -- prompt "Summarize this workspace"
 dotnet run --project src/SharpClaw.Code.Cli -- doctor
 dotnet run --project src/SharpClaw.Code.Cli -- status
 
+# Refresh and query the workspace knowledge index
+dotnet run --project src/SharpClaw.Code.Cli -- index refresh
+dotnet run --project src/SharpClaw.Code.Cli -- index query WidgetService
+
+# Save and inspect durable memory
+dotnet run --project src/SharpClaw.Code.Cli -- memory save --scope project "Keep prompts concise"
+dotnet run --project src/SharpClaw.Code.Cli -- memory list --scope project
+
 # Emit machine-readable output
 dotnet run --project src/SharpClaw.Code.Cli -- --output-format json doctor
 ```
@@ -73,6 +81,8 @@ Built-in REPL slash commands include `/help`, `/status`, `/doctor`, `/session`, 
 
 Parity-oriented commands now include:
 
+- `index` / `/index`
+- `memory` / `/memory`
 - `models` / `/models`
 - `usage` / `/usage`
 - `cost` / `/cost`
@@ -101,8 +111,11 @@ Primary workflow modes:
 | Durable sessions | Persist conversation state, turn history, checkpoints, and recovery metadata for longer-running agent work |
 | Permission-aware tools | Route file, shell, and plugin-backed actions through explicit policy and approval decisions |
 | Provider abstraction | Run against Anthropic and OpenAI-compatible backends through a typed runtime surface |
+| Local runtime catalog | Surface Ollama, llama.cpp, and other OpenAI-compatible profiles with health, model discovery, and embedding defaults |
 | MCP support | Register, supervise, and integrate MCP servers with explicit lifecycle state |
 | Plugins and skills | Extend the runtime with trusted plugin manifests and discoverable workspace skills |
+| Workspace knowledge | Build a durable local index for lexical, symbol, and semantic workspace search |
+| Cross-session memory | Persist project and user memory so later sessions can recall repo-specific guidance and user preferences |
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
 | Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
@@ -168,7 +181,7 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
 | `--agent <id>` | Select the active agent for prompt execution |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `memory`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 
@@ -205,7 +218,7 @@ Key runtime configuration sections:
 |---|---|
 | `SharpClaw:Providers:Catalog` | Default provider, model aliases |
 | `SharpClaw:Providers:Anthropic` | Anthropic API key, base URL, default model |
-| `SharpClaw:Providers:OpenAiCompatible` | OpenAI-compatible API key, base URL, default model |
+| `SharpClaw:Providers:OpenAiCompatible` | OpenAI-compatible base settings plus local runtime profiles, auth mode, and default embedding model |
 | `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
 | `SharpClaw:Telemetry` | Runtime event ring buffer capacity |
 
@@ -226,6 +239,9 @@ All options are validated at startup via `IValidateOptions` implementations.
 - The shared tooling layer is permission-aware across the runtime.
 - The current runtime includes multi-turn provider-backed tool execution, session-backed prompt replay, and durable conversation history.
 - Agent-driven tool calls flow through the same approval and allowlist enforcement path used by direct tool execution, including caller-aware interactive approval behavior.
+- Workspace indexing, symbol search, and durable memory are available through both CLI commands and built-in tools.
+- ACP now carries editor context, approval round-trips, model catalog queries, workspace search/index actions, and memory actions, which is enough for a real VS Code client over a single transport.
+- OpenAI-compatible local runtime profiles can surface Ollama, llama.cpp, and similar endpoints with profile-aware auth and model discovery.
 - Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
 - The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
 
