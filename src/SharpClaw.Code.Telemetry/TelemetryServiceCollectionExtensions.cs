@@ -2,6 +2,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Telemetry.Abstractions;
 using SharpClaw.Code.Telemetry.Export;
 using SharpClaw.Code.Telemetry.Services;
@@ -48,11 +49,25 @@ public static class TelemetryServiceCollectionExtensions
         services.TryAddSingleton<IValidateOptions<TelemetryOptions>, TelemetryOptionsValidator>();
         services.TryAddSingleton<IUsageTracker, UsageTracker>();
         services.TryAddSingleton<JsonTraceExporter>();
+        services.TryAddSingleton<InProcessRuntimeEventStream>();
+        services.TryAddSingleton<IRuntimeEventStream>(serviceProvider => serviceProvider.GetRequiredService<InProcessRuntimeEventStream>());
+        if (!services.Any(static descriptor => descriptor.ServiceType == typeof(IRuntimeEventSink) && descriptor.ImplementationFactory is not null))
+        {
+            services.AddSingleton<IRuntimeEventSink>(serviceProvider => serviceProvider.GetRequiredService<InProcessRuntimeEventStream>());
+        }
+
+        if (!services.Any(static descriptor => descriptor.ServiceType == typeof(IRuntimeEventSink) && descriptor.ImplementationType == typeof(WebhookRuntimeEventSink)))
+        {
+            services.AddSingleton<IRuntimeEventSink, WebhookRuntimeEventSink>();
+        }
+
         services.TryAddSingleton<IRuntimeEventPublisher>(serviceProvider => new RuntimeEventPublisher(
             serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<TelemetryOptions>>(),
             serviceProvider.GetRequiredService<IUsageTracker>(),
             serviceProvider.GetService<Microsoft.Extensions.Logging.ILogger<RuntimeEventPublisher>>(),
-            serviceProvider.GetService<IRuntimeEventPersistence>()));
+            serviceProvider.GetService<IRuntimeEventPersistence>(),
+            serviceProvider.GetService<IRuntimeHostContextAccessor>(),
+            serviceProvider.GetServices<IRuntimeEventSink>()));
         return services;
     }
 }

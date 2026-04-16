@@ -94,8 +94,12 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSharpClawMemory();
         services.AddSharpClawSkills();
         services.AddSharpClawGit();
-        services.AddSingleton<ISessionStore, FileSessionStore>();
-        services.AddSingleton<IEventStore, NdjsonEventStore>();
+        services.AddSingleton<FileSessionStore>();
+        services.AddSingleton<SqliteSessionStore>();
+        services.AddSingleton<ISessionStore, HostAwareSessionStore>();
+        services.AddSingleton<NdjsonEventStore>();
+        services.AddSingleton<SqliteEventStore>();
+        services.AddSingleton<IEventStore, HostAwareEventStore>();
         services.AddSingleton<IRuntimeEventPersistence, EventStoreRuntimeEventPersistence>();
         services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
         services.AddSingleton<IMutationSetStore, FileMutationSetStore>();

@@ -17,6 +17,7 @@ public sealed class TodoService(
     IEventStore eventStore,
     IFileSystem fileSystem,
     IPathService pathService,
+    IRuntimeStoragePathResolver storagePathResolver,
     ISystemClock systemClock) : ITodoService
 {
     /// <inheritdoc />
@@ -106,7 +107,7 @@ public sealed class TodoService(
 
     private async Task<TodoItem[]> ReadWorkspaceTodosAsync(string workspaceRoot, CancellationToken cancellationToken)
     {
-        var path = SessionStorageLayout.GetWorkspaceTodosPath(pathService, workspaceRoot);
+        var path = storagePathResolver.GetWorkspaceTodosPath(workspaceRoot);
         var content = await fileSystem.ReadAllTextIfExistsAsync(path, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(content))
         {
@@ -137,7 +138,7 @@ public sealed class TodoService(
             resolvedSessionId);
 
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetSessionTurnLockPath(pathService, normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
             .ConfigureAwait(false);
 
         var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
@@ -161,7 +162,7 @@ public sealed class TodoService(
         var resolvedSessionId = RequireSessionId(sessionId);
 
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetSessionTurnLockPath(pathService, normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
             .ConfigureAwait(false);
 
         var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
@@ -197,7 +198,7 @@ public sealed class TodoService(
         var resolvedSessionId = RequireSessionId(sessionId);
 
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetSessionTurnLockPath(pathService, normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
             .ConfigureAwait(false);
 
         var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
@@ -254,9 +255,9 @@ public sealed class TodoService(
         CancellationToken cancellationToken)
     {
         var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
-        fileSystem.CreateDirectory(SessionStorageLayout.GetSharpClawRoot(pathService, normalizedWorkspaceRoot));
+        fileSystem.CreateDirectory(storagePathResolver.GetSharpClawRoot(normalizedWorkspaceRoot));
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetWorkspaceTodosLockPath(pathService, normalizedWorkspaceRoot), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetWorkspaceTodosLockPath(normalizedWorkspaceRoot), cancellationToken)
             .ConfigureAwait(false);
 
         var todos = (await ReadWorkspaceTodosAsync(normalizedWorkspaceRoot, cancellationToken).ConfigureAwait(false)).ToList();
@@ -285,9 +286,9 @@ public sealed class TodoService(
         CancellationToken cancellationToken)
     {
         var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
-        fileSystem.CreateDirectory(SessionStorageLayout.GetSharpClawRoot(pathService, normalizedWorkspaceRoot));
+        fileSystem.CreateDirectory(storagePathResolver.GetSharpClawRoot(normalizedWorkspaceRoot));
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetWorkspaceTodosLockPath(pathService, normalizedWorkspaceRoot), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetWorkspaceTodosLockPath(normalizedWorkspaceRoot), cancellationToken)
             .ConfigureAwait(false);
 
         var todos = (await ReadWorkspaceTodosAsync(normalizedWorkspaceRoot, cancellationToken).ConfigureAwait(false)).ToList();
@@ -315,9 +316,9 @@ public sealed class TodoService(
     private async Task<bool> RemoveWorkspaceTodoAsync(string workspaceRoot, string todoId, CancellationToken cancellationToken)
     {
         var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
-        fileSystem.CreateDirectory(SessionStorageLayout.GetSharpClawRoot(pathService, normalizedWorkspaceRoot));
+        fileSystem.CreateDirectory(storagePathResolver.GetSharpClawRoot(normalizedWorkspaceRoot));
         await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(SessionStorageLayout.GetWorkspaceTodosLockPath(pathService, normalizedWorkspaceRoot), cancellationToken)
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetWorkspaceTodosLockPath(normalizedWorkspaceRoot), cancellationToken)
             .ConfigureAwait(false);
 
         var todos = (await ReadWorkspaceTodosAsync(normalizedWorkspaceRoot, cancellationToken).ConfigureAwait(false)).ToList();
@@ -333,7 +334,7 @@ public sealed class TodoService(
 
     private Task WriteWorkspaceTodosAsync(string workspaceRoot, IReadOnlyList<TodoItem> todos, CancellationToken cancellationToken)
         => fileSystem.WriteAllTextAsync(
-            SessionStorageLayout.GetWorkspaceTodosPath(pathService, workspaceRoot),
+            storagePathResolver.GetWorkspaceTodosPath(workspaceRoot),
             JsonSerializer.Serialize(Sort(todos).ToList(), ProtocolJsonContext.Default.ListTodoItem),
             cancellationToken);
 

@@ -2,12 +2,18 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
+using SharpClaw.Code.Infrastructure.Abstractions;
+using SharpClaw.Code.Memory.Abstractions;
 using Microsoft.Extensions.Logging;
+using SharpClaw.Code.Providers.Abstractions;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Runtime.Abstractions;
+using SharpClaw.Code.Telemetry.Abstractions;
+using SharpClaw.Code.Tools.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Server;
 
@@ -19,6 +25,13 @@ public sealed class WorkspaceHttpServer(
     IShareSessionService shareSessionService,
     ISharpClawConfigService sharpClawConfigService,
     IHookDispatcher hookDispatcher,
+    IProviderCatalogService providerCatalogService,
+    IWorkspaceIndexService workspaceIndexService,
+    IWorkspaceSearchService workspaceSearchService,
+    IPersistentMemoryStore persistentMemoryStore,
+    IRuntimeEventStream runtimeEventStream,
+    IToolPackageService toolPackageService,
+    IRuntimeHostContextAccessor hostContextAccessor,
     ILogger<WorkspaceHttpServer> logger) : IWorkspaceHttpServer
 {
     /// <inheritdoc />
@@ -82,45 +95,92 @@ public sealed class WorkspaceHttpServer(
         var requestSucceeded = false;
         var statusCode = 500;
         var path = request.Url?.AbsolutePath ?? "/";
+        var requestHostContext = ResolveRequestHostContext(request, defaultContext.HostContext, tenantOverride: null);
+        using var hostScope = hostContextAccessor.BeginScope(requestHostContext);
+        var requestContext = defaultContext with { HostContext = requestHostContext };
 
         try
         {
             if (request.HttpMethod == "GET" && path == "/v1/status")
             {
-                var result = await runtimeCommandService.GetStatusAsync(defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.GetStatusAsync(requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path == "/v1/doctor")
             {
-                var result = await runtimeCommandService.RunDoctorAsync(defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.RunDoctorAsync(requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path == "/v1/sessions")
             {
-                var result = await runtimeCommandService.ListSessionsAsync(defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.ListSessionsAsync(requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path.StartsWith("/v1/sessions/", StringComparison.Ordinal))
             {
                 var sessionId = Uri.UnescapeDataString(path["/v1/sessions/".Length..]);
-                var result = await runtimeCommandService.InspectSessionAsync(sessionId, defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.InspectSessionAsync(sessionId, requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "POST" && path == "/v1/prompt")
             {
-                statusCode = await HandlePromptAsync(request, response, workspaceRoot, defaultContext, cancellationToken).ConfigureAwait(false);
+                statusCode = await HandlePromptAsync(request, response, workspaceRoot, requestContext, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "POST" && path.StartsWith("/v1/share/", StringComparison.Ordinal))
             {
                 var sessionId = Uri.UnescapeDataString(path["/v1/share/".Length..]);
-                var result = await runtimeCommandService.ShareSessionAsync(sessionId, defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.ShareSessionAsync(sessionId, requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "DELETE" && path.StartsWith("/v1/share/", StringComparison.Ordinal))
             {
                 var sessionId = Uri.UnescapeDataString(path["/v1/share/".Length..]);
-                var result = await runtimeCommandService.UnshareSessionAsync(sessionId, defaultContext, cancellationToken).ConfigureAwait(false);
+                var result = await runtimeCommandService.UnshareSessionAsync(sessionId, requestContext, cancellationToken).ConfigureAwait(false);
                 statusCode = await WriteCommandResultAsync(response, result, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/providers")
+            {
+                statusCode = 200;
+                var catalog = await providerCatalogService.ListAsync(cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(response, 200, catalog, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/index/status")
+            {
+                statusCode = 200;
+                var status = await workspaceIndexService.GetStatusAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(response, 200, status, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "POST" && path == "/v1/admin/index/refresh")
+            {
+                statusCode = 200;
+                var refresh = await workspaceIndexService.RefreshAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(response, 200, refresh, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "POST" && path == "/v1/admin/search")
+            {
+                statusCode = await HandleWorkspaceSearchAsync(request, response, workspaceRoot, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/memory")
+            {
+                statusCode = await HandleMemoryListAsync(request, response, workspaceRoot, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/events/recent")
+            {
+                statusCode = await HandleRecentEventsAsync(response, workspaceRoot, requestHostContext, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/events/stream")
+            {
+                statusCode = await HandleEventStreamAsync(response, workspaceRoot, requestHostContext, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "GET" && path == "/v1/admin/tool-packages")
+            {
+                statusCode = 200;
+                var packages = await toolPackageService.ListInstalledAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+                await WriteJsonAsync(response, 200, packages, cancellationToken).ConfigureAwait(false);
+            }
+            else if (request.HttpMethod == "POST" && path == "/v1/admin/tool-packages/install")
+            {
+                statusCode = await HandleToolPackageInstallAsync(request, response, workspaceRoot, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path.StartsWith("/s/", StringComparison.Ordinal))
             {
@@ -181,7 +241,8 @@ public sealed class WorkspaceHttpServer(
             PrimaryMode: payload.PrimaryMode ?? defaultContext.PrimaryMode,
             SessionId: payload.SessionId ?? defaultContext.SessionId,
             AgentId: payload.AgentId ?? defaultContext.AgentId,
-            IsInteractive: false);
+            IsInteractive: false,
+            HostContext: ResolveRequestHostContext(request, defaultContext.HostContext, payload.TenantId));
 
         var result = await runtimeCommandService.ExecutePromptAsync(payload.Prompt, commandContext, cancellationToken).ConfigureAwait(false);
         var accept = request.Headers["Accept"];
@@ -199,7 +260,7 @@ public sealed class WorkspaceHttpServer(
                 await WriteSseAsync(
                         writer,
                         "runtime-event",
-                        JsonSerializer.Serialize(runtimeEvent, runtimeEvent.GetType(), ProtocolJsonContext.Default))
+                        JsonSerializer.Serialize(runtimeEvent, runtimeEvent.GetType(), ServerJsonOptions))
                     .ConfigureAwait(false);
             }
 
@@ -212,6 +273,93 @@ public sealed class WorkspaceHttpServer(
             return 200;
         }
 
+        await WriteJsonAsync(response, 200, result, cancellationToken).ConfigureAwait(false);
+        return 200;
+    }
+
+    private async Task<int> HandleWorkspaceSearchAsync(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
+    {
+        await using var body = request.InputStream;
+        var payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.WorkspaceSearchRequest, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Request body is required.");
+        var result = await workspaceSearchService.SearchAsync(workspaceRoot, payload, cancellationToken).ConfigureAwait(false);
+        await WriteJsonAsync(response, 200, result, cancellationToken).ConfigureAwait(false);
+        return 200;
+    }
+
+    private async Task<int> HandleMemoryListAsync(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
+    {
+        var scope = TryParseEnum<MemoryScope>(request.QueryString["scope"]);
+        var query = request.QueryString["query"] ?? request.QueryString["q"];
+        var limit = ParseInt(request.QueryString["limit"], 50, 1, 500);
+        var entries = await persistentMemoryStore
+            .ListAsync(workspaceRoot, scope, query, limit, cancellationToken)
+            .ConfigureAwait(false);
+        await WriteJsonAsync(response, 200, entries, cancellationToken).ConfigureAwait(false);
+        return 200;
+    }
+
+    private async Task<int> HandleRecentEventsAsync(
+        HttpListenerResponse response,
+        string workspaceRoot,
+        RuntimeHostContext? hostContext,
+        CancellationToken cancellationToken)
+    {
+        var events = FilterEnvelopes(runtimeEventStream.GetRecentEnvelopesSnapshot(), workspaceRoot, hostContext);
+        await WriteJsonAsync(response, 200, events, cancellationToken).ConfigureAwait(false);
+        return 200;
+    }
+
+    private async Task<int> HandleEventStreamAsync(
+        HttpListenerResponse response,
+        string workspaceRoot,
+        RuntimeHostContext? hostContext,
+        CancellationToken cancellationToken)
+    {
+        response.StatusCode = 200;
+        response.ContentType = "text/event-stream";
+        response.ContentEncoding = Encoding.UTF8;
+        await using var writer = new StreamWriter(response.OutputStream, new UTF8Encoding(false), leaveOpen: true);
+        await writer.WriteLineAsync("retry: 1000").ConfigureAwait(false);
+        await writer.WriteLineAsync().ConfigureAwait(false);
+        await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+
+        await foreach (var envelope in runtimeEventStream.StreamAsync(cancellationToken).ConfigureAwait(false))
+        {
+            if (!ShouldIncludeEnvelope(envelope, workspaceRoot, hostContext))
+            {
+                continue;
+            }
+
+            await WriteSseAsync(
+                    writer,
+                    "runtime-envelope",
+                    JsonSerializer.Serialize(envelope, ProtocolJsonContext.Default.RuntimeEventEnvelope))
+                .ConfigureAwait(false);
+            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        return 200;
+    }
+
+    private async Task<int> HandleToolPackageInstallAsync(
+        HttpListenerRequest request,
+        HttpListenerResponse response,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
+    {
+        await using var body = request.InputStream;
+        var payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.ToolPackageInstallRequest, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("Request body is required.");
+        var result = await toolPackageService.InstallAsync(workspaceRoot, payload, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(response, 200, result, cancellationToken).ConfigureAwait(false);
         return 200;
     }
@@ -295,6 +443,71 @@ public sealed class WorkspaceHttpServer(
         };
         return options;
     }
+
+    private static RuntimeHostContext? ResolveRequestHostContext(
+        HttpListenerRequest request,
+        RuntimeHostContext? fallback,
+        string? tenantOverride)
+    {
+        var hostId = HeaderOrDefault(request, "X-SharpClaw-Host-Id", fallback?.HostId);
+        var tenantId = string.IsNullOrWhiteSpace(tenantOverride)
+            ? HeaderOrDefault(request, "X-SharpClaw-Tenant-Id", fallback?.TenantId)
+            : tenantOverride;
+        var storageRoot = HeaderOrDefault(request, "X-SharpClaw-Storage-Root", fallback?.StorageRoot);
+        var sessionStoreKind = TryParseEnum<SessionStoreKind>(request.Headers["X-SharpClaw-Session-Store"]) ?? fallback?.SessionStoreKind ?? SessionStoreKind.FileSystem;
+        var isEmbeddedHost = fallback?.IsEmbeddedHost ?? false;
+
+        if (string.IsNullOrWhiteSpace(hostId)
+            && string.IsNullOrWhiteSpace(tenantId)
+            && string.IsNullOrWhiteSpace(storageRoot)
+            && fallback is null)
+        {
+            return null;
+        }
+
+        return new RuntimeHostContext(
+            HostId: string.IsNullOrWhiteSpace(hostId) ? "workspace-http-server" : hostId!,
+            TenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
+            StorageRoot: string.IsNullOrWhiteSpace(storageRoot) ? null : storageRoot,
+            SessionStoreKind: sessionStoreKind,
+            IsEmbeddedHost: isEmbeddedHost || !string.IsNullOrWhiteSpace(storageRoot) || !string.IsNullOrWhiteSpace(tenantId));
+    }
+
+    private static IReadOnlyList<RuntimeEventEnvelope> FilterEnvelopes(
+        IEnumerable<RuntimeEventEnvelope> source,
+        string workspaceRoot,
+        RuntimeHostContext? hostContext)
+        => source.Where(envelope => ShouldIncludeEnvelope(envelope, workspaceRoot, hostContext)).ToArray();
+
+    private static bool ShouldIncludeEnvelope(
+        RuntimeEventEnvelope envelope,
+        string workspaceRoot,
+        RuntimeHostContext? hostContext)
+    {
+        var workspaceMatches = string.IsNullOrWhiteSpace(envelope.WorkspacePath)
+            || string.Equals(envelope.WorkspacePath, workspaceRoot, StringComparison.Ordinal);
+        if (!workspaceMatches)
+        {
+            return false;
+        }
+
+        if (string.IsNullOrWhiteSpace(hostContext?.TenantId))
+        {
+            return true;
+        }
+
+        return string.Equals(envelope.TenantId, hostContext.TenantId, StringComparison.Ordinal);
+    }
+
+    private static string? HeaderOrDefault(HttpListenerRequest request, string headerName, string? fallback)
+        => string.IsNullOrWhiteSpace(request.Headers[headerName]) ? fallback : request.Headers[headerName];
+
+    private static TEnum? TryParseEnum<TEnum>(string? value)
+        where TEnum : struct, Enum
+        => Enum.TryParse<TEnum>(value, ignoreCase: true, out var parsed) ? parsed : null;
+
+    private static int ParseInt(string? value, int fallback, int min, int max)
+        => int.TryParse(value, out var parsed) ? Math.Clamp(parsed, min, max) : fallback;
 
     private sealed record ServerCommandEnvelope(
         bool Succeeded,

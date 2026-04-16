@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -16,6 +17,8 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
     private readonly IUsageTracker usageTracker;
     private readonly ILogger<RuntimeEventPublisher> logger;
     private readonly IRuntimeEventPersistence? persistence;
+    private readonly IRuntimeHostContextAccessor? hostContextAccessor;
+    private readonly IRuntimeEventSink[] sinks;
     private readonly object bufferLock = new();
     private readonly List<RuntimeEvent> buffer = [];
 
@@ -30,12 +33,16 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
         IOptions<TelemetryOptions> telemetryOptionsAccessor,
         IUsageTracker usageTracker,
         ILogger<RuntimeEventPublisher>? logger = null,
-        IRuntimeEventPersistence? persistence = null)
+        IRuntimeEventPersistence? persistence = null,
+        IRuntimeHostContextAccessor? hostContextAccessor = null,
+        IEnumerable<IRuntimeEventSink>? sinks = null)
     {
         telemetryOptions = telemetryOptionsAccessor.Value;
         this.usageTracker = usageTracker;
         this.logger = logger ?? NullLogger<RuntimeEventPublisher>.Instance;
         this.persistence = persistence;
+        this.hostContextAccessor = hostContextAccessor;
+        this.sinks = sinks?.ToArray() ?? [];
     }
 
     /// <inheritdoc />
@@ -88,6 +95,23 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
             this.logger.LogDebug(
                 "Runtime event {EventId} requested session persistence but no IRuntimeEventPersistence is registered.",
                 runtimeEvent.EventId);
+        }
+
+        if (sinks.Length > 0)
+        {
+            var hostContext = routing.HostContext ?? hostContextAccessor?.Current;
+            var envelope = new RuntimeEventEnvelope(
+                EventType: runtimeEvent.GetType().Name,
+                OccurredAtUtc: runtimeEvent.OccurredAtUtc,
+                Event: runtimeEvent,
+                WorkspacePath: routing.WorkspacePath,
+                SessionId: routing.SessionId ?? runtimeEvent.SessionId,
+                TenantId: hostContext?.TenantId,
+                HostId: hostContext?.HostId);
+            foreach (var sink in sinks)
+            {
+                await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
+            }
         }
     }
 

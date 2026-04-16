@@ -14,7 +14,7 @@ namespace SharpClaw.Code.Memory.Services;
 public sealed class SqliteWorkspaceKnowledgeStore(
     IFileSystem fileSystem,
     IPathService pathService,
-    IUserProfilePaths userProfilePaths) : IWorkspaceKnowledgeStore
+    IRuntimeStoragePathResolver storagePathResolver) : IWorkspaceKnowledgeStore
 {
     private const string WorkspaceKnowledgeDirectoryName = "knowledge";
     private const string WorkspaceKnowledgeFileName = "knowledge.db";
@@ -636,12 +636,16 @@ public sealed class SqliteWorkspaceKnowledgeStore(
 
     private string GetWorkspaceDatabasePath(string workspaceRoot)
     {
-        var normalized = pathService.GetFullPath(workspaceRoot);
-        return pathService.Combine(normalized, ".sharpclaw", WorkspaceKnowledgeDirectoryName, WorkspaceKnowledgeFileName);
+        return pathService.Combine(
+            storagePathResolver.GetWorkspaceKnowledgeRoot(workspaceRoot),
+            WorkspaceKnowledgeFileName);
     }
 
     private string GetUserMemoryDatabasePath()
-        => pathService.Combine(userProfilePaths.GetUserSharpClawRoot(), WorkspaceKnowledgeDirectoryName, UserMemoryFileName);
+        => pathService.Combine(
+            storagePathResolver.GetUserSharpClawRoot(),
+            WorkspaceKnowledgeDirectoryName,
+            UserMemoryFileName);
 
     private static string NormalizeFtsQuery(string query)
     {

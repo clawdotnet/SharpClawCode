@@ -4,6 +4,7 @@ using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Memory.Abstractions;
 using SharpClaw.Code.Memory.Services;
 using SharpClaw.Code.Protocol.Models;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.MemorySkillsGit;
 
@@ -112,17 +113,5 @@ public sealed class WorkspaceKnowledgeServicesTests : IDisposable
     }
 
     private IWorkspaceKnowledgeStore CreateStore()
-        => new SqliteWorkspaceKnowledgeStore(fileSystem, pathService, new TestUserProfilePaths(userRoot, pathService));
-
-    private sealed class TestUserProfilePaths(string root, IPathService pathService) : IUserProfilePaths
-    {
-        public string GetUserCustomCommandsDirectory()
-            => pathService.Combine(root, "commands");
-
-        public string GetUserHomeDirectory()
-            => root;
-
-        public string GetUserSharpClawRoot()
-            => root;
-    }
+        => new SqliteWorkspaceKnowledgeStore(fileSystem, pathService, TestRuntimeStorageResolver.Create(userRoot, pathService));
 }

@@ -22,6 +22,7 @@ public sealed class PluginManager(
     PluginManifestValidator manifestValidator,
     IFileSystem fileSystem,
     IPathService pathService,
+    IRuntimeStoragePathResolver storagePathResolver,
     ISystemClock systemClock,
     IRuntimeEventPublisher? runtimeEventPublisher = null,
     ILogger<PluginManager>? logger = null) : IPluginManager
@@ -250,8 +251,7 @@ public sealed class PluginManager(
 
     private string GetPluginsRoot(string workspaceRoot)
         => pathService.Combine(
-            pathService.GetFullPath(workspaceRoot),
-            PluginLocalStore.SharpClawRelativeDirectoryName,
+            storagePathResolver.GetSharpClawRoot(workspaceRoot),
             PluginLocalStore.PluginsRelativeDirectoryName);
 
     private string GetPluginDirectory(string workspaceRoot, string pluginId)

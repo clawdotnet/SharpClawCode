@@ -11,6 +11,7 @@ using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Services;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.Runtime;
 
@@ -26,8 +27,9 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         Directory.CreateDirectory(workspaceRoot);
 
         var clock = new FixedClock(DateTimeOffset.Parse("2026-04-13T15:00:00Z"));
-        var sessionStore = new FileSessionStore(fileSystem, pathService);
-        var eventStore = new NdjsonEventStore(fileSystem, pathService);
+        var storagePathResolver = TestRuntimeStorageResolver.Create(workspaceRoot, pathService);
+        var sessionStore = new FileSessionStore(fileSystem, storagePathResolver);
+        var eventStore = new NdjsonEventStore(fileSystem, storagePathResolver);
         var session = new ConversationSession(
             Id: "session-1",
             Title: "Initial title",
@@ -109,13 +111,14 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         var shareService = new ShareSessionService(
             fileSystem,
             pathService,
+            storagePathResolver,
             clock,
             sessionStore,
             eventStore,
             new FixedConfigService(workspaceRoot),
             publisher,
             hooks);
-        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, clock);
+        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, storagePathResolver, clock);
         _ = await todoService.AddAsync(workspaceRoot, TodoScope.Session, "Follow up on diagnostics UX", session.Id, "primary-coding-agent", CancellationToken.None);
         var memoryStore = new RecordingPersistentMemoryStore();
         var compactionService = new ConversationCompactionService(sessionStore, eventStore, todoService, memoryStore, clock);

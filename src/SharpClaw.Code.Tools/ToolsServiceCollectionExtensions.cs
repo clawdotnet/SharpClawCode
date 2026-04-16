@@ -10,6 +10,7 @@ using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.BuiltIn;
 using SharpClaw.Code.Tools.Execution;
 using SharpClaw.Code.Tools.Registry;
+using SharpClaw.Code.Tools.Services;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
 using SharpClaw.Code.Web;
@@ -89,6 +90,7 @@ public static class ToolsServiceCollectionExtensions
             serviceProvider.GetRequiredService<IToolRegistry>(),
             serviceProvider.GetRequiredService<IPermissionPolicyEngine>(),
             serviceProvider.GetService<IRuntimeEventPublisher>()));
+        services.AddSingleton<IToolPackageService, ToolPackageService>();
         return services;
     }
 }

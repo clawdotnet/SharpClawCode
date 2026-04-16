@@ -9,4 +9,9 @@ public sealed class TelemetryOptions
     /// Maximum number of <see cref="SharpClaw.Code.Protocol.Events.RuntimeEvent" /> instances retained in the ring buffer.
     /// </summary>
     public int RuntimeEventRingBufferCapacity { get; set; } = 10_000;
+
+    /// <summary>
+    /// Optional webhook destinations that receive normalized runtime event envelopes.
+    /// </summary>
+    public List<string> EventWebhookUrls { get; } = [];
 }

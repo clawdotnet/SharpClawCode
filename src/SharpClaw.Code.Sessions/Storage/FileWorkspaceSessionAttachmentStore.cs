@@ -7,7 +7,7 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Persists <c>.sharpclaw/active-session.json</c> with an attached session id.
 /// </summary>
-public sealed class FileWorkspaceSessionAttachmentStore(IFileSystem fileSystem, IPathService pathService)
+public sealed class FileWorkspaceSessionAttachmentStore(IFileSystem fileSystem, IRuntimeStoragePathResolver storagePathResolver)
     : IWorkspaceSessionAttachmentStore
 {
     private static readonly JsonSerializerOptions Options = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
@@ -15,7 +15,7 @@ public sealed class FileWorkspaceSessionAttachmentStore(IFileSystem fileSystem, 
     /// <inheritdoc />
     public async Task<string?> GetAttachedSessionIdAsync(string workspacePath, CancellationToken cancellationToken)
     {
-        var path = SessionStorageLayout.GetWorkspaceActiveSessionPath(pathService, workspacePath);
+        var path = storagePathResolver.GetWorkspaceActiveSessionPath(workspacePath);
         var json = await fileSystem.ReadAllTextIfExistsAsync(path, cancellationToken).ConfigureAwait(false);
         if (string.IsNullOrWhiteSpace(json))
         {
@@ -36,9 +36,9 @@ public sealed class FileWorkspaceSessionAttachmentStore(IFileSystem fileSystem, 
     /// <inheritdoc />
     public Task SetAttachedSessionIdAsync(string workspacePath, string? sessionId, CancellationToken cancellationToken)
     {
-        var root = SessionStorageLayout.GetSharpClawRoot(pathService, workspacePath);
+        var root = storagePathResolver.GetSharpClawRoot(workspacePath);
         fileSystem.CreateDirectory(root);
-        var path = SessionStorageLayout.GetWorkspaceActiveSessionPath(pathService, workspacePath);
+        var path = storagePathResolver.GetWorkspaceActiveSessionPath(workspacePath);
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             fileSystem.TryDeleteFile(path);

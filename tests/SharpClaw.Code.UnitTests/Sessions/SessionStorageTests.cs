@@ -4,6 +4,7 @@ using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Sessions.Storage;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.Sessions;
 
@@ -15,6 +16,9 @@ public sealed class SessionStorageTests : IDisposable
     private readonly string _tempDir = Path.Combine(Path.GetTempPath(), $"sharpclaw-test-{Guid.NewGuid():N}");
     private readonly LocalFileSystem _fileSystem = new();
     private readonly PathService _pathService = new();
+
+    private SharpClaw.Code.Infrastructure.Abstractions.IRuntimeStoragePathResolver CreateStoragePathResolver()
+        => TestRuntimeStorageResolver.Create(_tempDir, _pathService);
 
     public void Dispose()
     {
@@ -44,7 +48,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_save_and_get_roundtrip()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
         var session = CreateSession("s1", DateTimeOffset.UtcNow);
 
         await store.SaveAsync(_tempDir, session, CancellationToken.None);
@@ -59,7 +63,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_get_returns_null_when_missing()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
 
         var loaded = await store.GetByIdAsync(_tempDir, "nonexistent", CancellationToken.None);
 
@@ -69,7 +73,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_get_latest_returns_most_recently_updated()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
         var older = CreateSession("s-old", DateTimeOffset.UtcNow.AddMinutes(-10));
         var newer = CreateSession("s-new", DateTimeOffset.UtcNow);
 
@@ -85,7 +89,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_get_latest_returns_null_when_empty()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
 
         var latest = await store.GetLatestAsync(_tempDir, CancellationToken.None);
 
@@ -95,7 +99,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_list_all_returns_sessions_descending()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
         var now = DateTimeOffset.UtcNow;
         await store.SaveAsync(_tempDir, CreateSession("s1", now.AddMinutes(-5)), CancellationToken.None);
         await store.SaveAsync(_tempDir, CreateSession("s2", now), CancellationToken.None);
@@ -111,7 +115,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileSessionStore_save_overwrites_existing()
     {
-        var store = new FileSessionStore(_fileSystem, _pathService);
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
         var session = CreateSession("s1", DateTimeOffset.UtcNow);
         await store.SaveAsync(_tempDir, session, CancellationToken.None);
 
@@ -127,7 +131,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task NdjsonEventStore_append_and_read_roundtrip()
     {
-        var store = new NdjsonEventStore(_fileSystem, _pathService);
+        var store = new NdjsonEventStore(_fileSystem, CreateStoragePathResolver());
         var evt = new UndoCompletedEvent(
             EventId: "e1",
             SessionId: "s1",
@@ -150,7 +154,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task NdjsonEventStore_read_returns_empty_when_no_file()
     {
-        var store = new NdjsonEventStore(_fileSystem, _pathService);
+        var store = new NdjsonEventStore(_fileSystem, CreateStoragePathResolver());
 
         var events = await store.ReadAllAsync(_tempDir, "nonexistent", CancellationToken.None);
 
@@ -160,7 +164,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task NdjsonEventStore_appends_multiple_events()
     {
-        var store = new NdjsonEventStore(_fileSystem, _pathService);
+        var store = new NdjsonEventStore(_fileSystem, CreateStoragePathResolver());
         var sessionsRoot = Path.Combine(_tempDir, ".sharpclaw", "sessions", "s1");
         Directory.CreateDirectory(sessionsRoot);
 
@@ -189,7 +193,7 @@ public sealed class SessionStorageTests : IDisposable
         var eventsPath = Path.Combine(sessionsRoot, "events.ndjson");
 
         // Write a valid event followed by garbage.
-        var store = new NdjsonEventStore(_fileSystem, _pathService);
+        var store = new NdjsonEventStore(_fileSystem, CreateStoragePathResolver());
         await store.AppendAsync(_tempDir, "s1", new UndoCompletedEvent(
             EventId: "e1",
             SessionId: "s1",
@@ -210,7 +214,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileCheckpointStore_save_and_get_latest_roundtrip()
     {
-        var store = new FileCheckpointStore(_fileSystem, _pathService);
+        var store = new FileCheckpointStore(_fileSystem, CreateStoragePathResolver());
         var now = DateTimeOffset.UtcNow;
         var older = new RuntimeCheckpoint("cp-old", "s1", "t1", now.AddMinutes(-5), "checkpoint old", "state-old", null, null);
         var newer = new RuntimeCheckpoint("cp-new", "s1", "t2", now, "checkpoint new", "state-new", null, null);
@@ -230,7 +234,7 @@ public sealed class SessionStorageTests : IDisposable
     [Fact]
     public async Task FileCheckpointStore_returns_null_when_no_checkpoints()
     {
-        var store = new FileCheckpointStore(_fileSystem, _pathService);
+        var store = new FileCheckpointStore(_fileSystem, CreateStoragePathResolver());
 
         var latest = await store.GetLatestAsync(_tempDir, "nonexistent", CancellationToken.None);
 

@@ -304,6 +304,7 @@ public sealed record WorkspaceDiagnosticsSnapshot(
 /// <param name="OutputFormat">Optional output format override.</param>
 /// <param name="PrimaryMode">Optional primary mode override.</param>
 /// <param name="AgentId">Optional agent override.</param>
+/// <param name="TenantId">Optional tenant override for embedded hosts.</param>
 public sealed record ServerPromptRequest(
     string Prompt,
     string? SessionId,
@@ -311,7 +312,8 @@ public sealed record ServerPromptRequest(
     PermissionMode? PermissionMode,
     OutputFormat? OutputFormat,
     PrimaryMode? PrimaryMode,
-    string? AgentId);
+    string? AgentId,
+    string? TenantId);
 
 /// <summary>
 /// Metadata for a shared session snapshot.

@@ -18,6 +18,7 @@ namespace SharpClaw.Code.Runtime.Workflow;
 public sealed class ShareSessionService(
     IFileSystem fileSystem,
     IPathService pathService,
+    IRuntimeStoragePathResolver storagePathResolver,
     ISystemClock systemClock,
     ISessionStore sessionStore,
     IEventStore eventStore,
@@ -57,8 +58,8 @@ public sealed class ShareSessionService(
 
         var events = await eventStore.ReadAllAsync(normalizedWorkspace, sessionId, cancellationToken).ConfigureAwait(false);
         var snapshot = new SharedSessionSnapshot(record, SanitizeSession(session, record), events.ToArray());
-        var snapshotPath = SessionStorageLayout.GetShareSnapshotPath(pathService, normalizedWorkspace, shareId);
-        fileSystem.CreateDirectory(SessionStorageLayout.GetSharesRoot(pathService, normalizedWorkspace));
+        var snapshotPath = storagePathResolver.GetShareSnapshotPath(normalizedWorkspace, shareId);
+        fileSystem.CreateDirectory(storagePathResolver.GetSharesRoot(normalizedWorkspace));
         await fileSystem
             .WriteAllTextAsync(snapshotPath, JsonSerializer.Serialize(snapshot, ProtocolJsonContext.Default.SharedSessionSnapshot), cancellationToken)
             .ConfigureAwait(false);
@@ -108,7 +109,7 @@ public sealed class ShareSessionService(
             return false;
         }
 
-        fileSystem.TryDeleteFile(SessionStorageLayout.GetShareSnapshotPath(pathService, normalizedWorkspace, shareId));
+        fileSystem.TryDeleteFile(storagePathResolver.GetShareSnapshotPath(normalizedWorkspace, shareId));
         var metadata = new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
         metadata.Remove(SharpClawWorkflowMetadataKeys.ShareId);
         metadata.Remove(SharpClawWorkflowMetadataKeys.ShareUrl);
@@ -145,7 +146,7 @@ public sealed class ShareSessionService(
     public async Task<SharedSessionSnapshot?> GetSharedSnapshotAsync(string workspaceRoot, string shareId, CancellationToken cancellationToken)
     {
         var content = await fileSystem
-            .ReadAllTextIfExistsAsync(SessionStorageLayout.GetShareSnapshotPath(pathService, pathService.GetFullPath(workspaceRoot), shareId), cancellationToken)
+            .ReadAllTextIfExistsAsync(storagePathResolver.GetShareSnapshotPath(pathService.GetFullPath(workspaceRoot), shareId), cancellationToken)
             .ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(content)
             ? null

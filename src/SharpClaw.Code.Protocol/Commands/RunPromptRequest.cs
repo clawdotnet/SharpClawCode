@@ -16,6 +16,7 @@ namespace SharpClaw.Code.Protocol.Commands;
 /// <param name="AgentId">When non-null, selects the registered agent id for the turn.</param>
 /// <param name="DelegatedTask">When non-null, supplies the bounded contract for <c>sub-agent-worker</c> runs.</param>
 /// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
+/// <param name="HostContext">Optional embedded host and tenant context.</param>
 public sealed record RunPromptRequest(
     string Prompt,
     string? SessionId,
@@ -26,4 +27,5 @@ public sealed record RunPromptRequest(
     PrimaryMode? PrimaryMode = null,
     string? AgentId = null,
     DelegatedTaskContract? DelegatedTask = null,
-    bool IsInteractive = true);
+    bool IsInteractive = true,
+    RuntimeHostContext? HostContext = null);

@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Git.Abstractions;
 using SharpClaw.Code.Git.Models;
@@ -75,7 +76,8 @@ public sealed class PromptContextAssemblyTests
     public async Task RunPrompt_should_reuse_in_process_conversation_history_cache()
     {
         var workspacePath = CreateTemporaryWorkspace();
-        var countingEventStore = new CountingEventStore(new NdjsonEventStore(new LocalFileSystem(), new PathService()));
+        var pathService = new PathService();
+        var countingEventStore = new CountingEventStore(new NdjsonEventStore(new LocalFileSystem(), CreateStoragePathResolver(workspacePath, pathService)));
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
         services.AddSingleton<IProjectMemoryService>(new StubProjectMemoryService());
@@ -129,6 +131,9 @@ public sealed class PromptContextAssemblyTests
         return workspacePath;
     }
 
+    private static IRuntimeStoragePathResolver CreateStoragePathResolver(string root, IPathService pathService)
+        => new RuntimeStoragePathResolver(pathService, new FixedUserProfilePaths(root, pathService), new RuntimeHostContextAccessor());
+
     private sealed class StubProjectMemoryService : IProjectMemoryService
     {
         public Task<ProjectMemoryContext> BuildContextAsync(string workspaceRoot, CancellationToken cancellationToken)
@@ -138,6 +143,18 @@ public sealed class PromptContextAssemblyTests
                 {
                     ["defaultModel"] = "sonnet"
                 }));
+    }
+
+    private sealed class FixedUserProfilePaths(string root, IPathService pathService) : IUserProfilePaths
+    {
+        public string GetUserCustomCommandsDirectory()
+            => pathService.Combine(root, "commands");
+
+        public string GetUserHomeDirectory()
+            => root;
+
+        public string GetUserSharpClawRoot()
+            => root;
     }
 
     private sealed class StubSessionSummaryService : ISessionSummaryService

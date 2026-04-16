@@ -154,6 +154,7 @@ public interface IRuntimeCommandService
 /// <param name="SessionId">Optional explicit session id (e.g. from <c>--session</c>); when null, attachment/latest resolution applies.</param>
 /// <param name="AgentId">Optional effective agent id.</param>
 /// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
+/// <param name="HostContext">Optional embedded host and tenant context.</param>
 public sealed record RuntimeCommandContext(
     string WorkingDirectory,
     string? Model,
@@ -162,4 +163,5 @@ public sealed record RuntimeCommandContext(
     PrimaryMode? PrimaryMode = null,
     string? SessionId = null,
     string? AgentId = null,
-    bool IsInteractive = true);
+    bool IsInteractive = true,
+    RuntimeHostContext? HostContext = null);

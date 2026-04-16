@@ -4,6 +4,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Providers.Models;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
@@ -39,6 +40,8 @@ public sealed class ConversationRuntime(
     ISystemClock systemClock,
     IFileSystem fileSystem,
     IPathService pathService,
+    IRuntimeStoragePathResolver storagePathResolver,
+    IRuntimeHostContextAccessor hostContextAccessor,
     IOperationalDiagnosticsCoordinator operationalDiagnostics,
     ICustomCommandDiscoveryService customCommandDiscovery,
     ISessionExportService sessionExportService,
@@ -68,7 +71,7 @@ public sealed class ConversationRuntime(
     public async Task<ConversationSession> CreateSessionAsync(string workspacePath, PermissionMode permissionMode, OutputFormat outputFormat, CancellationToken cancellationToken)
     {
         var normalizedWorkspacePath = NormalizeWorkspacePath(workspacePath);
-        fileSystem.CreateDirectory(pathService.Combine(normalizedWorkspacePath, ".sharpclaw"));
+        fileSystem.CreateDirectory(storagePathResolver.GetSharpClawRoot(normalizedWorkspacePath));
 
         var sessionId = CreateIdentifier("session");
         var session = new ConversationSession(
@@ -104,6 +107,7 @@ public sealed class ConversationRuntime(
     public async Task<TurnExecutionResult> RunPromptAsync(RunPromptRequest request, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.Prompt);
+        using var hostScope = hostContextAccessor.BeginScope(request.HostContext);
 
         var workspacePath = NormalizeWorkspacePath(request.WorkingDirectory);
         request = EnrichRequestWithEditorIngress(workspacePath, request);
@@ -129,7 +133,7 @@ public sealed class ConversationRuntime(
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var turnLockPath = SessionStorageLayout.GetSessionTurnLockPath(pathService, workspacePath, session.Id);
+            var turnLockPath = storagePathResolver.GetSessionTurnLockPath(workspacePath, session.Id);
             await using var crossProcessTurnLock = await fileSystem
                 .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
                 .ConfigureAwait(false);
@@ -467,7 +471,8 @@ public sealed class ConversationRuntime(
                 .ToDictionary(pair => pair.Key, pair => pair.Value!),
                 PrimaryMode: context.PrimaryMode,
                 AgentId: context.AgentId,
-                IsInteractive: context.IsInteractive),
+                IsInteractive: context.IsInteractive,
+                HostContext: context.HostContext),
             cancellationToken);
 
     /// <inheritdoc />
@@ -478,6 +483,7 @@ public sealed class ConversationRuntime(
         CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(commandName);
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
         var definition = await customCommandDiscovery
             .FindAsync(workspace, commandName, cancellationToken)
@@ -512,13 +518,15 @@ public sealed class ConversationRuntime(
                 Metadata: metadata,
                 PrimaryMode: primary,
                 AgentId: definition.AgentId,
-                IsInteractive: context.IsInteractive),
+                IsInteractive: context.IsInteractive,
+                HostContext: context.HostContext),
             cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<CommandResult> GetStatusAsync(RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         var input = new OperationalDiagnosticsInput(
             context.WorkingDirectory,
             context.Model,
@@ -542,6 +550,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> RunDoctorAsync(RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         var input = new OperationalDiagnosticsInput(
             context.WorkingDirectory,
             context.Model,
@@ -564,6 +573,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> InspectSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         var input = new OperationalDiagnosticsInput(
             context.WorkingDirectory,
             context.Model,
@@ -601,6 +611,7 @@ public sealed class ConversationRuntime(
         RuntimeCommandContext context,
         CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var child = await ForkSessionAsync(NormalizeWorkspacePath(context.WorkingDirectory), sourceSessionId, cancellationToken)
@@ -627,6 +638,7 @@ public sealed class ConversationRuntime(
         RuntimeCommandContext context,
         CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -634,7 +646,7 @@ public sealed class ConversationRuntime(
                 .BuildDocumentAsync(workspace, sessionId, format, cancellationToken)
                 .ConfigureAwait(false);
 
-            var exportsDir = pathService.Combine(workspace, ".sharpclaw", "exports");
+            var exportsDir = storagePathResolver.GetExportsRoot(workspace);
             fileSystem.CreateDirectory(exportsDir);
             var fileName =
                 $"{document.Session.Id}-{document.ExportedAtUtc:yyyyMMddTHHmmss}.{ext}";
@@ -666,6 +678,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> UndoAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -694,6 +707,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> RedoAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -726,6 +740,7 @@ public sealed class ConversationRuntime(
         RuntimeCommandContext context,
         CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -755,6 +770,7 @@ public sealed class ConversationRuntime(
         RuntimeCommandContext context,
         CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -782,6 +798,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> ListSessionsAsync(RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -798,6 +815,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> AttachSessionAsync(string sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -820,6 +838,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> DetachSessionAsync(RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -835,6 +854,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> ShareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -862,6 +882,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> UnshareSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -893,6 +914,7 @@ public sealed class ConversationRuntime(
     /// <inheritdoc />
     public async Task<CommandResult> CompactSessionAsync(string? sessionId, RuntimeCommandContext context, CancellationToken cancellationToken)
     {
+        using var hostScope = hostContextAccessor.BeginScope(context.HostContext);
         try
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
@@ -932,7 +954,7 @@ public sealed class ConversationRuntime(
         var events = await eventStore.ReadAllAsync(normalized, parent.Id, cancellationToken).ConfigureAwait(false);
         var summary = BuildForkHistorySummary(events);
 
-        fileSystem.CreateDirectory(pathService.Combine(normalized, ".sharpclaw"));
+        fileSystem.CreateDirectory(storagePathResolver.GetSharpClawRoot(normalized));
 
         var childId = CreateIdentifier("session");
         var md = CloneMetadata(parent.Metadata);
@@ -1430,7 +1452,7 @@ public sealed class ConversationRuntime(
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            var turnLockPath = SessionStorageLayout.GetSessionTurnLockPath(pathService, workspacePath, sessionId);
+            var turnLockPath = storagePathResolver.GetSessionTurnLockPath(workspacePath, sessionId);
             await using var crossProcessTurnLock = await fileSystem
                 .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
                 .ConfigureAwait(false);
