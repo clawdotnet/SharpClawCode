@@ -2,6 +2,7 @@ using FluentAssertions;
 using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Configuration;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.Runtime;
 
@@ -93,9 +94,6 @@ public sealed class SharpClawConfigServiceTests : IDisposable
         Environment.SetEnvironmentVariable("HOME", originalHome);
         Environment.SetEnvironmentVariable("USERPROFILE", originalUserProfile);
         Environment.SetEnvironmentVariable("APPDATA", originalAppData);
-        if (Directory.Exists(tempRoot))
-        {
-            Directory.Delete(tempRoot, recursive: true);
-        }
+        TestDirectoryCleanup.DeleteIfExists(tempRoot);
     }
 }

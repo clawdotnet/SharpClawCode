@@ -116,7 +116,7 @@ public sealed class ConversationRuntimeFlowTests
                 ["model"] = DeterministicMockModelProvider.DefaultModelId,
                 [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
             });
-        var act = async () => await RunPromptWithCancelAfterAsync(runtime, request, TimeSpan.FromMilliseconds(400));
+        var act = async () => await RunPromptWithCancelAfterTurnStartAsync(runtime, request, workspacePath, TimeSpan.FromMilliseconds(400));
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         var latestSession = await runtime.GetLatestSessionAsync(workspacePath, CancellationToken.None);
@@ -149,7 +149,7 @@ public sealed class ConversationRuntimeFlowTests
                 ["model"] = DeterministicMockModelProvider.DefaultModelId,
                 [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
             });
-        var cancelAct = async () => await RunPromptWithCancelAfterAsync(runtime, cancelRequest, TimeSpan.FromMilliseconds(400));
+        var cancelAct = async () => await RunPromptWithCancelAfterTurnStartAsync(runtime, cancelRequest, workspacePath, TimeSpan.FromMilliseconds(400));
         await cancelAct.Should().ThrowAsync<OperationCanceledException>();
 
         var second = await runtime.RunPromptAsync(
@@ -180,18 +180,39 @@ public sealed class ConversationRuntimeFlowTests
     }
 
     /// <summary>
-    /// Starts <see cref="IConversationRuntime.RunPromptAsync"/> then schedules cancellation so setup work
-    /// (DI, workspace) does not consume the delay — matches real "cancel during turn" behavior.
+    /// Starts <see cref="IConversationRuntime.RunPromptAsync"/> and waits for an active turn before arming cancellation.
+    /// This keeps the test focused on recovery from an in-flight turn rather than cancellation during setup.
     /// </summary>
-    private static async Task RunPromptWithCancelAfterAsync(
+    private static async Task RunPromptWithCancelAfterTurnStartAsync(
         IConversationRuntime runtime,
         RunPromptRequest request,
+        string workspacePath,
         TimeSpan cancelAfter)
     {
         using var cts = new CancellationTokenSource();
         var runTask = runtime.RunPromptAsync(request, cts.Token);
+        await WaitForActiveTurnAsync(runtime, workspacePath, CancellationToken.None).ConfigureAwait(false);
         cts.CancelAfter(cancelAfter);
         await runTask.ConfigureAwait(false);
+    }
+
+    private static async Task WaitForActiveTurnAsync(
+        IConversationRuntime runtime,
+        string workspacePath,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var latestSession = await runtime.GetLatestSessionAsync(workspacePath, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(latestSession?.ActiveTurnId))
+            {
+                return;
+            }
+
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException("The runtime did not activate a turn before cancellation was requested.");
     }
 
     private static string CreateTemporaryWorkspace()

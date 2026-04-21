@@ -294,11 +294,12 @@ public sealed class ParityScenarioTests : IAsyncLifetime
         using var provider = ParityTestHost.Create(replaceApprovals: null);
         var runtime = ParityTestHost.GetConversation(provider);
         var store = provider.GetRequiredService<ISessionStore>();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(150));
 
         var act = async () =>
         {
-            await runtime.RunPromptAsync(
+            await RunPromptWithCancelAfterTurnStartAsync(
+                runtime,
+                store,
                 new RunPromptRequest(
                     Prompt: "slow",
                     SessionId: null,
@@ -309,13 +310,42 @@ public sealed class ParityScenarioTests : IAsyncLifetime
                     {
                         [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow,
                     }),
-                cts.Token);
+                TimeSpan.FromMilliseconds(150));
         };
 
         await act.Should().ThrowAsync<OperationCanceledException>();
         var session = await store.GetLatestAsync(_workspace, CancellationToken.None);
         session.Should().NotBeNull();
         session!.State.Should().Be(SessionLifecycleState.Failed);
+    }
+
+    private async Task RunPromptWithCancelAfterTurnStartAsync(
+        IConversationRuntime runtime,
+        ISessionStore store,
+        RunPromptRequest request,
+        TimeSpan cancelAfter)
+    {
+        using var cts = new CancellationTokenSource();
+        var runTask = runtime.RunPromptAsync(request, cts.Token);
+        await WaitForActiveTurnAsync(store, CancellationToken.None);
+        cts.CancelAfter(cancelAfter);
+        await runTask.ConfigureAwait(false);
+    }
+
+    private async Task WaitForActiveTurnAsync(ISessionStore store, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 100; attempt++)
+        {
+            var session = await store.GetLatestAsync(_workspace, cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(session?.ActiveTurnId))
+            {
+                return;
+            }
+
+            await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+        }
+
+        throw new TimeoutException("The parity runtime did not activate a turn before cancellation was requested.");
     }
 
     [Fact]

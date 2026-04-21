@@ -101,15 +101,8 @@ public sealed class WorkspaceKnowledgeServicesTests : IDisposable
 
     public void Dispose()
     {
-        if (Directory.Exists(workspaceRoot))
-        {
-            Directory.Delete(workspaceRoot, recursive: true);
-        }
-
-        if (Directory.Exists(userRoot))
-        {
-            Directory.Delete(userRoot, recursive: true);
-        }
+        TestDirectoryCleanup.DeleteIfExists(workspaceRoot, clearSqlitePools: true);
+        TestDirectoryCleanup.DeleteIfExists(userRoot, clearSqlitePools: true);
     }
 
     private IWorkspaceKnowledgeStore CreateStore()

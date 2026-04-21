@@ -20,6 +20,8 @@ namespace SharpClaw.Code.UnitTests.Acp;
 /// </summary>
 public sealed class AcpStdioHostTests
 {
+    private static readonly PathService PathService = new();
+
     [Fact]
     public async Task RunAsync_should_return_parse_error_for_invalid_json()
     {
@@ -75,7 +77,7 @@ public sealed class AcpStdioHostTests
         runtime.LastRequest.Metadata!["model"].Should().Be("ollama/qwen2.5-coder");
         runtime.LastRequest.IsInteractive.Should().BeTrue();
         editorBuffer.LastPublished.Should().NotBeNull();
-        editorBuffer.LastPublished!.CurrentFilePath.Should().Be("/tmp/workspace/src/App.cs");
+        editorBuffer.LastPublished!.CurrentFilePath.Should().Be(NormalizePath("/tmp/workspace/src/App.cs"));
     }
 
     [Fact]
@@ -140,8 +142,8 @@ public sealed class AcpStdioHostTests
         using var searchOutput = new StringWriter(new StringBuilder());
         await host.RunAsync(searchInput, searchOutput, CancellationToken.None);
 
-        indexService.LastWorkspaceRoot.Should().Be("/tmp/workspace");
-        searchService.LastWorkspaceRoot.Should().Be("/tmp/workspace");
+        indexService.LastWorkspaceRoot.Should().Be(NormalizePath("/tmp/workspace"));
+        searchService.LastWorkspaceRoot.Should().Be(NormalizePath("/tmp/workspace"));
         searchService.LastRequest.Should().Be(new WorkspaceSearchRequest("WidgetService", 5, true, false));
 
         var refresh = JsonSerializer.Deserialize(
@@ -174,7 +176,7 @@ public sealed class AcpStdioHostTests
         saved.Should().NotBeNull();
         saved!.Scope.Should().Be(MemoryScope.Project);
         saved.SourceSessionId.Should().Be("session-1");
-        memoryStore.LastSaveWorkspaceRoot.Should().Be("/tmp/workspace");
+        memoryStore.LastSaveWorkspaceRoot.Should().Be(NormalizePath("/tmp/workspace"));
 
         using var listInput = new StringReader("""{"jsonrpc":"2.0","id":"list","method":"memory/list","params":{"cwd":"/tmp/workspace","scope":"Project","query":"concise","limit":10}}""");
         using var listOutput = new StringWriter(new StringBuilder());
@@ -191,7 +193,7 @@ public sealed class AcpStdioHostTests
         using var deleteOutput = new StringWriter(new StringBuilder());
         await host.RunAsync(deleteInput, deleteOutput, CancellationToken.None);
 
-        memoryStore.LastDeleteWorkspaceRoot.Should().Be("/tmp/workspace");
+        memoryStore.LastDeleteWorkspaceRoot.Should().Be(NormalizePath("/tmp/workspace"));
         memoryStore.LastDeleteScope.Should().Be(MemoryScope.Project);
         ReadResponseResult(deleteOutput, "delete")["deleted"]!.GetValue<bool>().Should().BeTrue();
     }
@@ -232,6 +234,9 @@ public sealed class AcpStdioHostTests
 
         throw new InvalidOperationException($"Could not find JSON-RPC response with id '{id}'.");
     }
+
+    private static string NormalizePath(string path)
+        => PathService.GetFullPath(path);
 
     private sealed class StubConversationRuntime : IConversationRuntime
     {
