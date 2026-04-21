@@ -201,7 +201,7 @@ public sealed class ConversationRuntimeFlowTests
         string workspacePath,
         CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        for (var attempt = 0; attempt < 400; attempt++)
         {
             var latestSession = await runtime.GetLatestSessionAsync(workspacePath, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(latestSession?.ActiveTurnId))

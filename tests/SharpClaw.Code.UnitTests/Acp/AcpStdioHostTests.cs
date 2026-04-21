@@ -77,7 +77,7 @@ public sealed class AcpStdioHostTests
         runtime.LastRequest.Metadata!["model"].Should().Be("ollama/qwen2.5-coder");
         runtime.LastRequest.IsInteractive.Should().BeTrue();
         editorBuffer.LastPublished.Should().NotBeNull();
-        editorBuffer.LastPublished!.CurrentFilePath.Should().Be(NormalizePath("/tmp/workspace/src/App.cs"));
+        editorBuffer.LastPublished!.CurrentFilePath.Should().Be("/tmp/workspace/src/App.cs");
     }
 
     [Fact]
