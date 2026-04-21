@@ -58,7 +58,8 @@ public sealed class DefaultTurnRunner(
             ToolMutationRecorder: mutationAccumulator,
             DelegatedTask: request.DelegatedTask,
             ConversationHistory: promptContext.ConversationHistory,
-            IsInteractive: request.IsInteractive);
+            IsInteractive: request.IsInteractive,
+            ApprovalSettings: request.ApprovalSettings);
 
         using var turnScope = new TurnActivityScope(session.Id, turn.Id, promptContext.Prompt);
         var sw = Stopwatch.StartNew();

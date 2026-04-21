@@ -12,6 +12,29 @@
 
 Default: **`WorkspaceWrite`**.
 
+## Bounded auto-approval
+
+The CLI and REPL now support finer-grained approval control without switching all the way to **`DangerFullAccess`**.
+
+- CLI:
+  - `--auto-approve shell,network`
+  - `--auto-approve-budget 3`
+- REPL:
+  - `/approvals`
+  - `/approvals set shell,promptRead 2`
+  - `/approvals reset`
+
+`ApprovalSettings` flow through `RuntimeCommandContext`, `RunPromptRequest`, `ToolExecutionContext`, and `PermissionEvaluationContext`.
+
+Behavior:
+
+- matching scopes are auto-approved only when the current rule/mode path would otherwise ask for approval
+- explicit deny rules still win
+- remembered approvals still short-circuit before budget consumption
+- when the configured auto-approve budget is exhausted, the engine falls back to the normal approval transport
+
+The auto-approve budget is process-local and session-scoped, similar to remembered approvals.
+
 ## Policy engine
 
 **`PermissionPolicyEngine`** evaluates **`ToolExecutionRequest`** with **`PermissionEvaluationContext`** by running an ordered list of **`IPermissionRule`** instances:
@@ -56,6 +79,15 @@ Authenticated approvals are tenant-bound. If the runtime host context carries `T
 **`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust**).
 
 When a rule returns **`RequireApproval`** with **`CanRememberApproval`**, an approved outcome may be **`Store`**d and reused via **`TryGet`**. In embedded-host flows, the remembered approval remains scoped to the current session and tenant context.
+
+### Auto-approve budget tracking
+
+**`IAutoApprovalBudgetTracker`** (**`AutoApprovalBudgetTracker`**) tracks how many elevated operations have been auto-approved for the current session/tenant key.
+
+When `ApprovalSettings.AutoApproveBudget` is set:
+
+- the first matching operations consume the budget and are auto-approved
+- later matching operations are no longer auto-approved and go through the normal approval path
 
 ## Tool execution context
 

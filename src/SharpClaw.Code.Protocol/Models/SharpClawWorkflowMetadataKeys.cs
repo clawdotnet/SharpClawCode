@@ -61,4 +61,28 @@ public static class SharpClawWorkflowMetadataKeys
 
     /// <summary>JSON array of session-scoped <see cref="TodoItem"/> records.</summary>
     public const string SessionTodosJson = "sharpclaw.sessionTodosJson";
+
+    /// <summary>JSON array of approval scopes that may be auto-approved for the session.</summary>
+    public const string ApprovalAutoApproveScopesJson = "sharpclaw.approvalAutoApproveScopesJson";
+
+    /// <summary>Optional numeric auto-approval budget for the session.</summary>
+    public const string ApprovalAutoApproveBudget = "sharpclaw.approvalAutoApproveBudget";
+
+    /// <summary>Most recent deep-planning summary captured for the session.</summary>
+    public const string DeepPlanningSummary = "sharpclaw.deepPlanningSummary";
+
+    /// <summary>Most recent deep-planning next action captured for the session.</summary>
+    public const string DeepPlanningNextAction = "sharpclaw.deepPlanningNextAction";
+
+    /// <summary>Prefix for managed todo id maps keyed by owner agent id.</summary>
+    public const string ManagedSessionTodoMapPrefix = "sharpclaw.managedSessionTodoMap.";
+
+    /// <summary>
+    /// Builds the session-metadata key used to map managed external task ids to persisted todo ids.
+    /// </summary>
+    public static string GetManagedSessionTodoMapKey(string ownerAgentId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerAgentId);
+        return ManagedSessionTodoMapPrefix + ownerAgentId.Trim();
+    }
 }

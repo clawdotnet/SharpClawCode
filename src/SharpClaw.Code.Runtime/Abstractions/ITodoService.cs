@@ -40,4 +40,15 @@ public interface ITodoService
     /// Removes an existing todo item.
     /// </summary>
     Task<bool> RemoveAsync(string workspaceRoot, TodoScope scope, string todoId, string? sessionId, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reconciles a planning or agent-owned managed todo set against the current session-scoped todos.
+    /// </summary>
+    Task<ManagedTodoSyncResult> SyncManagedSessionTodosAsync(
+        string workspaceRoot,
+        string sessionId,
+        string ownerAgentId,
+        IReadOnlyList<ManagedTodoSeed> desiredTodos,
+        CancellationToken cancellationToken,
+        bool assumeSessionLockHeld = false);
 }

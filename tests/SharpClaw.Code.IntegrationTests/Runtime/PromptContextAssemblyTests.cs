@@ -33,8 +33,14 @@ public sealed class PromptContextAssemblyTests
     public async Task RunPrompt_should_include_memory_skills_and_git_context_in_provider_request()
     {
         var workspacePath = CreateTemporaryWorkspace();
+        Directory.CreateDirectory(Path.Combine(workspacePath, "rules"));
+        Directory.CreateDirectory(Path.Combine(workspacePath, ".sharpclaw", "rules"));
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "rules", "global.md"), "Prefer durable state.", CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, ".sharpclaw", "rules", "workspace.md"), "Prefer typed contracts.", CancellationToken.None);
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "AGENTS.md"), "Prefer explicit orchestration.", CancellationToken.None);
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        services.AddSingleton<IUserProfilePaths>(new FixedUserProfilePaths(workspacePath, new PathService()));
         services.AddSingleton<IProjectMemoryService>(new StubProjectMemoryService());
         services.AddSingleton<ISessionSummaryService>(new StubSessionSummaryService());
         services.AddSingleton<ISkillRegistry>(new StubSkillRegistry());
@@ -67,6 +73,10 @@ public sealed class PromptContextAssemblyTests
         providerStarted.Request.Prompt.Should().Contain("Git context");
         providerStarted.Request.Prompt.Should().Contain("Branch: main");
         providerStarted.Request.Prompt.Should().Contain("Session summary");
+        providerStarted.Request.Prompt.Should().Contain("Persistent rules");
+        providerStarted.Request.Prompt.Should().Contain("Prefer durable state.");
+        providerStarted.Request.Prompt.Should().Contain("Prefer typed contracts.");
+        providerStarted.Request.Prompt.Should().Contain("Prefer explicit orchestration.");
     }
 
     /// <summary>
@@ -80,6 +90,7 @@ public sealed class PromptContextAssemblyTests
         var countingEventStore = new CountingEventStore(new NdjsonEventStore(new LocalFileSystem(), CreateStoragePathResolver(workspacePath, pathService)));
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        services.AddSingleton<IUserProfilePaths>(new FixedUserProfilePaths(workspacePath, new PathService()));
         services.AddSingleton<IProjectMemoryService>(new StubProjectMemoryService());
         services.AddSingleton<ISessionSummaryService>(new StubSessionSummaryService());
         services.AddSingleton<ISkillRegistry>(new StubSkillRegistry());
@@ -191,7 +202,41 @@ public sealed class PromptContextAssemblyTests
                 BranchFreshness: new GitBranchFreshness(true, 0, 0),
                 StatusEntries: [],
                 StatusSummary: "Clean working tree.",
-                DiffSummary: "No pending diff."));
+                DiffSummary: "No pending diff.",
+                IsLinkedWorktree: false,
+                MainWorktreePath: workingDirectory,
+                WorktreeCount: 1));
+
+        public Task<GitWorktreeList> ListWorktreesAsync(string workingDirectory, CancellationToken cancellationToken)
+            => Task.FromResult(new GitWorktreeList(
+                RepositoryRoot: workingDirectory,
+                MainWorktreePath: workingDirectory,
+                Worktrees:
+                [
+                    new GitWorktreeEntry(
+                        Path: workingDirectory,
+                        Branch: "main",
+                        HeadCommitSha: "abc123",
+                        IsCurrent: true,
+                        IsLocked: false,
+                        IsPrunable: false,
+                        IsDetached: false,
+                        IsBare: false,
+                        LockReason: null,
+                        PrunableReason: null)
+                ]));
+
+        public Task<GitWorktreeCreateResult> CreateWorktreeAsync(
+            string workingDirectory,
+            string path,
+            string branchName,
+            string? startPoint,
+            bool useExistingBranch,
+            CancellationToken cancellationToken)
+            => throw new NotSupportedException();
+
+        public Task<GitWorktreePruneResult> PruneWorktreesAsync(string workingDirectory, CancellationToken cancellationToken)
+            => throw new NotSupportedException();
     }
 
     private sealed class PassthroughPreflight : IProviderRequestPreflight

@@ -155,6 +155,7 @@ public interface IRuntimeCommandService
 /// <param name="AgentId">Optional effective agent id.</param>
 /// <param name="IsInteractive">Whether the caller can participate in approval prompts.</param>
 /// <param name="HostContext">Optional embedded host and tenant context.</param>
+/// <param name="ApprovalSettings">Optional bounded auto-approval settings.</param>
 public sealed record RuntimeCommandContext(
     string WorkingDirectory,
     string? Model,
@@ -164,4 +165,5 @@ public sealed record RuntimeCommandContext(
     string? SessionId = null,
     string? AgentId = null,
     bool IsInteractive = true,
-    RuntimeHostContext? HostContext = null);
+    RuntimeHostContext? HostContext = null,
+    ApprovalSettings? ApprovalSettings = null);

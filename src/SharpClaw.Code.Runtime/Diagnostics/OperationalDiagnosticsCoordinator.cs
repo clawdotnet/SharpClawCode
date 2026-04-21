@@ -8,6 +8,7 @@ using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Operational;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Mutations;
+using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Sessions.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Diagnostics;
@@ -83,6 +84,7 @@ public sealed class OperationalDiagnosticsCoordinator(
         var diagnostics = await workspaceDiagnosticsService.BuildSnapshotAsync(workspacePath, cancellationToken).ConfigureAwait(false);
 
         var primaryMode = ResolvePrimaryModeForStatus(input, latest);
+        var approvalSettings = ResolveApprovalSettingsForStatus(input, latest);
 
         return new RuntimeStatusReport(
             SchemaVersion: "1.0",
@@ -91,6 +93,7 @@ public sealed class OperationalDiagnosticsCoordinator(
             RuntimeState: "ready",
             SelectedModel: string.IsNullOrWhiteSpace(input.Model) ? "default" : input.Model,
             PermissionMode: input.PermissionMode,
+            ApprovalSettings: approvalSettings,
             PrimaryMode: primaryMode,
             LatestSessionId: latest?.Id,
             LatestSessionState: latest?.State,
@@ -166,6 +169,29 @@ public sealed class OperationalDiagnosticsCoordinator(
         }
 
         return PrimaryMode.Build;
+    }
+
+    private static ApprovalSettings? ResolveApprovalSettingsForStatus(OperationalDiagnosticsInput input, ConversationSession? latest)
+    {
+        if (input.ApprovalSettings is not null)
+        {
+            return ApprovalSettingsResolver.Normalize(input.ApprovalSettings);
+        }
+
+        if (latest is null)
+        {
+            return null;
+        }
+
+        return ApprovalSettingsResolver.ResolveEffective(
+            new Protocol.Commands.RunPromptRequest(
+                Prompt: "status",
+                SessionId: latest.Id,
+                WorkingDirectory: latest.WorkingDirectory,
+                PermissionMode: latest.PermissionMode,
+                OutputFormat: latest.OutputFormat,
+                Metadata: null),
+            latest);
     }
 
     private static OperationalCheckStatus Reduce(IReadOnlyList<OperationalCheckItem> items)

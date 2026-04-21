@@ -42,6 +42,9 @@ public sealed class AgentFrameworkBridge(
             PermissionMode: request.Context.PermissionMode,
             OutputFormat: request.Context.OutputFormat,
             EnvironmentVariables: null,
+            Model: request.Context.Model,
+            AgentId: request.AgentId,
+            Metadata: request.Context.Metadata,
             AllowedTools: allowedTools,
             AllowDangerousBypass: false,
             IsInteractive: request.Context.IsInteractive,
@@ -54,7 +57,8 @@ public sealed class AgentFrameworkBridge(
             TrustedPluginNames: null,
             TrustedMcpServerNames: null,
             PrimaryMode: request.Context.PrimaryMode,
-            MutationRecorder: request.Context.ToolMutationRecorder);
+            MutationRecorder: request.Context.ToolMutationRecorder,
+            ApprovalSettings: request.Context.ApprovalSettings);
 
         // Map tool definitions from the registry to provider tool definitions
         var registryTools = await toolRegistry.ListAsync(
@@ -64,6 +68,7 @@ public sealed class AgentFrameworkBridge(
         var providerTools = FilterAdvertisedTools(registryTools, allowedTools)
             .Select(t => new ProviderToolDefinition(t.Name, t.Description, t.InputSchemaJson))
             .ToList();
+        AppendSyntheticSubAgentTool(providerTools, allowedTools);
 
         ProviderInvocationResult? providerResult = null;
         var frameworkAgent = new SharpClawFrameworkAgent(
@@ -173,5 +178,24 @@ public sealed class AgentFrameworkBridge(
         }
 
         return registryTools.Where(tool => allowedTools.Contains(tool.Name, StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static void AppendSyntheticSubAgentTool(
+        ICollection<ProviderToolDefinition> providerTools,
+        IReadOnlyCollection<string>? allowedTools)
+    {
+        if (providerTools.Any(tool => string.Equals(tool.Name, SubAgentToolContract.ToolName, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        if (allowedTools is not null
+            && allowedTools.Count > 0
+            && !allowedTools.Contains(SubAgentToolContract.ToolName, StringComparer.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        providerTools.Add(SubAgentToolContract.Definition);
     }
 }

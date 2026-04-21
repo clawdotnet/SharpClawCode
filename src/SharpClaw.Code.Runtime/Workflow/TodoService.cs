@@ -89,6 +89,46 @@ public sealed class TodoService(
         };
     }
 
+    /// <inheritdoc />
+    public async Task<ManagedTodoSyncResult> SyncManagedSessionTodosAsync(
+        string workspaceRoot,
+        string sessionId,
+        string ownerAgentId,
+        IReadOnlyList<ManagedTodoSeed> desiredTodos,
+        CancellationToken cancellationToken,
+        bool assumeSessionLockHeld = false)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(ownerAgentId);
+        ArgumentNullException.ThrowIfNull(desiredTodos);
+
+        var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
+        var normalizedOwnerAgentId = ownerAgentId.Trim();
+        var mapMetadataKey = SharpClawWorkflowMetadataKeys.GetManagedSessionTodoMapKey(normalizedOwnerAgentId);
+
+        if (assumeSessionLockHeld)
+        {
+            return await SyncManagedSessionTodosCoreAsync(
+                normalizedWorkspaceRoot,
+                sessionId,
+                normalizedOwnerAgentId,
+                mapMetadataKey,
+                desiredTodos,
+                cancellationToken).ConfigureAwait(false);
+        }
+
+        await using var gate = await fileSystem
+            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, sessionId), cancellationToken)
+            .ConfigureAwait(false);
+        return await SyncManagedSessionTodosCoreAsync(
+            normalizedWorkspaceRoot,
+            sessionId,
+            normalizedOwnerAgentId,
+            mapMetadataKey,
+            desiredTodos,
+            cancellationToken).ConfigureAwait(false);
+    }
+
     private async Task<TodoItem[]> ReadSessionTodosAsync(string workspaceRoot, string? sessionId, CancellationToken cancellationToken)
     {
         var resolvedSessionId = RequireSessionId(sessionId);
@@ -338,6 +378,38 @@ public sealed class TodoService(
             JsonSerializer.Serialize(Sort(todos).ToList(), ProtocolJsonContext.Default.ListTodoItem),
             cancellationToken);
 
+    private static Dictionary<string, string> ReadManagedTodoMap(IReadOnlyDictionary<string, string> metadata, string key)
+    {
+        if (!metadata.TryGetValue(key, out var payload) || string.IsNullOrWhiteSpace(payload))
+        {
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
+
+        return JsonSerializer.Deserialize(payload, ProtocolJsonContext.Default.DictionaryStringString)
+            ?? new Dictionary<string, string>(StringComparer.Ordinal);
+    }
+
+    private static TodoItem? ResolveManagedTodo(
+        IReadOnlyDictionary<string, string> existingMap,
+        IReadOnlyList<TodoItem> todos,
+        string ownerAgentId,
+        string externalId,
+        Queue<TodoItem> unusedManagedTodos)
+    {
+        if (existingMap.TryGetValue(externalId, out var todoId))
+        {
+            var mapped = todos.FirstOrDefault(item =>
+                string.Equals(item.Id, todoId, StringComparison.Ordinal)
+                && string.Equals(item.OwnerAgentId, ownerAgentId, StringComparison.Ordinal));
+            if (mapped is not null)
+            {
+                return mapped;
+            }
+        }
+
+        return unusedManagedTodos.Count > 0 ? unusedManagedTodos.Dequeue() : null;
+    }
+
     private static List<TodoItem> ReadSessionTodoList(ConversationSession session)
         => session.Metadata is not null
            && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.SessionTodosJson, out var todosJson)
@@ -352,6 +424,10 @@ public sealed class TodoService(
             .ThenBy(static item => item.Title, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
+    private static bool DictionaryEquals(IReadOnlyDictionary<string, string> left, IReadOnlyDictionary<string, string> right)
+        => left.Count == right.Count
+           && left.All(pair => right.TryGetValue(pair.Key, out var rightValue) && string.Equals(pair.Value, rightValue, StringComparison.Ordinal));
+
     private static string RequireSessionId(string? sessionId)
         => string.IsNullOrWhiteSpace(sessionId)
             ? throw new InvalidOperationException("A session id is required for session-scoped todos.")
@@ -359,4 +435,138 @@ public sealed class TodoService(
 
     private static string? Normalize(string? value)
         => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private async Task<ManagedTodoSyncResult> SyncManagedSessionTodosCoreAsync(
+        string normalizedWorkspaceRoot,
+        string sessionId,
+        string normalizedOwnerAgentId,
+        string mapMetadataKey,
+        IReadOnlyList<ManagedTodoSeed> desiredTodos,
+        CancellationToken cancellationToken)
+    {
+        var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, sessionId, cancellationToken).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"Session '{sessionId}' was not found.");
+        var todos = ReadSessionTodoList(session);
+        var metadata = session.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+        var existingMap = ReadManagedTodoMap(metadata, mapMetadataKey);
+        var normalizedDesired = desiredTodos
+            .Where(static item => !string.IsNullOrWhiteSpace(item.ExternalId) && !string.IsNullOrWhiteSpace(item.Title))
+            .GroupBy(static item => item.ExternalId.Trim(), StringComparer.Ordinal)
+            .Select(static group => group.Last() with { ExternalId = group.Key, Title = group.Last().Title.Trim() })
+            .ToArray();
+
+        var nextMap = new Dictionary<string, string>(StringComparer.Ordinal);
+        var touchedTodoIds = new HashSet<string>(StringComparer.Ordinal);
+        var unusedManagedTodos = new Queue<TodoItem>(todos.Where(item =>
+            string.Equals(item.OwnerAgentId, normalizedOwnerAgentId, StringComparison.Ordinal)
+            && !existingMap.Values.Contains(item.Id, StringComparer.Ordinal)));
+        var mutatedTodos = new List<(string Action, TodoItem Todo)>();
+        var addedCount = 0;
+        var updatedCount = 0;
+
+        foreach (var seed in normalizedDesired)
+        {
+            var existing = ResolveManagedTodo(existingMap, todos, normalizedOwnerAgentId, seed.ExternalId, unusedManagedTodos);
+            if (existing is null)
+            {
+                var now = systemClock.UtcNow;
+                var created = new TodoItem(
+                    $"todo-{Guid.NewGuid():N}",
+                    seed.Title,
+                    seed.Status,
+                    TodoScope.Session,
+                    now,
+                    now,
+                    normalizedOwnerAgentId,
+                    sessionId);
+                todos.Add(created);
+                nextMap[seed.ExternalId] = created.Id;
+                touchedTodoIds.Add(created.Id);
+                mutatedTodos.Add(("added", created));
+                addedCount++;
+                continue;
+            }
+
+            var updated = existing with
+            {
+                Title = seed.Title,
+                Status = seed.Status,
+                OwnerAgentId = normalizedOwnerAgentId,
+                LinkedSessionId = sessionId,
+                UpdatedAtUtc = systemClock.UtcNow,
+            };
+
+            var index = todos.FindIndex(item => string.Equals(item.Id, existing.Id, StringComparison.Ordinal));
+            if (index < 0)
+            {
+                continue;
+            }
+
+            if (!Equals(existing, updated))
+            {
+                todos[index] = updated;
+                mutatedTodos.Add(("updated", updated));
+                updatedCount++;
+            }
+
+            nextMap[seed.ExternalId] = updated.Id;
+            touchedTodoIds.Add(updated.Id);
+        }
+
+        var removedTodos = todos
+            .Where(item => string.Equals(item.OwnerAgentId, normalizedOwnerAgentId, StringComparison.Ordinal)
+                && !touchedTodoIds.Contains(item.Id))
+            .ToArray();
+        foreach (var removed in removedTodos)
+        {
+            todos.RemoveAll(item => string.Equals(item.Id, removed.Id, StringComparison.Ordinal));
+            mutatedTodos.Add(("removed", removed));
+        }
+
+        var removedCount = removedTodos.Length;
+        var metadataChanged = !DictionaryEquals(existingMap, nextMap);
+        if (mutatedTodos.Count > 0 || metadataChanged)
+        {
+            metadata[SharpClawWorkflowMetadataKeys.SessionTodosJson] = JsonSerializer.Serialize(Sort(todos).ToList(), ProtocolJsonContext.Default.ListTodoItem);
+            if (nextMap.Count == 0)
+            {
+                metadata.Remove(mapMetadataKey);
+            }
+            else
+            {
+                metadata[mapMetadataKey] = JsonSerializer.Serialize(nextMap, ProtocolJsonContext.Default.DictionaryStringString);
+            }
+
+            var updatedSession = session with
+            {
+                UpdatedAtUtc = systemClock.UtcNow,
+                Metadata = metadata,
+            };
+
+            await sessionStore.SaveAsync(normalizedWorkspaceRoot, updatedSession, cancellationToken).ConfigureAwait(false);
+            foreach (var mutation in mutatedTodos)
+            {
+                await eventStore.AppendAsync(
+                    normalizedWorkspaceRoot,
+                    updatedSession.Id,
+                    new TodoChangedEvent(
+                        $"event-{Guid.NewGuid():N}",
+                        updatedSession.Id,
+                        null,
+                        systemClock.UtcNow,
+                        mutation.Action,
+                        mutation.Todo),
+                    cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        return new ManagedTodoSyncResult(
+            normalizedOwnerAgentId,
+            addedCount,
+            updatedCount,
+            removedCount,
+            Sort(todos.Where(item => string.Equals(item.OwnerAgentId, normalizedOwnerAgentId, StringComparison.Ordinal))));
+    }
 }

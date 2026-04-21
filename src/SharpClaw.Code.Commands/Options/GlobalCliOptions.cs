@@ -42,6 +42,25 @@ public sealed class GlobalCliOptions
             Recursive = true
         };
 
+        AutoApproveOption = new Option<string?>("--auto-approve")
+        {
+            Description = "Comma-separated approval scopes to auto-approve: tool,file,shell,network,session,promptRead,all,none.",
+            Recursive = true
+        };
+
+        AutoApproveBudgetOption = new Option<int?>("--auto-approve-budget")
+        {
+            Description = "Optional session budget for auto-approved elevated operations.",
+            Recursive = true
+        };
+
+        YoloOption = new Option<bool>("--yolo")
+        {
+            Description = "Forces dangerFullAccess for one-shot/headless execution and suppresses approval prompts.",
+            Recursive = true
+        };
+        YoloOption.Aliases.Add("-y");
+
         PrimaryModeOption = new Option<string>("--primary-mode")
         {
             Description = "Sets the primary workflow mode: build, plan, or spec.",
@@ -107,9 +126,24 @@ public sealed class GlobalCliOptions
     public Option<string> PermissionModeOption { get; }
 
     /// <summary>
+    /// Gets the auto-approve scopes option.
+    /// </summary>
+    public Option<string?> AutoApproveOption { get; }
+
+    /// <summary>
+    /// Gets the auto-approve budget option.
+    /// </summary>
+    public Option<int?> AutoApproveBudgetOption { get; }
+
+    /// <summary>
     /// Gets the primary workflow mode option.
     /// </summary>
     public Option<string> PrimaryModeOption { get; }
+
+    /// <summary>
+    /// Gets the yolo option.
+    /// </summary>
+    public Option<bool> YoloOption { get; }
 
     /// <summary>
     /// Gets the optional session id option.
@@ -150,6 +184,9 @@ public sealed class GlobalCliOptions
         WorkingDirectoryOption,
         ModelOption,
         PermissionModeOption,
+        AutoApproveOption,
+        AutoApproveBudgetOption,
+        YoloOption,
         PrimaryModeOption,
         SessionOption,
         AgentOption,
@@ -168,6 +205,9 @@ public sealed class GlobalCliOptions
     {
         var outputFormatText = parseResult.GetValue(OutputFormatOption) ?? "text";
         var permissionModeText = parseResult.GetValue(PermissionModeOption) ?? "workspaceWrite";
+        var autoApproveText = parseResult.GetValue(AutoApproveOption);
+        var autoApproveBudget = parseResult.GetValue(AutoApproveBudgetOption);
+        var yolo = parseResult.GetValue(YoloOption);
         var cwd = parseResult.GetValue(WorkingDirectoryOption);
         var resolvedWorkingDirectory = string.IsNullOrWhiteSpace(cwd)
             ? Environment.CurrentDirectory
@@ -178,16 +218,18 @@ public sealed class GlobalCliOptions
         var storageRoot = parseResult.GetValue(StorageRootOption);
         var sessionStoreText = parseResult.GetValue(SessionStoreOption);
         var hostContext = CreateHostContext(hostId, tenantId, storageRoot, sessionStoreText);
+        var approvalSettings = ApprovalSettingsText.Parse(autoApproveText, autoApproveBudget);
 
         return new CommandExecutionContext(
             WorkingDirectory: resolvedWorkingDirectory,
             Model: parseResult.GetValue(ModelOption),
-            PermissionMode: ParsePermissionMode(permissionModeText),
+            PermissionMode: yolo ? PermissionMode.DangerFullAccess : ParsePermissionMode(permissionModeText),
             OutputFormat: ParseOutputFormat(outputFormatText),
             PrimaryMode: ParsePrimaryMode(primaryText),
             SessionId: parseResult.GetValue(SessionOption),
             AgentId: parseResult.GetValue(AgentOption),
-            HostContext: hostContext);
+            HostContext: hostContext,
+            ApprovalSettings: approvalSettings);
     }
 
     private static RuntimeHostContext? CreateHostContext(

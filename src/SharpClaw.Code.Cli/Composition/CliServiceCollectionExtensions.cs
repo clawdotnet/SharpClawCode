@@ -23,6 +23,8 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<CliCommandFactory>();
         services.AddSingleton<SlashCommandParser>();
         services.AddSingleton<OutputRendererDispatcher>();
+        services.AddSingleton<ICliInvocationEnvironment, Terminal.ConsoleInvocationEnvironment>();
+        services.AddSingleton<PromptInvocationService>();
         services.AddSingleton<ICommandRegistry, CommandRegistry>();
         services.AddSingleton<IReplHost, ReplHost>();
         services.AddSingleton<IReplTerminal, Terminal.SpectreReplTerminal>();
@@ -48,6 +50,7 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ICommandHandler, CompactCommandHandler>();
         services.AddSingleton<ICommandHandler, ServeCommandHandler>();
         services.AddSingleton<ICommandHandler, CommandsCommandHandler>();
+        services.AddSingleton<ICommandHandler, WorktreeCommandHandler>();
         services.AddSingleton<ICommandHandler, McpCommandHandler>();
         services.AddSingleton<ICommandHandler, PluginsCommandHandler>();
         services.AddSingleton<ICommandHandler, ToolPackagesCommandHandler>();
@@ -75,7 +78,9 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ISlashCommandHandler, CompactCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ServeCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, CommandsCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, WorktreeCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ModeSlashCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, ApprovalsSlashCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, EditorSlashCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ExportSlashCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, VersionCommandHandler>();

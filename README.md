@@ -62,6 +62,7 @@ dotnet run --project src/SharpClaw.Code.Cli -- repl
 
 # Run a one-shot prompt
 dotnet run --project src/SharpClaw.Code.Cli -- prompt "Summarize this workspace"
+dotnet run --project src/SharpClaw.Code.Cli -- --auto-approve shell --auto-approve-budget 2 prompt "Check git status and summarize"
 
 # Inspect runtime health and status
 dotnet run --project src/SharpClaw.Code.Cli -- doctor
@@ -105,12 +106,13 @@ Parity-oriented commands now include:
 - `unshare` / `/unshare`
 - `compact` / `/compact`
 - `serve` / `/serve`
+- `worktree` / `/worktree`
 - `/sessions` as a friendlier alias over `/session list`
 
 Primary workflow modes:
 
 - `build`: normal coding-agent execution
-- `plan`: analysis-first mode that blocks mutating tools
+- `plan`: structured deep planning that blocks mutating tools and syncs planning-owned session todos
 - `spec`: generates Kiro-style spec artifacts under `docs/superpowers/specs/<date>-<slug>/`
 
 ## Core Capabilities
@@ -202,6 +204,8 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--cwd <path>` | Working directory; defaults to the current directory |
 | `--model <id>` | Model id or alias; `provider/model` forms are supported where configured |
 | `--permission-mode <mode>` | `readOnly`, `workspaceWrite`, or `dangerFullAccess`; see [docs/permissions.md](docs/permissions.md) |
+| `--auto-approve <scopes>` | Auto-approve specific elevated scopes such as `shell`, `network`, or `promptRead` |
+| `--auto-approve-budget <n>` | Cap how many elevated operations may be auto-approved in the session |
 | `--output-format text\|json` | Human-readable or structured output |
 | `--primary-mode <mode>` | Workflow bias for prompts: `build`, `plan`, or `spec` |
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
@@ -211,7 +215,7 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--storage-root <path>` | External root for host-managed durable runtime state |
 | `--session-store fileSystem\|sqlite` | Select the embedded session/event storage backend |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `memory`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `tool-packages`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `memory`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `worktree`, `mcp`, `plugins`, `tool-packages`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 

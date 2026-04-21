@@ -70,6 +70,34 @@ public sealed class PromptInteractivityFlowTests
             .WithMessage("*non-interactive*");
     }
 
+    /// <summary>
+    /// Ensures non-interactive callers can allow prompt-reference reads through bounded auto-approval.
+    /// </summary>
+    [Fact]
+    public async Task ExecutePromptAsync_should_allow_outside_workspace_reference_when_prompt_read_is_auto_approved()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var outsideFile = CreateOutsideWorkspaceFile("auto-approved content");
+        var provider = new CapturingPromptProvider();
+        using var serviceProvider = CreateServiceProvider(provider);
+        var runtime = serviceProvider.GetRequiredService<IRuntimeCommandService>();
+
+        var result = await runtime.ExecutePromptAsync(
+            $"inspect @{outsideFile}",
+            new RuntimeCommandContext(
+                WorkingDirectory: workspacePath,
+                Model: "prompt-model",
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                IsInteractive: false,
+                ApprovalSettings: new ApprovalSettings([ApprovalScope.PromptOutsideWorkspaceRead], 1)),
+            CancellationToken.None);
+
+        var providerStarted = result.Events.OfType<ProviderStartedEvent>().Single();
+        providerStarted.Request.Prompt.Should().Contain("auto-approved content");
+        provider.CapturedRequests.Should().ContainSingle();
+    }
+
     private static ServiceProvider CreateServiceProvider(CapturingPromptProvider provider, IApprovalService? approvalService = null)
     {
         var services = new ServiceCollection();

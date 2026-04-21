@@ -53,6 +53,7 @@ public sealed class CliCommandSurfaceTests
                 "doctor",
                 "index",
                 "unshare",
+                "worktree",
                 "version",
                 "repl"
             ]);
@@ -63,6 +64,9 @@ public sealed class CliCommandSurfaceTests
                 "--cwd",
                 "--model",
                 "--permission-mode",
+                "--auto-approve",
+                "--auto-approve-budget",
+                "--yolo",
                 "--primary-mode",
                 "--session",
                 "--agent",

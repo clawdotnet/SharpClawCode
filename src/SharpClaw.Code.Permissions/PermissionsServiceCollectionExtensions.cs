@@ -18,6 +18,7 @@ public static class PermissionsServiceCollectionExtensions
     public static IServiceCollection AddSharpClawPermissions(this IServiceCollection services)
     {
         services.AddSingleton<ISessionApprovalMemory, SessionApprovalMemory>();
+        services.AddSingleton<IAutoApprovalBudgetTracker, AutoApprovalBudgetTracker>();
         services.AddSingleton<IApprovalPrincipalAccessor, ApprovalPrincipalAccessor>();
         services.AddSingleton<ConsoleApprovalService>();
         services.AddSingleton<NonInteractiveApprovalService>();

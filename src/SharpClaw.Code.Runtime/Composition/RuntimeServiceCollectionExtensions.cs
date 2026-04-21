@@ -116,7 +116,9 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IPortableSessionBundleService, PortableSessionBundleService>();
         services.AddSingleton<ICustomCommandMarkdownParser, CustomCommandMarkdownParser>();
         services.AddSingleton<ICustomCommandDiscoveryService, CustomCommandDiscoveryService>();
+        services.AddSingleton<IInstructionRuleService, InstructionRuleService>();
         services.AddSingleton<IPromptReferenceResolver, PromptReferenceResolver>();
+        services.AddSingleton<IPlanWorkflowService, PlanWorkflowService>();
         services.AddSingleton<ISpecWorkflowService, SpecWorkflowService>();
         services.AddSingleton<ISharpClawConfigService, SharpClawConfigService>();
         services.AddSingleton<SharpClaw.Code.Permissions.Abstractions.IApprovalIdentityService, ConfiguredApprovalIdentityService>();
