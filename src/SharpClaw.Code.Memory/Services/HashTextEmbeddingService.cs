@@ -1,4 +1,7 @@
+using System.Buffers.Binary;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 
 namespace SharpClaw.Code.Memory.Services;
@@ -20,9 +23,7 @@ internal static class HashTextEmbeddingService
 
         foreach (var token in Tokenize(text))
         {
-            var hash = string.GetHashCode(token, StringComparison.Ordinal);
-            var index = Math.Abs(hash % Dimensions);
-            vector[index] += 1f;
+            AccumulateToken(vector, token);
         }
 
         Normalize(vector);
@@ -105,6 +106,18 @@ internal static class HashTextEmbeddingService
         if (buffer.Count > 0)
         {
             yield return new string([.. buffer]);
+        }
+    }
+
+    private static void AccumulateToken(float[] vector, string token)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(token));
+        for (var offset = 0; offset < 16; offset += 4)
+        {
+            var segment = BinaryPrimitives.ReadUInt32LittleEndian(hash.AsSpan(offset, 4));
+            var index = (int)(segment % Dimensions);
+            var sign = (segment & 1u) == 0 ? 1f : -1f;
+            vector[index] += sign;
         }
     }
 }

@@ -16,4 +16,8 @@
     <Description>Memory extraction, indexing, and recall for SharpClaw Code.</Description>
   </PropertyGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="SharpClaw.Code.UnitTests" />
+  </ItemGroup>
+
 </Project>

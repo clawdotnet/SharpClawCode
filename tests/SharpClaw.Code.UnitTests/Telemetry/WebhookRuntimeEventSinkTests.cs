@@ -106,6 +106,30 @@ public sealed class WebhookRuntimeEventSinkTests
             TimeSpan.FromMilliseconds(200));
     }
 
+    [Fact]
+    public async Task PublishAsync_should_propagate_cancellation_without_retrying()
+    {
+        var options = new TelemetryOptions
+        {
+            WebhookMaxAttempts = 3,
+            WebhookInitialBackoffMilliseconds = 50,
+        };
+        options.EventWebhookUrls.Add("https://example.com/runtime-events");
+        using var cancellationTokenSource = new CancellationTokenSource();
+        await cancellationTokenSource.CancelAsync();
+        var handler = new CancelingMessageHandler(cancellationTokenSource.Token);
+        var delayStrategy = new RecordingDelayStrategy();
+        var sink = new WebhookRuntimeEventSink(
+            Options.Create(options),
+            new HttpClient(handler),
+            delayStrategy);
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sink.PublishAsync(CreateEnvelope(), cancellationTokenSource.Token));
+
+        handler.AttemptCount.Should().Be(1);
+        delayStrategy.Delays.Should().BeEmpty();
+    }
+
     private static RuntimeEventEnvelope CreateEnvelope()
         => new(
             EventType: nameof(UsageUpdatedEvent),
@@ -143,6 +167,17 @@ public sealed class WebhookRuntimeEventSinkTests
             AttemptCount++;
             var statusCode = responses.Count == 0 ? HttpStatusCode.OK : responses.Dequeue();
             return Task.FromResult(new HttpResponseMessage(statusCode));
+        }
+    }
+
+    private sealed class CancelingMessageHandler(CancellationToken token) : HttpMessageHandler
+    {
+        public int AttemptCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            AttemptCount++;
+            return Task.FromCanceled<HttpResponseMessage>(token);
         }
     }
 }

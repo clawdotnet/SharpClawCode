@@ -14,14 +14,17 @@ public sealed class InProcessRuntimeEventStream(IOptions<TelemetryOptions> telem
     private readonly ConcurrentQueue<RuntimeEventEnvelope> recent = new();
     private readonly ConcurrentDictionary<Guid, Channel<RuntimeEventEnvelope>> subscribers = new();
     private readonly int capacity = Math.Max(64, telemetryOptionsAccessor.Value.RuntimeEventRingBufferCapacity);
+    private int recentCount;
 
     /// <inheritdoc />
     public Task PublishAsync(RuntimeEventEnvelope envelope, CancellationToken cancellationToken)
     {
         _ = cancellationToken;
         recent.Enqueue(envelope);
-        while (recent.Count > capacity && recent.TryDequeue(out _))
+        Interlocked.Increment(ref recentCount);
+        while (Volatile.Read(ref recentCount) > capacity && recent.TryDequeue(out _))
         {
+            Interlocked.Decrement(ref recentCount);
         }
 
         foreach (var channel in subscribers.Values)

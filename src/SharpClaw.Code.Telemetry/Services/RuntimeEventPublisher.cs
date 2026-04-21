@@ -112,7 +112,22 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
                 HostId: hostContext?.HostId);
             foreach (var sink in sinks)
             {
-                await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Runtime event {EventId} failed to publish to sink {SinkType}.",
+                        runtimeEvent.EventId,
+                        sink.GetType().Name);
+                }
             }
         }
     }

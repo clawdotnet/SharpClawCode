@@ -32,10 +32,11 @@ public sealed class WebhookRuntimeEventSink(
         }
 
         var payload = JsonSerializer.Serialize(envelope, ProtocolJsonContext.Default.RuntimeEventEnvelope);
+        var maxAttempts = Math.Max(1, telemetryOptions.WebhookMaxAttempts);
         foreach (var url in telemetryOptions.EventWebhookUrls)
         {
             var attempt = 0;
-            while (attempt++ < Math.Max(1, telemetryOptions.WebhookMaxAttempts))
+            while (attempt++ < maxAttempts)
             {
                 try
                 {
@@ -44,7 +45,11 @@ public sealed class WebhookRuntimeEventSink(
                     response.EnsureSuccessStatusCode();
                     break;
                 }
-                catch (Exception exception) when (attempt < Math.Max(1, telemetryOptions.WebhookMaxAttempts))
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception) when (attempt < maxAttempts)
                 {
                     logger.LogWarning(
                         exception,
