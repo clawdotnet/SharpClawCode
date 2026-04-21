@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Description>Embeddable SharpClaw host SDK for runtime, ACP, and admin surfaces.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SharpClaw.Code.Acp\SharpClaw.Code.Acp.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
+  </ItemGroup>
+
+</Project>

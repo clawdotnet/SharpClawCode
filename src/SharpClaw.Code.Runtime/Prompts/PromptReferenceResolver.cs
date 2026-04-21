@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Permissions.Abstractions;
 using SharpClaw.Code.Permissions.Models;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Models;
@@ -16,7 +17,8 @@ namespace SharpClaw.Code.Runtime.Prompts;
 public sealed partial class PromptReferenceResolver(
     IFileSystem fileSystem,
     IPathService pathService,
-    IPermissionPolicyEngine permissionPolicyEngine) : IPromptReferenceResolver
+    IPermissionPolicyEngine permissionPolicyEngine,
+    IRuntimeHostContextAccessor? hostContextAccessor = null) : IPromptReferenceResolver
 {
     /// <inheritdoc />
     public async Task<PromptReferenceResolution> ResolveAsync(
@@ -68,6 +70,9 @@ public sealed partial class PromptReferenceResolver(
                     request.PermissionMode,
                     primaryMode,
                     isInteractive,
+                    request.Metadata is not null
+                        && request.Metadata.TryGetValue("acp", out var acp)
+                        && string.Equals(acp, "true", StringComparison.OrdinalIgnoreCase),
                     resolvedFull,
                     cancellationToken).ConfigureAwait(false);
             }
@@ -110,6 +115,7 @@ public sealed partial class PromptReferenceResolver(
         PermissionMode permissionMode,
         PrimaryMode primaryMode,
         bool isInteractive,
+        bool isAcp,
         string absolutePath,
         CancellationToken cancellationToken)
     {
@@ -136,10 +142,11 @@ public sealed partial class PromptReferenceResolver(
             AllowDangerousBypass: false,
             IsInteractive: isInteractive,
             SourceKind: PermissionRequestSourceKind.Runtime,
-            SourceName: null,
+            SourceName: isAcp ? "acp" : null,
             TrustedPluginNames: null,
             TrustedMcpServerNames: null,
-            PrimaryMode: primaryMode);
+            PrimaryMode: primaryMode,
+            TenantId: hostContextAccessor?.Current?.TenantId);
 
         var decision = await permissionPolicyEngine
             .EvaluateAsync(toolRequest, context, cancellationToken)

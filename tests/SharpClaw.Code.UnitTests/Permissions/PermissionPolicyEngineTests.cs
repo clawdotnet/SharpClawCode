@@ -355,7 +355,8 @@ public sealed class PermissionPolicyEngineTests
                 ResolvedBy: "test",
                 Reason: "approved",
                 ResolvedAtUtc: DateTimeOffset.UtcNow,
-                ExpiresAtUtc: DateTimeOffset.UtcNow.AddMinutes(10)));
+                ExpiresAtUtc: DateTimeOffset.UtcNow.AddMinutes(10),
+                RememberForSession: request.CanRememberDecision));
         }
     }
 }

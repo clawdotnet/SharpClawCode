@@ -9,15 +9,15 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Stores session snapshots as readable JSON files under the workspace.
 /// </summary>
-public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathService) : ISessionStore
+public sealed class FileSessionStore(IFileSystem fileSystem, IRuntimeStoragePathResolver storagePathResolver) : ISessionStore
 {
     /// <inheritdoc />
     public Task SaveAsync(string workspacePath, ConversationSession session, CancellationToken cancellationToken)
     {
-        var sessionsRoot = SessionStorageLayout.GetSessionsRoot(pathService, workspacePath);
+        var sessionsRoot = storagePathResolver.GetSessionsRoot(workspacePath);
         fileSystem.CreateDirectory(sessionsRoot);
 
-        var path = SessionStorageLayout.GetSessionSnapshotPath(pathService, workspacePath, session.Id);
+        var path = storagePathResolver.GetSessionSnapshotPath(workspacePath, session.Id);
         var json = JsonSerializer.Serialize(session, ProtocolJsonContext.Default.ConversationSession);
         return fileSystem.WriteAllTextAsync(path, json, cancellationToken);
     }
@@ -25,7 +25,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathSe
     /// <inheritdoc />
     public async Task<ConversationSession?> GetByIdAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
     {
-        var path = SessionStorageLayout.GetSessionSnapshotPath(pathService, workspacePath, sessionId);
+        var path = storagePathResolver.GetSessionSnapshotPath(workspacePath, sessionId);
         var content = await fileSystem.ReadAllTextIfExistsAsync(path, cancellationToken).ConfigureAwait(false);
         return string.IsNullOrWhiteSpace(content)
             ? null
@@ -35,7 +35,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathSe
     /// <inheritdoc />
     public async Task<ConversationSession?> GetLatestAsync(string workspacePath, CancellationToken cancellationToken)
     {
-        var sessionsRoot = SessionStorageLayout.GetSessionsRoot(pathService, workspacePath);
+        var sessionsRoot = storagePathResolver.GetSessionsRoot(workspacePath);
         if (!fileSystem.DirectoryExists(sessionsRoot))
         {
             return null;
@@ -44,7 +44,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathSe
         ConversationSession? latest = null;
         foreach (var sessionDirectory in fileSystem.EnumerateDirectories(sessionsRoot))
         {
-            var sessionId = pathService.GetFileName(sessionDirectory);
+            var sessionId = Path.GetFileName(sessionDirectory);
             if (string.IsNullOrWhiteSpace(sessionId))
             {
                 continue;
@@ -67,7 +67,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathSe
     /// <inheritdoc />
     public async Task<IReadOnlyList<ConversationSession>> ListAllAsync(string workspacePath, CancellationToken cancellationToken)
     {
-        var sessionsRoot = SessionStorageLayout.GetSessionsRoot(pathService, workspacePath);
+        var sessionsRoot = storagePathResolver.GetSessionsRoot(workspacePath);
         if (!fileSystem.DirectoryExists(sessionsRoot))
         {
             return [];
@@ -76,7 +76,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IPathService pathSe
         var list = new List<ConversationSession>();
         foreach (var sessionDirectory in fileSystem.EnumerateDirectories(sessionsRoot))
         {
-            var sessionId = pathService.GetFileName(sessionDirectory);
+            var sessionId = Path.GetFileName(sessionDirectory);
             if (string.IsNullOrWhiteSpace(sessionId))
             {
                 continue;

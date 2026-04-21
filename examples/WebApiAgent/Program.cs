@@ -1,46 +1,58 @@
-using SharpClaw.Code.Protocol.Commands;
+using Microsoft.Extensions.Hosting;
+using SharpClaw.Code;
 using SharpClaw.Code.Protocol.Enums;
-using SharpClaw.Code.Runtime.Abstractions;
-using SharpClaw.Code.Runtime.Composition;
+using SharpClaw.Code.Protocol.Models;
 
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddSharpClawRuntime(builder.Configuration);
+builder.Services.AddSingleton(_ => new SharpClawRuntimeHostBuilder(args).Build());
+builder.Services.AddHostedService<EmbeddedRuntimeLifecycleService>();
 
 var app = builder.Build();
 
-app.MapPost("/chat", async (ChatRequest body, IConversationRuntime runtime, CancellationToken ct) =>
+app.MapPost("/chat", async (ChatRequest body, SharpClawRuntimeHost runtimeHost, CancellationToken ct) =>
 {
     var workspacePath = Directory.GetCurrentDirectory();
+    var hostContext = new RuntimeHostContext(
+        HostId: "web-api-agent",
+        TenantId: body.TenantId,
+        IsEmbeddedHost: true);
 
-    string sessionId;
-    if (!string.IsNullOrWhiteSpace(body.SessionId))
+    var sessionId = body.SessionId;
+    if (string.IsNullOrWhiteSpace(sessionId))
     {
-        sessionId = body.SessionId;
-    }
-    else
-    {
-        var session = await runtime.CreateSessionAsync(
+        var session = await runtimeHost.CreateSessionAsync(
             workspacePath,
             PermissionMode.ReadOnly,
             OutputFormat.Text,
+            hostContext,
             ct);
         sessionId = session.Id;
     }
 
-    var request = new RunPromptRequest(
-        Prompt: body.Prompt,
-        SessionId: sessionId,
-        WorkingDirectory: workspacePath,
-        PermissionMode: PermissionMode.ReadOnly,
-        OutputFormat: OutputFormat.Text,
-        Metadata: null);
+    var result = await runtimeHost.ExecutePromptAsync(
+        body.Prompt,
+        workspacePath,
+        model: "default",
+        permissionMode: PermissionMode.ReadOnly,
+        outputFormat: OutputFormat.Text,
+        sessionId: sessionId,
+        hostContext: hostContext,
+        cancellationToken: ct);
 
-    var result = await runtime.RunPromptAsync(request, ct);
-
-    return Results.Ok(new ChatResponse(result.FinalOutput ?? string.Empty, sessionId));
+    return Results.Ok(new ChatResponse(result.FinalOutput ?? string.Empty, sessionId!));
 });
 
 app.Run();
 
-record ChatRequest(string Prompt, string? SessionId);
+sealed class EmbeddedRuntimeLifecycleService(SharpClawRuntimeHost runtimeHost) : IHostedService
+{
+    public Task StartAsync(CancellationToken cancellationToken)
+        => runtimeHost.StartAsync(cancellationToken);
+
+    public Task StopAsync(CancellationToken cancellationToken)
+        => runtimeHost.StopAsync(cancellationToken);
+}
+
+record ChatRequest(string Prompt, string? SessionId, string? TenantId = null);
+
 record ChatResponse(string Output, string SessionId);

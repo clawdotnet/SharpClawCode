@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Services;
+using SharpClaw.Code.Memory.Abstractions;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
@@ -10,6 +11,7 @@ using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Services;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.Runtime;
 
@@ -25,8 +27,9 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         Directory.CreateDirectory(workspaceRoot);
 
         var clock = new FixedClock(DateTimeOffset.Parse("2026-04-13T15:00:00Z"));
-        var sessionStore = new FileSessionStore(fileSystem, pathService);
-        var eventStore = new NdjsonEventStore(fileSystem, pathService);
+        var storagePathResolver = TestRuntimeStorageResolver.Create(workspaceRoot, pathService);
+        var sessionStore = new FileSessionStore(fileSystem, storagePathResolver);
+        var eventStore = new NdjsonEventStore(fileSystem, storagePathResolver);
         var session = new ConversationSession(
             Id: "session-1",
             Title: "Initial title",
@@ -108,15 +111,17 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         var shareService = new ShareSessionService(
             fileSystem,
             pathService,
+            storagePathResolver,
             clock,
             sessionStore,
             eventStore,
             new FixedConfigService(workspaceRoot),
             publisher,
             hooks);
-        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, clock);
+        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, storagePathResolver, clock);
         _ = await todoService.AddAsync(workspaceRoot, TodoScope.Session, "Follow up on diagnostics UX", session.Id, "primary-coding-agent", CancellationToken.None);
-        var compactionService = new ConversationCompactionService(sessionStore, eventStore, todoService, clock);
+        var memoryStore = new RecordingPersistentMemoryStore();
+        var compactionService = new ConversationCompactionService(sessionStore, eventStore, todoService, memoryStore, clock);
 
         var share = await shareService.CreateShareAsync(workspaceRoot, session.Id, CancellationToken.None);
         var sharedSession = await sessionStore.GetByIdAsync(workspaceRoot, session.Id, CancellationToken.None);
@@ -136,6 +141,7 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
         compacted.Summary.Should().Contain("Recent requests:");
         compacted.Summary.Should().Contain("Active tasks:");
         compacted.Session.Title.Should().Contain("Add diagnostics support");
+        memoryStore.Saved.Should().ContainSingle(entry => entry.Source == "session-compaction" && entry.SourceSessionId == session.Id);
         removed.Should().BeTrue();
         unsharedSession!.Metadata.Should().NotContainKey(SharpClawWorkflowMetadataKeys.ShareId);
         hooks.Invocations.Should().Contain(invocation => invocation.Trigger == HookTriggerKind.ShareCreated);
@@ -188,5 +194,22 @@ public sealed class ShareAndCompactionServicesTests : IDisposable
 
         public Task<HookTestResult> TestAsync(string workspaceRoot, string hookName, string payloadJson, CancellationToken cancellationToken)
             => Task.FromResult(new HookTestResult(hookName, HookTriggerKind.ShareCreated, true, "ok", DateTimeOffset.UtcNow));
+    }
+
+    private sealed class RecordingPersistentMemoryStore : IPersistentMemoryStore
+    {
+        public List<MemoryEntry> Saved { get; } = [];
+
+        public Task<MemoryEntry> SaveAsync(string? workspaceRoot, MemoryEntry entry, CancellationToken cancellationToken)
+        {
+            Saved.Add(entry);
+            return Task.FromResult(entry);
+        }
+
+        public Task<bool> DeleteAsync(string? workspaceRoot, MemoryScope scope, string id, CancellationToken cancellationToken)
+            => Task.FromResult(false);
+
+        public Task<IReadOnlyList<MemoryEntry>> ListAsync(string? workspaceRoot, MemoryScope? scope, string? query, int limit, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<MemoryEntry>>(Saved);
     }
 }

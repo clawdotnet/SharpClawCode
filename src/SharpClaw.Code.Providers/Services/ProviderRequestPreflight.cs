@@ -28,6 +28,11 @@ public sealed class ProviderRequestPreflight(
             providerName = string.IsNullOrWhiteSpace(providerName) ? alias.ProviderName : providerName;
             model = alias.ModelId;
         }
+        else if (TryResolveLocalRuntimeQualifiedModel(model, out var runtimeProfile, out var runtimeModel))
+        {
+            providerName = openAiCompatibleOptions.ProviderName;
+            model = runtimeModel;
+        }
         else if (TryParseQualifiedModel(model, out var parsedProviderName, out var parsedModel))
         {
             providerName = string.IsNullOrWhiteSpace(providerName) ? parsedProviderName : providerName;
@@ -49,10 +54,19 @@ public sealed class ProviderRequestPreflight(
                 $"No default model configured for provider '{providerName}'. Specify a model explicitly.");
         }
 
+        var metadata = request.Metadata is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(request.Metadata, StringComparer.Ordinal);
+        if (TryResolveLocalRuntimeQualifiedModel(request.Model?.Trim() ?? string.Empty, out var selectedRuntimeProfile, out _))
+        {
+            metadata[OpenAiCompatibleProvider.RuntimeProfileMetadataKey] = selectedRuntimeProfile;
+        }
+
         return request with
         {
             ProviderName = providerName,
             Model = model,
+            Metadata = metadata,
         };
     }
 
@@ -85,6 +99,25 @@ public sealed class ProviderRequestPreflight(
 
         providerName = model[..separatorIndex];
         providerModel = model[(separatorIndex + 1)..];
+        return true;
+    }
+
+    private bool TryResolveLocalRuntimeQualifiedModel(string model, out string runtimeProfile, out string runtimeModel)
+    {
+        runtimeProfile = string.Empty;
+        runtimeModel = string.Empty;
+        if (!TryParseQualifiedModel(model, out var providerSegment, out var providerModel))
+        {
+            return false;
+        }
+
+        if (!openAiCompatibleOptions.LocalRuntimes.ContainsKey(providerSegment))
+        {
+            return false;
+        }
+
+        runtimeProfile = providerSegment;
+        runtimeModel = providerModel;
         return true;
     }
 }

@@ -35,11 +35,27 @@ If all rules abstain, **`EvaluateByModeAsync`** applies mode defaults (e.g. **Re
 
 **`ConsoleApprovalService`** prints the tool name, scope, prompt, optional “may be remembered” line, and waits for **`y`/`yes`**.
 
+### Authenticated approval transports
+
+Embedded hosts can enable approval identity independently from provider auth. The current runtime supports:
+
+- **trusted-header** mode, where an upstream host supplies subject, tenant, role, and scope headers
+- **OIDC** mode, where the embedded/admin HTTP surface validates a bearer token against discovery + JWKS metadata
+
+`ConfiguredApprovalIdentityService` resolves the current `ApprovalPrincipal`, and `AuthenticatedApprovalTransport` approves or denies requests before the console/non-interactive transports are considered.
+
+Two host flags matter:
+
+- `RequireForAdmin`: admin routes must present a valid approval identity
+- `RequireAuthenticatedApprovals`: approval-required operations are denied when no valid approval identity is present, even if the caller is otherwise interactive
+
+Authenticated approvals are tenant-bound. If the runtime host context carries `TenantId`, an approval principal with a different tenant is denied before any remembered approval or console fallback path is used.
+
 ### Remembered approvals
 
 **`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust**).
 
-When a rule returns **`RequireApproval`** with **`CanRememberApproval`**, an approved outcome may be **`Store`**d and reused via **`TryGet`**.
+When a rule returns **`RequireApproval`** with **`CanRememberApproval`**, an approved outcome may be **`Store`**d and reused via **`TryGet`**. In embedded-host flows, the remembered approval remains scoped to the current session and tenant context.
 
 ## Tool execution context
 

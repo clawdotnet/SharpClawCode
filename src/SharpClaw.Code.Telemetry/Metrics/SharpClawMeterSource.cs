@@ -8,6 +8,9 @@ namespace SharpClaw.Code.Telemetry.Metrics;
 /// </summary>
 public static class SharpClawMeterSource
 {
+    /// <summary>
+    /// Stable meter name used by OpenTelemetry configuration.
+    /// </summary>
     public const string MeterName = "SharpClaw.Code";
 
     private static readonly Meter Meter = new(MeterName, "1.0.0");

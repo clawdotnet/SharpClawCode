@@ -18,6 +18,11 @@ public static class MemoryServiceCollectionExtensions
     public static IServiceCollection AddSharpClawMemory(this IServiceCollection services)
     {
         services.AddSharpClawInfrastructure();
+        services.AddSingleton<IWorkspaceKnowledgeStore, SqliteWorkspaceKnowledgeStore>();
+        services.AddSingleton<IWorkspaceIndexService, WorkspaceIndexService>();
+        services.AddSingleton<IWorkspaceSearchService, WorkspaceSearchService>();
+        services.AddSingleton<IPersistentMemoryStore, PersistentMemoryStore>();
+        services.AddSingleton<IMemoryRecallService, MemoryRecallService>();
         services.AddSingleton<IProjectMemoryService, ProjectMemoryService>();
         services.AddSingleton<ISessionSummaryService, SessionSummaryService>();
         return services;

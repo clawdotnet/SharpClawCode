@@ -5,6 +5,7 @@ using SharpClaw.Code.Commands.Models;
 using SharpClaw.Code.Commands.Options;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.UnitTests.Commands;
 
@@ -27,6 +28,28 @@ public sealed class ModeAndCliOptionsTests
         var context = options.Resolve(parseResult);
 
         context.PrimaryMode.Should().Be(PrimaryMode.Spec);
+    }
+
+    [Fact]
+    public void Global_cli_options_should_parse_embedded_host_context()
+    {
+        var options = new GlobalCliOptions();
+        var command = new RootCommand();
+        foreach (var option in options.All)
+        {
+            command.Options.Add(option);
+        }
+
+        var storageRoot = Path.Combine(Path.GetTempPath(), "sharpclaw-state");
+        var parseResult = command.Parse($"--tenant-id tenant-a --host-id host-a --storage-root \"{storageRoot}\" --session-store sqlite");
+        var context = options.Resolve(parseResult);
+
+        context.HostContext.Should().BeEquivalentTo(new RuntimeHostContext(
+            HostId: "host-a",
+            TenantId: "tenant-a",
+            StorageRoot: Path.GetFullPath(storageRoot),
+            SessionStoreKind: SessionStoreKind.Sqlite,
+            IsEmbeddedHost: true));
     }
 
     [Fact]

@@ -71,6 +71,25 @@ public sealed class OpenAiCompatibleProviderOptionsValidator : IValidateOptions<
             return ValidateOptionsResult.Fail($"{nameof(OpenAiCompatibleProviderOptions.DefaultModel)} must be set.");
         }
 
+        foreach (var runtime in options.LocalRuntimes)
+        {
+            if (string.IsNullOrWhiteSpace(runtime.Key))
+            {
+                return ValidateOptionsResult.Fail("Local runtime profile names must be non-empty.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(runtime.Value.BaseUrl)
+                && !Uri.TryCreate(runtime.Value.BaseUrl, UriKind.Absolute, out _))
+            {
+                return ValidateOptionsResult.Fail($"Local runtime '{runtime.Key}' must define an absolute BaseUrl.");
+            }
+
+            if (string.IsNullOrWhiteSpace(runtime.Value.DefaultChatModel))
+            {
+                return ValidateOptionsResult.Fail($"Local runtime '{runtime.Key}' must define a DefaultChatModel.");
+            }
+        }
+
         return ValidateOptionsResult.Success;
     }
 }

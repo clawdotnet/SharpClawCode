@@ -37,7 +37,7 @@ public sealed class PromptCommandHandler(
             var context = globalOptions.Resolve(parseResult);
             try
             {
-                var result = await runtimeCommandService.ExecutePromptAsync(prompt, ToRuntimeContext(context), cancellationToken);
+                var result = await runtimeCommandService.ExecutePromptAsync(prompt, context.ToRuntimeCommandContext(), cancellationToken);
                 await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
                 return 0;
             }
@@ -53,17 +53,6 @@ public sealed class PromptCommandHandler(
 
         return command;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId,
-            context.AgentId);
-
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
             Succeeded: false,

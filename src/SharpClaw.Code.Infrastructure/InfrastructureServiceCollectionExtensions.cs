@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Services;
+using SharpClaw.Code.Protocol.Abstractions;
 
 namespace SharpClaw.Code.Infrastructure;
 
@@ -22,6 +23,8 @@ public static class InfrastructureServiceCollectionExtensions
         services.AddSingleton<IProcessRunner, ProcessRunner>();
         services.AddSingleton<IShellExecutor, ShellExecutor>();
         services.AddSingleton<IUserProfilePaths, UserProfilePaths>();
+        services.AddSingleton<IRuntimeHostContextAccessor, RuntimeHostContextAccessor>();
+        services.AddSingleton<IRuntimeStoragePathResolver, RuntimeStoragePathResolver>();
         services.AddSingleton<IExternalEditorService, ExternalEditorService>();
         return services;
     }

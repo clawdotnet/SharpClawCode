@@ -25,6 +25,12 @@ jobs:
         run: dotnet restore SharpClawCode.sln
       - name: Build
         run: dotnet build SharpClawCode.sln --no-restore --configuration Release
+      - name: Build examples
+        run: |
+          dotnet build examples/WebApiAgent/WebApiAgent.csproj --no-restore --configuration Release
+          dotnet build examples/MinimalConsoleAgent/MinimalConsoleAgent.csproj --no-restore --configuration Release
+          dotnet build examples/WorkerServiceHost/WorkerServiceHost.csproj --no-restore --configuration Release
+          dotnet build examples/McpToolAgent/McpToolAgent.csproj --no-restore --configuration Release
       - name: Test
         run: dotnet test SharpClawCode.sln --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./coverage
       - name: Upload coverage

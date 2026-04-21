@@ -23,13 +23,18 @@ public sealed class OpenAiCompatibleProvider(
 {
     private readonly OpenAiCompatibleProviderOptions _options = options.Value;
     private OpenAIClient? _cachedOpenAiClient;
+    internal const string RuntimeProfileMetadataKey = "openai-compatible.profile";
 
     /// <inheritdoc />
     public string ProviderName => _options.ProviderName;
 
     /// <inheritdoc />
     public Task<AuthStatus> GetAuthStatusAsync(CancellationToken cancellationToken)
-        => Task.FromResult(Internal.ProviderAuthStatusFactory.FromApiKeyPresence(ProviderName, _options.ApiKey));
+        => Task.FromResult(Internal.ProviderAuthStatusFactory.FromConfiguration(
+            ProviderName,
+            _options.ApiKey,
+            _options.AuthMode,
+            _options.LocalRuntimes.Values.Any(static runtime => runtime.AuthMode != ProviderAuthMode.ApiKey)));
 
     /// <inheritdoc />
     public Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken cancellationToken)
@@ -42,8 +47,11 @@ public sealed class OpenAiCompatibleProvider(
         ProviderRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(request.Model, _options.DefaultModel);
-        var openAiClient = GetOrCreateOpenAiClient();
+        var profile = ResolveProfile(request.Metadata);
+        var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(
+            request.Model,
+            profile?.DefaultChatModel ?? _options.DefaultModel);
+        var openAiClient = GetOrCreateOpenAiClient(profile);
         var nativeClient = openAiClient.GetChatClient(modelId);
         using var chatClient = nativeClient.AsIChatClient();
 
@@ -76,23 +84,29 @@ public sealed class OpenAiCompatibleProvider(
         }
     }
 
-    private OpenAIClient GetOrCreateOpenAiClient()
+    private OpenAIClient GetOrCreateOpenAiClient(LocalRuntimeProfileOptions? profile)
     {
-        if (_cachedOpenAiClient is not null)
+        if (profile is null && _cachedOpenAiClient is not null)
         {
             return _cachedOpenAiClient;
         }
 
         var openAiOptions = new OpenAIClientOptions();
-        var normalized = Internal.ProviderHttpHelpers.NormalizeBaseUrl(_options.BaseUrl);
+        var normalized = Internal.ProviderHttpHelpers.NormalizeBaseUrl(profile?.BaseUrl ?? _options.BaseUrl);
         if (normalized is not null)
         {
             openAiOptions.Endpoint = new Uri(normalized);
         }
 
-        var credential = new ApiKeyCredential(_options.ApiKey ?? string.Empty);
-        _cachedOpenAiClient = new OpenAIClient(credential, openAiOptions);
-        return _cachedOpenAiClient;
+        var apiKey = profile?.ApiKey ?? _options.ApiKey ?? "local-runtime";
+        var credential = new ApiKeyCredential(apiKey);
+        var client = new OpenAIClient(credential, openAiOptions);
+        if (profile is null)
+        {
+            _cachedOpenAiClient = client;
+        }
+
+        return client;
     }
 
     private static List<Microsoft.Extensions.AI.ChatMessage> BuildChatMessages(ProviderRequest request)
@@ -105,5 +119,19 @@ public sealed class OpenAiCompatibleProvider(
 
         messages.Add(new Microsoft.Extensions.AI.ChatMessage(ChatRole.User, request.Prompt));
         return messages;
+    }
+
+    private LocalRuntimeProfileOptions? ResolveProfile(IReadOnlyDictionary<string, string>? metadata)
+    {
+        if (metadata is null
+            || !metadata.TryGetValue(RuntimeProfileMetadataKey, out var profileName)
+            || string.IsNullOrWhiteSpace(profileName))
+        {
+            return null;
+        }
+
+        return _options.LocalRuntimes.TryGetValue(profileName, out var profile)
+            ? profile
+            : null;
     }
 }

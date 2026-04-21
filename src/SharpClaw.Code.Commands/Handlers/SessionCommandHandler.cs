@@ -39,7 +39,7 @@ public sealed class SessionCommandHandler(
             var context = globalOptions.Resolve(parseResult);
             var id = parseResult.GetValue(idOption);
             var result = await runtimeCommandService
-                .InspectSessionAsync(id, ToRuntimeContext(context), cancellationToken)
+                .InspectSessionAsync(id, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -57,7 +57,7 @@ public sealed class SessionCommandHandler(
             var context = globalOptions.Resolve(parseResult);
             var id = parseResult.GetValue(forkId);
             var result = await runtimeCommandService
-                .ForkSessionAsync(id, ToRuntimeContext(context), cancellationToken)
+                .ForkSessionAsync(id, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -85,7 +85,7 @@ public sealed class SessionCommandHandler(
                 : SessionExportFormat.Markdown;
             var path = parseResult.GetValue(outPath);
             var result = await runtimeCommandService
-                .ExportSessionAsync(sid, fmt, path, ToRuntimeContext(context), cancellationToken)
+                .ExportSessionAsync(sid, fmt, path, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -97,7 +97,7 @@ public sealed class SessionCommandHandler(
         {
             var context = globalOptions.Resolve(parseResult);
             var result = await runtimeCommandService
-                .ListSessionsAsync(ToRuntimeContext(context), cancellationToken)
+                .ListSessionsAsync(context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -112,7 +112,7 @@ public sealed class SessionCommandHandler(
             var context = globalOptions.Resolve(parseResult);
             var sid = parseResult.GetValue(attachId) ?? throw new InvalidOperationException("--id is required.");
             var result = await runtimeCommandService
-                .AttachSessionAsync(sid, ToRuntimeContext(context), cancellationToken)
+                .AttachSessionAsync(sid, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -124,7 +124,7 @@ public sealed class SessionCommandHandler(
         {
             var context = globalOptions.Resolve(parseResult);
             var result = await runtimeCommandService
-                .DetachSessionAsync(ToRuntimeContext(context), cancellationToken)
+                .DetachSessionAsync(context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -142,7 +142,7 @@ public sealed class SessionCommandHandler(
             var sid = parseResult.GetValue(bundleId);
             var outp = parseResult.GetValue(bundleOut);
             var result = await runtimeCommandService
-                .ExportPortableSessionBundleAsync(sid, outp, ToRuntimeContext(context), cancellationToken)
+                .ExportPortableSessionBundleAsync(sid, outp, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -171,7 +171,7 @@ public sealed class SessionCommandHandler(
             var replace = parseResult.GetValue(importReplace);
             var attach = parseResult.GetValue(importAttach);
             var result = await runtimeCommandService
-                .ImportPortableSessionBundleAsync(from, replace, attach, ToRuntimeContext(context), cancellationToken)
+                .ImportPortableSessionBundleAsync(from, replace, attach, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
@@ -255,7 +255,7 @@ public sealed class SessionCommandHandler(
     private async Task<int> ExecuteInspectAsync(string? sessionId, CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .InspectSessionAsync(sessionId, ToRuntimeContext(context), cancellationToken)
+            .InspectSessionAsync(sessionId, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -264,7 +264,7 @@ public sealed class SessionCommandHandler(
     private async Task<int> ExecuteForkAsync(string? sourceId, CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ForkSessionAsync(sourceId, ToRuntimeContext(context), cancellationToken)
+            .ForkSessionAsync(sourceId, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -273,7 +273,7 @@ public sealed class SessionCommandHandler(
     private async Task<int> ExecuteListAsync(CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ListSessionsAsync(ToRuntimeContext(context), cancellationToken)
+            .ListSessionsAsync(context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -282,7 +282,7 @@ public sealed class SessionCommandHandler(
     private async Task<int> ExecuteAttachAsync(string sessionId, CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .AttachSessionAsync(sessionId, ToRuntimeContext(context), cancellationToken)
+            .AttachSessionAsync(sessionId, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -291,7 +291,7 @@ public sealed class SessionCommandHandler(
     private async Task<int> ExecuteDetachAsync(CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .DetachSessionAsync(ToRuntimeContext(context), cancellationToken)
+            .DetachSessionAsync(context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -304,7 +304,7 @@ public sealed class SessionCommandHandler(
         CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ExportPortableSessionBundleAsync(sessionId, outputPath, ToRuntimeContext(context), cancellationToken)
+            .ExportPortableSessionBundleAsync(sessionId, outputPath, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -318,7 +318,7 @@ public sealed class SessionCommandHandler(
         CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ImportPortableSessionBundleAsync(bundleZipPath, replaceExisting, attachAfterImport, ToRuntimeContext(context), cancellationToken)
+            .ImportPortableSessionBundleAsync(bundleZipPath, replaceExisting, attachAfterImport, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -331,7 +331,7 @@ public sealed class SessionCommandHandler(
         CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ExportSessionAsync(sessionId, format, null, ToRuntimeContext(context), cancellationToken)
+            .ExportSessionAsync(sessionId, format, null, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -345,13 +345,4 @@ public sealed class SessionCommandHandler(
             cancellationToken).ConfigureAwait(false);
         return success ? 0 : 1;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId);
 }

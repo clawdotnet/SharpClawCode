@@ -11,20 +11,20 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Stores runtime checkpoints as readable JSON files under each session.
 /// </summary>
-public sealed class FileCheckpointStore(IFileSystem fileSystem, IPathService pathService, ILogger<FileCheckpointStore>? logger = null) : ICheckpointStore
+public sealed class FileCheckpointStore(IFileSystem fileSystem, IRuntimeStoragePathResolver storagePathResolver, ILogger<FileCheckpointStore>? logger = null) : ICheckpointStore
 {
     /// <inheritdoc />
     public Task SaveAsync(string workspacePath, RuntimeCheckpoint checkpoint, CancellationToken cancellationToken)
     {
         var json = JsonSerializer.Serialize(checkpoint, ProtocolJsonContext.Default.RuntimeCheckpoint);
-        var path = SessionStorageLayout.GetCheckpointPath(pathService, workspacePath, checkpoint.SessionId, checkpoint.Id);
+        var path = storagePathResolver.GetCheckpointPath(workspacePath, checkpoint.SessionId, checkpoint.Id);
         return fileSystem.WriteAllTextAsync(path, json, cancellationToken);
     }
 
     /// <inheritdoc />
     public async Task<RuntimeCheckpoint?> GetLatestAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
     {
-        var checkpointsRoot = SessionStorageLayout.GetCheckpointsRoot(pathService, workspacePath, sessionId);
+        var checkpointsRoot = storagePathResolver.GetCheckpointsRoot(workspacePath, sessionId);
         if (!fileSystem.DirectoryExists(checkpointsRoot))
         {
             return null;

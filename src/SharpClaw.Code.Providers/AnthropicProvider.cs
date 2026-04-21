@@ -27,7 +27,11 @@ public sealed class AnthropicProvider(
 
     /// <inheritdoc />
     public Task<AuthStatus> GetAuthStatusAsync(CancellationToken cancellationToken)
-        => Task.FromResult(Internal.ProviderAuthStatusFactory.FromApiKeyPresence(ProviderName, _options.ApiKey));
+        => Task.FromResult(Internal.ProviderAuthStatusFactory.FromConfiguration(
+            ProviderName,
+            _options.ApiKey,
+            ProviderAuthMode.ApiKey,
+            hasAuthOptionalRuntime: false));
 
     /// <inheritdoc />
     public async Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken cancellationToken)

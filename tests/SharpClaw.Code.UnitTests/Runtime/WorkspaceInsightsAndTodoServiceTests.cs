@@ -7,6 +7,7 @@ using SharpClaw.Code.Runtime.Sessions;
 using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry.Services;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.Runtime;
 
@@ -21,11 +22,12 @@ public sealed class WorkspaceInsightsAndTodoServiceTests : IDisposable
     {
         Directory.CreateDirectory(workspaceRoot);
         var clock = new FixedClock(DateTimeOffset.Parse("2026-04-13T18:00:00Z"));
-        var sessionStore = new FileSessionStore(fileSystem, pathService);
-        var eventStore = new NdjsonEventStore(fileSystem, pathService);
-        var attachmentStore = new FileWorkspaceSessionAttachmentStore(fileSystem, pathService);
+        var storagePathResolver = TestRuntimeStorageResolver.Create(workspaceRoot, pathService);
+        var sessionStore = new FileSessionStore(fileSystem, storagePathResolver);
+        var eventStore = new NdjsonEventStore(fileSystem, storagePathResolver);
+        var attachmentStore = new FileWorkspaceSessionAttachmentStore(fileSystem, storagePathResolver);
         var usageTracker = new UsageTracker();
-        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, clock);
+        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, storagePathResolver, clock);
         var insights = new WorkspaceInsightsService(sessionStore, eventStore, attachmentStore, usageTracker, pathService, todoService);
 
         var session = new ConversationSession(

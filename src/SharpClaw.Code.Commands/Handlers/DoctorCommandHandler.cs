@@ -28,7 +28,7 @@ public sealed class DoctorCommandHandler(
         command.SetAction(async (parseResult, cancellationToken) =>
         {
             var context = globalOptions.Resolve(parseResult);
-            var result = await runtimeCommandService.RunDoctorAsync(ToRuntimeContext(context), cancellationToken);
+            var result = await runtimeCommandService.RunDoctorAsync(context.ToRuntimeCommandContext(), cancellationToken);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken);
             return result.ExitCode;
         });
@@ -39,17 +39,8 @@ public sealed class DoctorCommandHandler(
     /// <inheritdoc />
     public async Task<int> ExecuteAsync(SlashCommandParseResult command, CommandExecutionContext context, CancellationToken cancellationToken)
     {
-        var result = await runtimeCommandService.RunDoctorAsync(ToRuntimeContext(context), cancellationToken);
+        var result = await runtimeCommandService.RunDoctorAsync(context.ToRuntimeCommandContext(), cancellationToken);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken);
         return result.ExitCode;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId);
 }

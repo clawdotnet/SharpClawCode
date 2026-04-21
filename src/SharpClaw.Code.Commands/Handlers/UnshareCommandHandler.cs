@@ -31,7 +31,7 @@ public sealed class UnshareCommandHandler(
         {
             var context = globalOptions.Resolve(parseResult);
             var id = parseResult.GetValue(idOption);
-            var result = await runtimeCommandService.UnshareSessionAsync(id, ToRuntimeContext(context), cancellationToken).ConfigureAwait(false);
+            var result = await runtimeCommandService.UnshareSessionAsync(id, context.ToRuntimeCommandContext(), cancellationToken).ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
         });
@@ -42,18 +42,8 @@ public sealed class UnshareCommandHandler(
     public async Task<int> ExecuteAsync(SlashCommandParseResult command, CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var id = command.Arguments.Length > 0 ? command.Arguments[0] : null;
-        var result = await runtimeCommandService.UnshareSessionAsync(id, ToRuntimeContext(context), cancellationToken).ConfigureAwait(false);
+        var result = await runtimeCommandService.UnshareSessionAsync(id, context.ToRuntimeCommandContext(), cancellationToken).ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId,
-            context.AgentId);
 }

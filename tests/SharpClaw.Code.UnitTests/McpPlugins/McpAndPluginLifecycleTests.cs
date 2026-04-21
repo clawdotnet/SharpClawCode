@@ -11,6 +11,7 @@ using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Plugins.Services;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Models;
+using SharpClaw.Code.UnitTests.Support;
 
 namespace SharpClaw.Code.UnitTests.McpPlugins;
 
@@ -107,6 +108,7 @@ public sealed class McpAndPluginLifecycleTests
             new PluginManifestValidator(),
             new LocalFileSystem(),
             new PathService(),
+            TestRuntimeStorageResolver.Create(CreateTemporaryWorkspace()),
             new FixedClock());
 
     /// <summary>

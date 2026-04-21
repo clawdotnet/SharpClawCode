@@ -31,6 +31,7 @@ using SharpClaw.Code.Sessions.Abstractions;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
+using SharpClaw.Code.Telemetry.Services;
 
 namespace SharpClaw.Code.Runtime.Composition;
 
@@ -94,8 +95,16 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSharpClawMemory();
         services.AddSharpClawSkills();
         services.AddSharpClawGit();
-        services.AddSingleton<ISessionStore, FileSessionStore>();
-        services.AddSingleton<IEventStore, NdjsonEventStore>();
+        services.AddSingleton<IUsageMeteringStore, SqliteUsageMeteringStore>();
+        services.AddSingleton<UsageMeteringService>();
+        services.AddSingleton<IUsageMeteringService>(serviceProvider => serviceProvider.GetRequiredService<UsageMeteringService>());
+        services.AddSingleton<IRuntimeEventSink>(serviceProvider => serviceProvider.GetRequiredService<UsageMeteringService>());
+        services.AddSingleton<FileSessionStore>();
+        services.AddSingleton<SqliteSessionStore>();
+        services.AddSingleton<ISessionStore, HostAwareSessionStore>();
+        services.AddSingleton<NdjsonEventStore>();
+        services.AddSingleton<SqliteEventStore>();
+        services.AddSingleton<IEventStore, HostAwareEventStore>();
         services.AddSingleton<IRuntimeEventPersistence, EventStoreRuntimeEventPersistence>();
         services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
         services.AddSingleton<IMutationSetStore, FileMutationSetStore>();
@@ -110,6 +119,7 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IPromptReferenceResolver, PromptReferenceResolver>();
         services.AddSingleton<ISpecWorkflowService, SpecWorkflowService>();
         services.AddSingleton<ISharpClawConfigService, SharpClawConfigService>();
+        services.AddSingleton<SharpClaw.Code.Permissions.Abstractions.IApprovalIdentityService, ConfiguredApprovalIdentityService>();
         services.AddSingleton<IAgentCatalogService, AgentCatalogService>();
         services.AddSingleton<IWorkspaceDiagnosticsService, WorkspaceDiagnosticsService>();
         services.AddSingleton<IShareSessionService, ShareSessionService>();
@@ -138,6 +148,8 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IOperationalCheck, ShellAvailabilityCheck>();
         services.AddSingleton<IOperationalCheck, GitAvailabilityCheck>();
         services.AddSingleton<IOperationalCheck, ProviderAuthenticationCheck>();
+        services.AddSingleton<IOperationalCheck, ApprovalAuthCheck>();
+        services.AddSingleton<IOperationalCheck, LocalRuntimeCatalogCheck>();
         services.AddSingleton<IOperationalCheck>(sp => new McpRegistryHealthCheck(
             sp.GetRequiredService<IMcpRegistry>(),
             sp.GetService<IMcpServerHost>()));

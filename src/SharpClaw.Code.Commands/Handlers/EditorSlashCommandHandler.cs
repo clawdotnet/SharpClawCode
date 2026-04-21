@@ -36,7 +36,7 @@ public sealed class EditorSlashCommandHandler(
         try
         {
             var result = await runtimeCommandService
-                .ExecutePromptAsync(composed.Trim(), ToRuntimeContext(context), cancellationToken)
+                .ExecutePromptAsync(composed.Trim(), context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
             return 0;
@@ -50,13 +50,4 @@ public sealed class EditorSlashCommandHandler(
             return 1;
         }
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId);
 }

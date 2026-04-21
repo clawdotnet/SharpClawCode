@@ -7,7 +7,6 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Telemetry.Diagnostics;
-using SharpClaw.Code.Telemetry.Metrics;
 using SharpClaw.Code.Tools.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Turns;
@@ -69,12 +68,6 @@ public sealed class DefaultTurnRunner(
             agentResult = await agent.RunAsync(agentContext, cancellationToken).ConfigureAwait(false);
             sw.Stop();
             turnScope.SetOutput(agentResult.Output, agentResult.Usage?.InputTokens, agentResult.Usage?.OutputTokens);
-            SharpClawMeterSource.TurnDuration.Record(sw.Elapsed.TotalMilliseconds);
-            if (agentResult.Usage is not null)
-            {
-                SharpClawMeterSource.InputTokens.Add(agentResult.Usage.InputTokens);
-                SharpClawMeterSource.OutputTokens.Add(agentResult.Usage.OutputTokens);
-            }
         }
         catch (Exception ex)
         {
@@ -86,7 +79,7 @@ public sealed class DefaultTurnRunner(
         var mutations = mutationAccumulator.ToSnapshot();
         return new TurnRunResult(
             Output: agentResult.Output,
-            Usage: agentResult.Usage,
+            Usage: agentResult.Usage ?? new UsageSnapshot(0, 0, 0, 0, null),
             Summary: agentResult.Summary,
             ProviderRequest: agentResult.ProviderRequest,
             ProviderEvents: agentResult.ProviderEvents,

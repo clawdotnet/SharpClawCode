@@ -80,7 +80,7 @@ public sealed class CliCommandFactory(
                 try
                 {
                     var result = await runtimeCommandService
-                        .ExecuteCustomCommandAsync(definition.Name, argLine, ToRuntimeContext(ctx), cancellationToken)
+                        .ExecuteCustomCommandAsync(definition.Name, argLine, ctx.ToRuntimeCommandContext(), cancellationToken)
                         .ConfigureAwait(false);
                     await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, ctx.OutputFormat, cancellationToken).ConfigureAwait(false);
                     return 0;
@@ -102,14 +102,4 @@ public sealed class CliCommandFactory(
             rootCommand.Subcommands.Add(command);
         }
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId,
-            context.AgentId);
 }

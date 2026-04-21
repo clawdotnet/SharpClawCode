@@ -151,10 +151,12 @@ public sealed record HookDefinition(
 /// <param name="Host">Bind host.</param>
 /// <param name="Port">Bind port.</param>
 /// <param name="PublicBaseUrl">Optional externally reachable base URL used for share links.</param>
+/// <param name="ApprovalAuth">Optional approval-auth configuration for HTTP and admin callers.</param>
 public sealed record SharpClawServerOptions(
     string Host,
     int Port,
-    string? PublicBaseUrl = null);
+    string? PublicBaseUrl = null,
+    SharpClawApprovalAuthOptions? ApprovalAuth = null);
 
 /// <summary>
 /// Configures browser-based connection entry points for providers or MCP servers.
@@ -231,11 +233,19 @@ public sealed record AgentCatalogEntry(
 /// <param name="DefaultModel">Provider default model.</param>
 /// <param name="Aliases">Aliases that resolve to this provider.</param>
 /// <param name="AuthStatus">Current authentication state.</param>
+/// <param name="SupportsToolCalls">Whether tool calling is supported.</param>
+/// <param name="SupportsEmbeddings">Whether embeddings are supported.</param>
+/// <param name="AvailableModels">Discovered models for the provider.</param>
+/// <param name="LocalRuntimeProfiles">Configured local runtime profiles, if any.</param>
 public sealed record ProviderModelCatalogEntry(
     string ProviderName,
     string DefaultModel,
     string[] Aliases,
-    AuthStatus AuthStatus);
+    AuthStatus AuthStatus,
+    bool SupportsToolCalls = true,
+    bool SupportsEmbeddings = false,
+    ProviderDiscoveredModel[]? AvailableModels = null,
+    LocalRuntimeProfileSummary[]? LocalRuntimeProfiles = null);
 
 /// <summary>
 /// Summarizes a browser-connectable target.
@@ -245,6 +255,8 @@ public sealed record ProviderModelCatalogEntry(
 /// <param name="Kind">Target kind such as provider or mcp.</param>
 /// <param name="IsAuthenticated">Whether the target is currently authenticated.</param>
 /// <param name="ConnectUrl">Optional browser URL.</param>
+/// <param name="ExpiresAtUtc">Optional authentication expiry timestamp.</param>
+/// <param name="StatusDetail">Optional status detail shown alongside authentication state.</param>
 public sealed record ConnectTargetStatus(
     string Target,
     string DisplayName,
@@ -296,6 +308,7 @@ public sealed record WorkspaceDiagnosticsSnapshot(
 /// <param name="OutputFormat">Optional output format override.</param>
 /// <param name="PrimaryMode">Optional primary mode override.</param>
 /// <param name="AgentId">Optional agent override.</param>
+/// <param name="TenantId">Optional tenant override for embedded hosts.</param>
 public sealed record ServerPromptRequest(
     string Prompt,
     string? SessionId,
@@ -303,7 +316,8 @@ public sealed record ServerPromptRequest(
     PermissionMode? PermissionMode,
     OutputFormat? OutputFormat,
     PrimaryMode? PrimaryMode,
-    string? AgentId);
+    string? AgentId,
+    string? TenantId);
 
 /// <summary>
 /// Metadata for a shared session snapshot.

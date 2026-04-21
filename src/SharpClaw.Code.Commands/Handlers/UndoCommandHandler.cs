@@ -31,7 +31,7 @@ public sealed class UndoCommandHandler(IRuntimeCommandService runtimeCommandServ
         {
             var ctx = globalOptions.Resolve(parseResult);
             var sid = parseResult.GetValue(id);
-            var result = await runtimeCommandService.UndoAsync(sid, ToRuntimeContext(ctx), cancellationToken).ConfigureAwait(false);
+            var result = await runtimeCommandService.UndoAsync(sid, ctx.ToRuntimeCommandContext(), cancellationToken).ConfigureAwait(false);
             await outputRendererDispatcher.RenderCommandResultAsync(result, ctx.OutputFormat, cancellationToken).ConfigureAwait(false);
             return result.ExitCode;
         });
@@ -48,18 +48,9 @@ public sealed class UndoCommandHandler(IRuntimeCommandService runtimeCommandServ
     private async Task<int> ExecuteUndoAsync(string? sessionId, CommandExecutionContext context, CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .UndoAsync(sessionId, ToRuntimeContext(context), cancellationToken)
+            .UndoAsync(sessionId, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId);
 }

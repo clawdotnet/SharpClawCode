@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -16,6 +17,8 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
     private readonly IUsageTracker usageTracker;
     private readonly ILogger<RuntimeEventPublisher> logger;
     private readonly IRuntimeEventPersistence? persistence;
+    private readonly IRuntimeHostContextAccessor? hostContextAccessor;
+    private readonly IRuntimeEventSink[] sinks;
     private readonly object bufferLock = new();
     private readonly List<RuntimeEvent> buffer = [];
 
@@ -26,16 +29,22 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
     /// <param name="usageTracker">Session usage aggregation.</param>
     /// <param name="logger">Logger.</param>
     /// <param name="persistence">Optional persistence bridge; omitted in tests or CLI slices without sessions.</param>
+    /// <param name="hostContextAccessor">Optional ambient embedded-host context.</param>
+    /// <param name="sinks">Optional external runtime event sinks.</param>
     public RuntimeEventPublisher(
         IOptions<TelemetryOptions> telemetryOptionsAccessor,
         IUsageTracker usageTracker,
         ILogger<RuntimeEventPublisher>? logger = null,
-        IRuntimeEventPersistence? persistence = null)
+        IRuntimeEventPersistence? persistence = null,
+        IRuntimeHostContextAccessor? hostContextAccessor = null,
+        IEnumerable<IRuntimeEventSink>? sinks = null)
     {
         telemetryOptions = telemetryOptionsAccessor.Value;
         this.usageTracker = usageTracker;
         this.logger = logger ?? NullLogger<RuntimeEventPublisher>.Instance;
         this.persistence = persistence;
+        this.hostContextAccessor = hostContextAccessor;
+        this.sinks = sinks?.ToArray() ?? [];
     }
 
     /// <inheritdoc />
@@ -88,6 +97,38 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
             this.logger.LogDebug(
                 "Runtime event {EventId} requested session persistence but no IRuntimeEventPersistence is registered.",
                 runtimeEvent.EventId);
+        }
+
+        if (sinks.Length > 0)
+        {
+            var hostContext = routing.HostContext ?? hostContextAccessor?.Current;
+            var envelope = new RuntimeEventEnvelope(
+                EventType: runtimeEvent.GetType().Name,
+                OccurredAtUtc: runtimeEvent.OccurredAtUtc,
+                Event: runtimeEvent,
+                WorkspacePath: routing.WorkspacePath,
+                SessionId: routing.SessionId ?? runtimeEvent.SessionId,
+                TenantId: hostContext?.TenantId,
+                HostId: hostContext?.HostId);
+            foreach (var sink in sinks)
+            {
+                try
+                {
+                    await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Runtime event {EventId} failed to publish to sink {SinkType}.",
+                        runtimeEvent.EventId,
+                        sink.GetType().Name);
+                }
+            }
         }
     }
 

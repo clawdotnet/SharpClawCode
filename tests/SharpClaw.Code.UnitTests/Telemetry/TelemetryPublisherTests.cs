@@ -87,4 +87,48 @@ public sealed class TelemetryPublisherTests
         var json = exporter.SerializeEvents(events, writeIndented: false);
         json.Should().Contain("\"$eventType\":\"toolStarted\"");
     }
+
+    /// <summary>
+    /// Ensures one failing external sink does not break telemetry publishing for the runtime.
+    /// </summary>
+    [Fact]
+    public async Task RuntimeEventPublisher_should_isolate_sink_failures()
+    {
+        var usageTracker = new UsageTracker();
+        var recordingSink = new RecordingSink();
+        var publisher = new RuntimeEventPublisher(
+            Options.Create(new TelemetryOptions { RuntimeEventRingBufferCapacity = 16 }),
+            usageTracker,
+            sinks: [new ThrowingSink(), recordingSink]);
+
+        await publisher.PublishAsync(
+            new UsageUpdatedEvent(
+                EventId: "e2",
+                SessionId: "s1",
+                TurnId: "t1",
+                OccurredAtUtc: DateTimeOffset.UtcNow,
+                Usage: new UsageSnapshot(2, 3, 0, 5, 0.1m)),
+            new RuntimeEventPublishOptions("/tmp/ws", "s1", PersistToSessionStore: false),
+            CancellationToken.None);
+
+        recordingSink.Envelopes.Should().ContainSingle();
+        usageTracker.TryGetCumulative("s1")!.TotalTokens.Should().Be(5);
+    }
+
+    private sealed class ThrowingSink : SharpClaw.Code.Telemetry.Abstractions.IRuntimeEventSink
+    {
+        public Task PublishAsync(RuntimeEventEnvelope envelope, CancellationToken cancellationToken)
+            => throw new InvalidOperationException("sink failed");
+    }
+
+    private sealed class RecordingSink : SharpClaw.Code.Telemetry.Abstractions.IRuntimeEventSink
+    {
+        public List<RuntimeEventEnvelope> Envelopes { get; } = [];
+
+        public Task PublishAsync(RuntimeEventEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Envelopes.Add(envelope);
+            return Task.CompletedTask;
+        }
+    }
 }

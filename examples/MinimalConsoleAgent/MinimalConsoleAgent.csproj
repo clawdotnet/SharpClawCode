@@ -10,7 +10,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
+    <ProjectReference Include="..\..\src\SharpClaw.Code\SharpClaw.Code.csproj" />
   </ItemGroup>
 
 </Project>

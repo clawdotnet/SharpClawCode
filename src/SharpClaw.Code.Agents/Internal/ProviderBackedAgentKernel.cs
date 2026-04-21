@@ -9,7 +9,6 @@ using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Telemetry.Diagnostics;
-using SharpClaw.Code.Telemetry.Metrics;
 using SharpClaw.Code.Tools.Models;
 
 namespace SharpClaw.Code.Agents.Internal;
@@ -180,7 +179,6 @@ public sealed class ProviderBackedAgentKernel(
 
                     providerSw.Stop();
                     providerScope.SetCompleted(iterationUsage?.InputTokens, iterationUsage?.OutputTokens);
-                    SharpClawMeterSource.ProviderDuration.Record(providerSw.Elapsed.TotalMilliseconds);
                 }
                 catch (Exception ex)
                 {

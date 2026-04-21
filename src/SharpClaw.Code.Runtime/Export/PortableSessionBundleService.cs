@@ -13,7 +13,8 @@ namespace SharpClaw.Code.Runtime.Export;
 public sealed class PortableSessionBundleService(
     ISessionStore sessionStore,
     IFileSystem fileSystem,
-    IPathService pathService) : IPortableSessionBundleService
+    IPathService pathService,
+    IRuntimeStoragePathResolver storagePathResolver) : IPortableSessionBundleService
 {
     /// <inheritdoc />
     public async Task<string> CreateBundleZipAsync(
@@ -31,7 +32,7 @@ public sealed class PortableSessionBundleService(
             throw new InvalidOperationException("No session found to bundle.");
         }
 
-        var sessionRoot = SessionStorageLayout.GetSessionRoot(pathService, workspace, session.Id);
+        var sessionRoot = storagePathResolver.GetSessionRoot(workspace, session.Id);
         if (!fileSystem.DirectoryExists(sessionRoot))
         {
             throw new InvalidOperationException($"Session directory for '{session.Id}' was not found.");
@@ -62,7 +63,7 @@ public sealed class PortableSessionBundleService(
                     cancellationToken)
                 .ConfigureAwait(false);
 
-            var bundleDir = pathService.Combine(workspace, ".sharpclaw", "exports");
+            var bundleDir = storagePathResolver.GetExportsRoot(workspace);
             fileSystem.CreateDirectory(bundleDir);
             var zipPath = string.IsNullOrWhiteSpace(outputZipPath)
                 ? pathService.Combine(bundleDir, $"{session.Id}-{DateTimeOffset.UtcNow:yyyyMMddTHHmmss}.sharpclaw-bundle.zip")
@@ -139,7 +140,7 @@ public sealed class PortableSessionBundleService(
                 Path.GetDirectoryName(snapshotFull)
                 ?? throw new InvalidOperationException("Could not resolve payload directory from manifest paths."));
 
-            var targetRoot = SessionStorageLayout.GetSessionRoot(pathService, workspace, manifest.SessionId);
+            var targetRoot = storagePathResolver.GetSessionRoot(workspace, manifest.SessionId);
             if (fileSystem.DirectoryExists(targetRoot))
             {
                 if (!replaceExisting)
@@ -151,7 +152,7 @@ public sealed class PortableSessionBundleService(
                 fileSystem.DeleteDirectoryRecursive(targetRoot);
             }
 
-            var sessionsRoot = SessionStorageLayout.GetSessionsRoot(pathService, workspace);
+            var sessionsRoot = storagePathResolver.GetSessionsRoot(workspace);
             fileSystem.CreateDirectory(sessionsRoot);
 
             await CopyTreeAsync(payloadDir, targetRoot, cancellationToken).ConfigureAwait(false);

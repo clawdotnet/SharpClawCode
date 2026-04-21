@@ -13,6 +13,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\SharpClaw.Code.Infrastructure\SharpClaw.Code.Infrastructure.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Memory\SharpClaw.Code.Memory.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Permissions\SharpClaw.Code.Permissions.csproj" />
+    <ProjectReference Include="..\SharpClaw.Code.Providers\SharpClaw.Code.Providers.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Sessions\SharpClaw.Code.Sessions.csproj" />
