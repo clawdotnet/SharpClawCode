@@ -49,6 +49,7 @@ public sealed class CliCommandSurfaceTests
                 "session",
                 "share",
                 "status",
+                "tool-packages",
                 "doctor",
                 "index",
                 "unshare",
@@ -64,7 +65,11 @@ public sealed class CliCommandSurfaceTests
                 "--permission-mode",
                 "--primary-mode",
                 "--session",
-                "--agent"
+                "--agent",
+                "--host-id",
+                "--tenant-id",
+                "--storage-root",
+                "--session-store"
             ]);
     }
 }

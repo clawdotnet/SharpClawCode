@@ -40,7 +40,6 @@ public sealed class ApprovalAuthIntegrationTests
             {
               "server": {
                 "host": "127.0.0.1",
-                "port": 7345,
                 "approvalAuth": {
                   "mode": "oidc",
                   "authority": "{{authority.AuthorityUrl}}",
@@ -58,18 +57,8 @@ public sealed class ApprovalAuthIntegrationTests
         using var serviceProvider = services.BuildServiceProvider();
 
         var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
-        var port = FindFreePort();
         using var serverCts = new CancellationTokenSource();
-        var serverTask = server.RunAsync(
-            workspaceRoot,
-            "127.0.0.1",
-            port,
-            new RuntimeCommandContext(
-                WorkingDirectory: workspaceRoot,
-                Model: "default",
-                PermissionMode: PermissionMode.WorkspaceWrite,
-                OutputFormat: OutputFormat.Json),
-            serverCts.Token);
+        var (port, serverTask) = await StartServerAsync(server, workspaceRoot, serverCts.Token);
 
         try
         {
@@ -161,6 +150,42 @@ public sealed class ApprovalAuthIntegrationTests
         }
 
         throw new TimeoutException("Embedded workspace HTTP server did not become ready.");
+    }
+
+    private static async Task<(int Port, Task ServerTask)> StartServerAsync(
+        IWorkspaceHttpServer server,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var port = FindFreePort();
+            var serverTask = server.RunAsync(
+                workspaceRoot,
+                "127.0.0.1",
+                port,
+                new RuntimeCommandContext(
+                    WorkingDirectory: workspaceRoot,
+                    Model: "default",
+                    PermissionMode: PermissionMode.WorkspaceWrite,
+                    OutputFormat: OutputFormat.Json),
+                cancellationToken);
+            await Task.Delay(100, CancellationToken.None).ConfigureAwait(false);
+            if (!serverTask.IsFaulted)
+            {
+                return (port, serverTask);
+            }
+
+            try
+            {
+                await serverTask.ConfigureAwait(false);
+            }
+            catch (HttpListenerException exception) when (exception.Message.Contains("Address already in use", StringComparison.OrdinalIgnoreCase))
+            {
+            }
+        }
+
+        throw new InvalidOperationException("The embedded workspace HTTP server could not bind to a free local port.");
     }
 
     private static int FindFreePort()

@@ -255,6 +255,8 @@ public sealed record ProviderModelCatalogEntry(
 /// <param name="Kind">Target kind such as provider or mcp.</param>
 /// <param name="IsAuthenticated">Whether the target is currently authenticated.</param>
 /// <param name="ConnectUrl">Optional browser URL.</param>
+/// <param name="ExpiresAtUtc">Optional authentication expiry timestamp.</param>
+/// <param name="StatusDetail">Optional status detail shown alongside authentication state.</param>
 public sealed record ConnectTargetStatus(
     string Target,
     string DisplayName,

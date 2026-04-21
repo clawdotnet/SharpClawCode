@@ -59,6 +59,7 @@ public sealed record RuntimeEventEnvelope(
 /// <param name="Version">Package version.</param>
 /// <param name="PackageType">Distribution kind, such as <c>nuget</c> or <c>local</c>.</param>
 /// <param name="EntryAssembly">Entry assembly or process path.</param>
+/// <param name="EntryArguments">Optional arguments passed to the entry assembly or process.</param>
 /// <param name="TargetFramework">Target framework moniker.</param>
 /// <param name="Tags">Optional discovery tags.</param>
 public sealed record ToolPackageReference(
@@ -106,6 +107,7 @@ public sealed record ToolPackageManifest(
 /// <param name="Manifest">The installed manifest.</param>
 /// <param name="InstalledAtUtc">Installation time.</param>
 /// <param name="InstallSource">Source used to install the package.</param>
+/// <param name="ResolvedInstall">Resolved install metadata retained after activation.</param>
 public sealed record InstalledToolPackage(
     ToolPackageManifest Manifest,
     DateTimeOffset InstalledAtUtc,
@@ -118,6 +120,8 @@ public sealed record InstalledToolPackage(
 /// <param name="Manifest">The manifest to install.</param>
 /// <param name="InstallSource">The source identifier or path for the install action.</param>
 /// <param name="EnableAfterInstall">Whether the underlying plugin should be enabled immediately.</param>
+/// <param name="SourceReference">Optional local directory, binary path, or package file reference.</param>
+/// <param name="PackageSource">Optional package feed or source URL.</param>
 public sealed record ToolPackageInstallRequest(
     ToolPackageManifest Manifest,
     string InstallSource,

@@ -9,6 +9,8 @@ SharpClaw Code is a C# and .NET-native coding agent runtime for teams building A
 
 It combines durable sessions, permission-aware tool execution, provider abstraction, structured telemetry, and an automation-friendly command-line surface in a runtime shaped for real .NET systems: explicit, testable, and operationally legible.
 
+The repository now ships both a terminal-first agent runtime and an embeddable host SDK through `SharpClaw.Code`, which makes it viable for standalone CLIs, local editor backends, and tenant-aware embedded services.
+
 ## What It Is
 
 SharpClaw Code is an open-source runtime for building and operating coding-agent experiences in the .NET ecosystem.
@@ -73,6 +75,13 @@ dotnet run --project src/SharpClaw.Code.Cli -- index query WidgetService
 dotnet run --project src/SharpClaw.Code.Cli -- memory save --scope project "Keep prompts concise"
 dotnet run --project src/SharpClaw.Code.Cli -- memory list --scope project
 
+# Inspect metering summaries and details
+dotnet run --project src/SharpClaw.Code.Cli -- usage summary
+dotnet run --project src/SharpClaw.Code.Cli -- usage detail --limit 25
+
+# Manage packaged tool bundles
+dotnet run --project src/SharpClaw.Code.Cli -- tool-packages list
+
 # Emit machine-readable output
 dotnet run --project src/SharpClaw.Code.Cli -- --output-format json doctor
 ```
@@ -117,9 +126,10 @@ Primary workflow modes:
 | Workspace knowledge | Build a durable local index for lexical, symbol, and semantic workspace search |
 | Cross-session memory | Persist project and user memory so later sessions can recall repo-specific guidance and user preferences |
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |
+| Enterprise host controls | Add tenant-aware storage, authenticated approvals, admin APIs, and usage metering for embedded deployments |
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
 | Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
-| Embedded local server | Expose prompt, session, status, doctor, and share endpoints for editor or automation clients |
+| Embedded SDK + server | Host the runtime via `SharpClaw.Code` or expose prompt, session, admin, and SSE endpoints for editor or automation clients |
 | Config + agent catalog | Layer user/workspace JSONC config with typed agent defaults, tool allowlists, and runtime hooks |
 | Session sharing | Create self-hosted share links and durable sanitized share snapshots under `.sharpclaw/` |
 | Diagnostics context | Surface configured diagnostics sources into prompt context, status, and machine-readable output |
@@ -136,6 +146,7 @@ Primary workflow modes:
 
 | Area | Project(s) |
 |---|---|
+| Embeddable SDK | `SharpClaw.Code` |
 | CLI and command handlers | `SharpClaw.Code.Cli`, `SharpClaw.Code.Commands` |
 | Core contracts | `SharpClaw.Code.Protocol` |
 | Runtime orchestration | `SharpClaw.Code.Runtime` |
@@ -148,11 +159,26 @@ Primary workflow modes:
 
 For dependency boundaries and project responsibilities, see [docs/architecture.md](docs/architecture.md) and [AGENTS.md](AGENTS.md).
 
+## Example Hosts
+
+The solution includes embeddable host samples under `examples/`:
+
+- `MinimalConsoleAgent` for direct SDK prompt execution
+- `WebApiAgent` for an HTTP-hosted runtime surface
+- `WorkerServiceHost` for lifecycle-managed background hosting
+- `McpToolAgent` for MCP-aware host composition
+
 ## Testing
 
 ```bash
 # Run all tests
 dotnet test SharpClawCode.sln
+
+# Build example hosts as part of local validation
+dotnet build examples/WebApiAgent/WebApiAgent.csproj
+dotnet build examples/MinimalConsoleAgent/MinimalConsoleAgent.csproj
+dotnet build examples/WorkerServiceHost/WorkerServiceHost.csproj
+dotnet build examples/McpToolAgent/McpToolAgent.csproj
 
 # Run a single test by name
 dotnet test SharpClawCode.sln --filter "FullyQualifiedName~YourTestName"
@@ -180,8 +206,12 @@ dotnet test SharpClawCode.sln --filter "FullyQualifiedName~ParityScenarioTests"
 | `--primary-mode <mode>` | Workflow bias for prompts: `build`, `plan`, or `spec` |
 | `--session <id>` | Reuse a specific SharpClaw session id for prompt execution |
 | `--agent <id>` | Select the active agent for prompt execution |
+| `--host-id <id>` | Stable embedded-host identifier for metering, admin, and event envelopes |
+| `--tenant-id <id>` | Tenant identifier used by host-aware storage, approvals, and metering |
+| `--storage-root <path>` | External root for host-managed durable runtime state |
+| `--session-store fileSystem\|sqlite` | Select the embedded session/event storage backend |
 
-Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `memory`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `acp`, `bridge`, and `version`.
+Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `memory`, `models`, `usage`, `cost`, `stats`, `connect`, `hooks`, `skills`, `agents`, `todo`, `share`, `unshare`, `compact`, `serve`, `commands`, `mcp`, `plugins`, `tool-packages`, `acp`, `bridge`, and `version`.
 
 ## Documentation Map
 
@@ -220,7 +250,7 @@ Key runtime configuration sections:
 | `SharpClaw:Providers:Anthropic` | Anthropic API key, base URL, default model |
 | `SharpClaw:Providers:OpenAiCompatible` | OpenAI-compatible base settings plus local runtime profiles, auth mode, and default embedding model |
 | `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
-| `SharpClaw:Telemetry` | Runtime event ring buffer capacity |
+| `SharpClaw:Telemetry` | Runtime event ring buffer capacity plus webhook event export behavior |
 
 Key `sharpclaw.jsonc` capabilities:
 
@@ -242,8 +272,10 @@ All options are validated at startup via `IValidateOptions` implementations.
 - Workspace indexing, symbol search, and durable memory are available through both CLI commands and built-in tools.
 - ACP now carries editor context, approval round-trips, model catalog queries, workspace search/index actions, and memory actions, which is enough for a real VS Code client over a single transport.
 - OpenAI-compatible local runtime profiles can surface Ollama, llama.cpp, and similar endpoints with profile-aware auth and model discovery.
+- Embedded hosts can opt into trusted-header or OIDC-backed approval identity, tenant-aware usage metering, webhook/SSE event streaming, and admin APIs for provider catalog, index status, search, memory inspection, and tool package management.
+- The CLI mirrors those enterprise surfaces with `usage summary`, `usage detail`, and `tool-packages` commands while preserving the existing workspace-local `usage`, `cost`, and `stats` flows.
 - Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
-- The embedded server exposes local JSON and SSE endpoints for prompts, sessions, sharing, status, and doctor flows.
+- The embedded server exposes local JSON and SSE endpoints for prompts, sessions, admin control, metering, and event streaming.
 
 ## Contributing
 
@@ -254,6 +286,10 @@ Before opening a PR:
 ```bash
 dotnet build SharpClawCode.sln
 dotnet test SharpClawCode.sln
+dotnet build examples/WebApiAgent/WebApiAgent.csproj
+dotnet build examples/MinimalConsoleAgent/MinimalConsoleAgent.csproj
+dotnet build examples/WorkerServiceHost/WorkerServiceHost.csproj
+dotnet build examples/McpToolAgent/McpToolAgent.csproj
 ```
 
 ## License

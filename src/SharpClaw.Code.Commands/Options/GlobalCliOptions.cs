@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.Parsing;
 using SharpClaw.Code.Commands.Models;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Commands.Options;
 
@@ -59,6 +60,30 @@ public sealed class GlobalCliOptions
             Description = "Selects the effective agent id for prompt execution.",
             Recursive = true
         };
+
+        HostIdOption = new Option<string?>("--host-id")
+        {
+            Description = "Sets the embedded host identifier for tenant-aware state and diagnostics.",
+            Recursive = true
+        };
+
+        TenantIdOption = new Option<string?>("--tenant-id")
+        {
+            Description = "Sets the tenant identifier for enterprise session, memory, and metering operations.",
+            Recursive = true
+        };
+
+        StorageRootOption = new Option<string?>("--storage-root")
+        {
+            Description = "Overrides the external storage root for embedded-host durable state.",
+            Recursive = true
+        };
+
+        SessionStoreOption = new Option<string?>("--session-store")
+        {
+            Description = "Selects the embedded session store backend: fileSystem or sqlite.",
+            Recursive = true
+        };
     }
 
     /// <summary>
@@ -97,9 +122,42 @@ public sealed class GlobalCliOptions
     public Option<string?> AgentOption { get; }
 
     /// <summary>
+    /// Gets the optional embedded host id option.
+    /// </summary>
+    public Option<string?> HostIdOption { get; }
+
+    /// <summary>
+    /// Gets the optional tenant id option.
+    /// </summary>
+    public Option<string?> TenantIdOption { get; }
+
+    /// <summary>
+    /// Gets the optional external storage root option.
+    /// </summary>
+    public Option<string?> StorageRootOption { get; }
+
+    /// <summary>
+    /// Gets the optional embedded session store kind option.
+    /// </summary>
+    public Option<string?> SessionStoreOption { get; }
+
+    /// <summary>
     /// Gets all global options.
     /// </summary>
-    public IEnumerable<Option> All => [OutputFormatOption, WorkingDirectoryOption, ModelOption, PermissionModeOption, PrimaryModeOption, SessionOption, AgentOption];
+    public IEnumerable<Option> All =>
+    [
+        OutputFormatOption,
+        WorkingDirectoryOption,
+        ModelOption,
+        PermissionModeOption,
+        PrimaryModeOption,
+        SessionOption,
+        AgentOption,
+        HostIdOption,
+        TenantIdOption,
+        StorageRootOption,
+        SessionStoreOption,
+    ];
 
     /// <summary>
     /// Resolves a command execution context from a parse result.
@@ -114,8 +172,13 @@ public sealed class GlobalCliOptions
         var resolvedWorkingDirectory = string.IsNullOrWhiteSpace(cwd)
             ? Environment.CurrentDirectory
             : Path.GetFullPath(cwd);
-
         var primaryText = parseResult.GetValue(PrimaryModeOption) ?? "build";
+        var hostId = parseResult.GetValue(HostIdOption);
+        var tenantId = parseResult.GetValue(TenantIdOption);
+        var storageRoot = parseResult.GetValue(StorageRootOption);
+        var sessionStoreText = parseResult.GetValue(SessionStoreOption);
+        var hostContext = CreateHostContext(hostId, tenantId, storageRoot, sessionStoreText);
+
         return new CommandExecutionContext(
             WorkingDirectory: resolvedWorkingDirectory,
             Model: parseResult.GetValue(ModelOption),
@@ -123,7 +186,35 @@ public sealed class GlobalCliOptions
             OutputFormat: ParseOutputFormat(outputFormatText),
             PrimaryMode: ParsePrimaryMode(primaryText),
             SessionId: parseResult.GetValue(SessionOption),
-            AgentId: parseResult.GetValue(AgentOption));
+            AgentId: parseResult.GetValue(AgentOption),
+            HostContext: hostContext);
+    }
+
+    private static RuntimeHostContext? CreateHostContext(
+        string? hostId,
+        string? tenantId,
+        string? storageRoot,
+        string? sessionStoreText)
+    {
+        var normalizedHostId = string.IsNullOrWhiteSpace(hostId) ? null : hostId.Trim();
+        var normalizedTenantId = string.IsNullOrWhiteSpace(tenantId) ? null : tenantId.Trim();
+        var normalizedStorageRoot = string.IsNullOrWhiteSpace(storageRoot) ? null : Path.GetFullPath(storageRoot);
+        var sessionStoreKind = ParseSessionStoreKind(sessionStoreText);
+
+        if (normalizedHostId is null
+            && normalizedTenantId is null
+            && normalizedStorageRoot is null
+            && sessionStoreKind is null)
+        {
+            return null;
+        }
+
+        return new RuntimeHostContext(
+            HostId: normalizedHostId ?? "sharpclaw-cli",
+            TenantId: normalizedTenantId,
+            StorageRoot: normalizedStorageRoot,
+            SessionStoreKind: sessionStoreKind ?? SessionStoreKind.FileSystem,
+            IsEmbeddedHost: true);
     }
 
     private static OutputFormat ParseOutputFormat(string value)
@@ -148,5 +239,14 @@ public sealed class GlobalCliOptions
             "plan" => PrimaryMode.Plan,
             "spec" => PrimaryMode.Spec,
             _ => PrimaryMode.Build,
+        };
+
+    private static SessionStoreKind? ParseSessionStoreKind(string? value)
+        => value?.Trim().ToLowerInvariant() switch
+        {
+            null or "" => null,
+            "filesystem" or "file-system" or "fileSystem" => SessionStoreKind.FileSystem,
+            "sqlite" => SessionStoreKind.Sqlite,
+            _ => SessionStoreKind.FileSystem,
         };
 }

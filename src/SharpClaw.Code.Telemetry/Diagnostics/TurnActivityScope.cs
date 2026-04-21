@@ -9,6 +9,12 @@ public sealed class TurnActivityScope : IDisposable
 {
     private readonly Activity? _activity;
 
+    /// <summary>
+    /// Starts a turn activity span.
+    /// </summary>
+    /// <param name="sessionId">Owning session identifier.</param>
+    /// <param name="turnId">Turn identifier.</param>
+    /// <param name="prompt">Optional prompt preview.</param>
     public TurnActivityScope(string sessionId, string turnId, string? prompt = null)
     {
         _activity = SharpClawActivitySource.Instance.StartActivity("sharpclaw.turn");
@@ -21,6 +27,12 @@ public sealed class TurnActivityScope : IDisposable
         }
     }
 
+    /// <summary>
+    /// Marks the turn span as successful and records output and token usage.
+    /// </summary>
+    /// <param name="output">Optional turn output.</param>
+    /// <param name="inputTokens">Consumed input tokens.</param>
+    /// <param name="outputTokens">Produced output tokens.</param>
     public void SetOutput(string? output, long? inputTokens, long? outputTokens)
     {
         if (output is not null)
@@ -32,6 +44,10 @@ public sealed class TurnActivityScope : IDisposable
         _activity?.SetStatus(ActivityStatusCode.Ok);
     }
 
+    /// <summary>
+    /// Marks the turn span as failed and records exception details.
+    /// </summary>
+    /// <param name="exception">The error that terminated the turn.</param>
     public void SetError(Exception exception)
     {
         _activity?.SetStatus(ActivityStatusCode.Error, exception.Message);
@@ -42,5 +58,6 @@ public sealed class TurnActivityScope : IDisposable
         }));
     }
 
+    /// <inheritdoc />
     public void Dispose() => _activity?.Dispose();
 }

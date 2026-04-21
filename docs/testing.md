@@ -15,6 +15,15 @@ Run all tests:
 dotnet test SharpClawCode.sln
 ```
 
+Build the example hosts as part of normal validation:
+
+```bash
+dotnet build examples/WebApiAgent/WebApiAgent.csproj
+dotnet build examples/MinimalConsoleAgent/MinimalConsoleAgent.csproj
+dotnet build examples/WorkerServiceHost/WorkerServiceHost.csproj
+dotnet build examples/McpToolAgent/McpToolAgent.csproj
+```
+
 Filter examples:
 
 ```bash
@@ -52,4 +61,4 @@ Stable scenario **ids** are listed in **`ParityScenarioIds`** (e.g. `streaming_t
 
 ## CI
 
-Use **`dotnet test`** on the solution; parity tests use temp directories under **`Path.GetTempPath()`** and avoid network.
+CI restores and builds the full solution, explicitly builds every example host project, and then runs `dotnet test` on the solution. Parity tests use temp directories under **`Path.GetTempPath()`** and avoid network.

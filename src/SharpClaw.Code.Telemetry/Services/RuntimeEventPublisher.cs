@@ -29,6 +29,8 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
     /// <param name="usageTracker">Session usage aggregation.</param>
     /// <param name="logger">Logger.</param>
     /// <param name="persistence">Optional persistence bridge; omitted in tests or CLI slices without sessions.</param>
+    /// <param name="hostContextAccessor">Optional ambient embedded-host context.</param>
+    /// <param name="sinks">Optional external runtime event sinks.</param>
     public RuntimeEventPublisher(
         IOptions<TelemetryOptions> telemetryOptionsAccessor,
         IUsageTracker usageTracker,

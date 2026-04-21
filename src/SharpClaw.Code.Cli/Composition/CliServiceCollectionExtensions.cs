@@ -50,6 +50,7 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ICommandHandler, CommandsCommandHandler>();
         services.AddSingleton<ICommandHandler, McpCommandHandler>();
         services.AddSingleton<ICommandHandler, PluginsCommandHandler>();
+        services.AddSingleton<ICommandHandler, ToolPackagesCommandHandler>();
         services.AddSingleton<ICommandHandler, VersionCommandHandler>();
         services.AddSingleton<ICommandHandler, AcpCommandHandler>();
         services.AddSingleton<ICommandHandler, BridgeCommandHandler>();

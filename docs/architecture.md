@@ -19,16 +19,18 @@ This document matches the **current** solution: `SharpClawCode.sln` with project
 | **SharpClaw.Code.Memory / Git / Web / Skills** | Context and auxiliary services composed by runtime/agents as implemented today. |
 | **SharpClaw.Code.Agents** | Microsoft Agent Framework bridge, `ProviderBackedAgentKernel`, concrete agents. |
 | **SharpClaw.Code.Runtime** | `ConversationRuntime`, `DefaultTurnRunner`, lifecycle/state machine, operational diagnostics DI. |
+| **SharpClaw.Code** | Embeddable runtime SDK: `SharpClawRuntimeHostBuilder`, `SharpClawRuntimeHost`, host-aware runtime entrypoints. |
 | **SharpClaw.Code.Commands** | System.CommandLine handlers, REPL host, slash commands, output renderers dispatch. |
 | **SharpClaw.Code.Cli** | Entry point (`Program.cs`), `Host` wiring: `AddSharpClawRuntime` + `AddSharpClawCli`. |
 
-Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHarness**, **Mcp.FixtureServer**.
+Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHarness**, **Mcp.FixtureServer**. Example hosts are included in the solution under `examples/`.
 
 ## Composition overview
 
 1. **`CliHostBuilder.BuildHost`** builds `Host.CreateApplicationBuilder`, registers **Runtime** then **CLI**.
-2. **`RuntimeServiceCollectionExtensions.AddSharpClawRuntime`** (with `IConfiguration` when used from CLI) registers in order: Telemetry, Infrastructure, **Providers** (from config), **Mcp**, **Tools**, **Agents**, Memory, Skills, Git, **Sessions** stores, context assembler, **DefaultTurnRunner**, state machine, **operational diagnostics checks**, **`ConversationRuntime`** (as `IConversationRuntime` + `IRuntimeCommandService`), and a minimal **`IHostedService`** (`RuntimeCoordinatorHostedServiceAdapter`).
-3. **`AddSharpClawCli`** registers command handlers, REPL, renderers, `CommandRegistry`.
+2. **`SharpClawRuntimeHostBuilder`** builds the same runtime slice without CLI assumptions for embedded ASP.NET Core, worker-service, or SDK hosts.
+3. **`RuntimeServiceCollectionExtensions.AddSharpClawRuntime`** (with `IConfiguration` when used from CLI) registers in order: Telemetry, Infrastructure, **Providers** (from config), **Mcp**, **Tools**, **Agents**, Memory, Skills, Git, **Sessions** stores, context assembler, **DefaultTurnRunner**, state machine, **operational diagnostics checks**, **`ConversationRuntime`** (as `IConversationRuntime` + `IRuntimeCommandService`), and a minimal **`IHostedService`** (`RuntimeCoordinatorHostedServiceAdapter`).
+4. **`AddSharpClawCli`** registers command handlers, REPL, renderers, `CommandRegistry`.
 
 ## Major execution flows
 
@@ -36,7 +38,7 @@ Test projects: **UnitTests**, **IntegrationTests**, **MockProvider**, **ParityHa
 
 1. **`IRuntimeCommandService.ExecutePromptAsync`** → **`ConversationRuntime.RunPromptAsync`**.
 2. Resolves or creates **`ConversationSession`** under the workspace; transitions lifecycle; appends **`RuntimeEvent`**s when persistence is enabled.
-3. **`DefaultTurnRunner.RunAsync`** builds prompt context (`IPromptContextAssembler`), constructs **`AgentRunContext`** (includes **`IToolExecutor`**), calls **`PrimaryCodingAgent.RunAsync`**.
+3. **`DefaultTurnRunner.RunAsync`** builds prompt context (`IPromptContextAssembler`), constructs **`AgentRunContext`** (includes **`IToolExecutor`** and normalized host/tenant context), calls **`PrimaryCodingAgent.RunAsync`**.
 4. **`SharpClawAgentBase`** delegates to **`AgentFrameworkBridge.RunAsync`**, which drives **`ProviderBackedAgentKernel`** (streaming `IModelProvider`, auth checks, **`ProviderExecutionException`** on hard failures).
 5. Turn completion updates session, checkpoints as implemented in **`ConversationRuntime`**, publishes events via **`IRuntimeEventPublisher`**.
 

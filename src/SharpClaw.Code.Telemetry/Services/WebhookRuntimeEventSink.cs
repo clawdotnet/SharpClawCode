@@ -14,14 +14,14 @@ namespace SharpClaw.Code.Telemetry.Services;
 /// </summary>
 public sealed class WebhookRuntimeEventSink(
     IOptions<TelemetryOptions> telemetryOptionsAccessor,
+    HttpClient httpClient,
+    IWebhookDelayStrategy webhookDelayStrategy,
     ILogger<WebhookRuntimeEventSink>? logger = null) : IRuntimeEventSink
 {
     private readonly TelemetryOptions telemetryOptions = telemetryOptionsAccessor.Value;
+    private readonly HttpClient httpClient = httpClient;
+    private readonly IWebhookDelayStrategy webhookDelayStrategy = webhookDelayStrategy;
     private readonly ILogger<WebhookRuntimeEventSink> logger = logger ?? NullLogger<WebhookRuntimeEventSink>.Instance;
-    private readonly HttpClient httpClient = new()
-    {
-        Timeout = TimeSpan.FromSeconds(5),
-    };
 
     /// <inheritdoc />
     public async Task PublishAsync(RuntimeEventEnvelope envelope, CancellationToken cancellationToken)
@@ -53,7 +53,7 @@ public sealed class WebhookRuntimeEventSink(
                         url,
                         attempt);
                     var delay = TimeSpan.FromMilliseconds(telemetryOptions.WebhookInitialBackoffMilliseconds * Math.Pow(2, attempt - 1));
-                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                    await webhookDelayStrategy.DelayAsync(delay, cancellationToken).ConfigureAwait(false);
                 }
                 catch (Exception exception)
                 {

@@ -40,7 +40,7 @@ public sealed class ServeCommandHandler(
                 context.OutputFormat,
                 cancellationToken).ConfigureAwait(false);
             await workspaceHttpServer
-                .RunAsync(context.WorkingDirectory, host, port, ToRuntimeContext(context), cancellationToken)
+                .RunAsync(context.WorkingDirectory, host, port, context.ToRuntimeCommandContext(), cancellationToken)
                 .ConfigureAwait(false);
             return 0;
         });
@@ -66,17 +66,7 @@ public sealed class ServeCommandHandler(
             new CommandResult(true, 0, context.OutputFormat, "Starting embedded SharpClaw server. Press Ctrl+C to stop.", null),
             context.OutputFormat,
             cancellationToken).ConfigureAwait(false);
-        await workspaceHttpServer.RunAsync(context.WorkingDirectory, host, port, ToRuntimeContext(context), cancellationToken).ConfigureAwait(false);
+        await workspaceHttpServer.RunAsync(context.WorkingDirectory, host, port, context.ToRuntimeCommandContext(), cancellationToken).ConfigureAwait(false);
         return 0;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId,
-            context.AgentId);
 }

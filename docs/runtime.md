@@ -121,6 +121,31 @@ These services are intentionally small and runtime-owned rather than separate or
 
 Prompt requests can return JSON or replay the completed runtime event stream as SSE.
 
+The embedded server also exposes a tenant-aware admin/control surface under `/v1/admin`:
+
+- `GET /v1/admin/providers`
+- `GET /v1/admin/auth/status`
+- `POST /v1/admin/sessions`
+- `POST /v1/admin/sessions/{id}/fork`
+- `GET /v1/admin/index/status`
+- `POST /v1/admin/index/refresh`
+- `POST /v1/admin/search`
+- `GET /v1/admin/memory`
+- `GET /v1/admin/events/recent`
+- `GET /v1/admin/events/stream`
+- `GET /v1/admin/tool-packages`
+- `POST /v1/admin/tool-packages/install`
+- `GET /v1/admin/usage/summary`
+- `GET /v1/admin/usage/detail`
+
+Admin requests reuse the normalized `RuntimeCommandContext.HostContext`, so tenant id, host id, storage root, and selected session store backend remain consistent between CLI, SDK, and HTTP-hosted invocations.
+
+Usage metering is persisted in a dedicated tenant-aware SQLite store under the resolved storage root. Workspace-local `usage`, `cost`, and `stats` continue to read the existing workspace insights model, while the admin and enterprise CLI surfaces query the normalized metering store for tenant/host reporting.
+
+When approval auth is enabled, HTTP/admin requests resolve approval identity through either trusted headers or OIDC bearer tokens before approval-sensitive operations run. The resolved `ApprovalPrincipal` is then applied to authenticated approval transports and tenant-matching checks.
+
+Webhook and SSE event delivery both use the same `RuntimeEventEnvelope` shape, which freezes the external event contract across in-process streams, HTTP event streams, and configured outbound webhook sinks.
+
 ## Hosted service
 
 **`RuntimeCoordinatorHostedServiceAdapter`** is registered as **`IHostedService`** and currently logs start/stop only (placeholder for future lifecycle coordination).

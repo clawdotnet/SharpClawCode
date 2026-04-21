@@ -110,7 +110,13 @@ public sealed class ReplHost(
                         {
                             var argLine = string.Join(' ', parsed.Arguments);
                             var result = await runtimeCommandService
-                                .ExecuteCustomCommandAsync(customDef.Name, argLine, ToRuntimeContext(context), cancellationToken)
+                                .ExecuteCustomCommandAsync(
+                                    customDef.Name,
+                                    argLine,
+                                    context.ToRuntimeCommandContext(
+                                        primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
+                                        agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId),
+                                    cancellationToken)
                                 .ConfigureAwait(false);
                             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
                         }
@@ -141,7 +147,9 @@ public sealed class ReplHost(
                 {
                     var result = await runtimeCommandService.ExecutePromptAsync(
                         trimmed,
-                        ToRuntimeContext(context),
+                        context.ToRuntimeCommandContext(
+                            primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
+                            agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId),
                         cancellationToken);
 
                     await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
@@ -176,17 +184,6 @@ public sealed class ReplHost(
 
         return await customCommandDiscovery.FindAsync(workspace, name, cancellationToken).ConfigureAwait(false);
     }
-
-    private RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
-            context.SessionId,
-            replInteractionState.AgentIdOverride ?? context.AgentId);
-
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
             Succeeded: false,

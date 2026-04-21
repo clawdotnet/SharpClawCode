@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -46,8 +47,10 @@ public static class TelemetryServiceCollectionExtensions
     private static IServiceCollection AddSharpClawTelemetryCore(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);
+        services.AddHttpClient("sharpclaw-telemetry-webhook", client => client.Timeout = TimeSpan.FromSeconds(5));
         services.TryAddSingleton<IValidateOptions<TelemetryOptions>, TelemetryOptionsValidator>();
         services.TryAddSingleton<IUsageTracker, UsageTracker>();
+        services.TryAddSingleton<IWebhookDelayStrategy, WebhookDelayStrategy>();
         services.TryAddSingleton<JsonTraceExporter>();
         services.TryAddSingleton<InProcessRuntimeEventStream>();
         services.TryAddSingleton<IRuntimeEventStream>(serviceProvider => serviceProvider.GetRequiredService<InProcessRuntimeEventStream>());
@@ -56,9 +59,14 @@ public static class TelemetryServiceCollectionExtensions
             services.AddSingleton<IRuntimeEventSink>(serviceProvider => serviceProvider.GetRequiredService<InProcessRuntimeEventStream>());
         }
 
-        if (!services.Any(static descriptor => descriptor.ServiceType == typeof(IRuntimeEventSink) && descriptor.ImplementationType == typeof(WebhookRuntimeEventSink)))
+        if (!services.Any(static descriptor => descriptor.ServiceType == typeof(WebhookRuntimeEventSink)))
         {
-            services.AddSingleton<IRuntimeEventSink, WebhookRuntimeEventSink>();
+            services.TryAddSingleton<WebhookRuntimeEventSink>(serviceProvider => new WebhookRuntimeEventSink(
+                serviceProvider.GetRequiredService<IOptions<TelemetryOptions>>(),
+                serviceProvider.GetRequiredService<IHttpClientFactory>().CreateClient("sharpclaw-telemetry-webhook"),
+                serviceProvider.GetRequiredService<IWebhookDelayStrategy>(),
+                serviceProvider.GetService<ILogger<WebhookRuntimeEventSink>>()));
+            services.AddSingleton<IRuntimeEventSink>(serviceProvider => serviceProvider.GetRequiredService<WebhookRuntimeEventSink>());
         }
 
         services.TryAddSingleton<IRuntimeEventPublisher>(serviceProvider => new RuntimeEventPublisher(

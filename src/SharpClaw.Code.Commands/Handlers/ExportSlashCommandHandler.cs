@@ -48,7 +48,7 @@ public sealed class ExportSlashCommandHandler(IRuntimeCommandService runtimeComm
         CancellationToken cancellationToken)
     {
         var result = await runtimeCommandService
-            .ExportSessionAsync(sessionId, format, null, ToRuntimeContext(context), cancellationToken)
+            .ExportSessionAsync(sessionId, format, null, context.ToRuntimeCommandContext(), cancellationToken)
             .ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
         return result.ExitCode;
@@ -62,13 +62,4 @@ public sealed class ExportSlashCommandHandler(IRuntimeCommandService runtimeComm
             cancellationToken).ConfigureAwait(false);
         return success ? 0 : 1;
     }
-
-    private static RuntimeCommandContext ToRuntimeContext(CommandExecutionContext context)
-        => new(
-            context.WorkingDirectory,
-            context.Model,
-            context.PermissionMode,
-            context.OutputFormat,
-            context.PrimaryMode,
-            context.SessionId);
 }
