@@ -68,7 +68,7 @@ public sealed class OperationalDiagnosticsCoordinator(
             : input.WorkingDirectory);
         var context = new OperationalDiagnosticsContext(workspacePath, input.Model, input.PermissionMode);
         var quickChecks = new List<OperationalCheckItem>();
-        foreach (var id in new[] { "workspace.access", "session.store", "mcp.registry", "plugins.registry" })
+        foreach (var id in new[] { "workspace.access", "session.store", "mcp.registry", "plugins.registry", "approval.auth" })
         {
             var check = orderedChecks.FirstOrDefault(c => c.Id == id);
             if (check is not null)

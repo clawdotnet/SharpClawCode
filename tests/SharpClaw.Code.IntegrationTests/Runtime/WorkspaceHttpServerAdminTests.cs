@@ -15,15 +15,15 @@ using SharpClaw.Code.Runtime.Abstractions;
 namespace SharpClaw.Code.IntegrationTests.Runtime;
 
 /// <summary>
-/// Verifies the embedded admin HTTP surface for provider, index, package, and event inspection.
+/// Verifies the embedded admin HTTP surface for provider, session, usage, package, and event inspection.
 /// </summary>
 public sealed class WorkspaceHttpServerAdminTests
 {
     /// <summary>
-    /// Ensures the admin server exposes provider catalog, index, package, and recent-event payloads.
+    /// Ensures the admin server exposes provider catalog, session management, usage, package, and recent-event payloads.
     /// </summary>
     [Fact]
-    public async Task Admin_endpoints_should_expose_provider_index_package_and_event_data()
+    public async Task Admin_endpoints_should_expose_provider_session_usage_package_and_event_data()
     {
         var workspaceRoot = CreateTemporaryWorkspace();
         await File.WriteAllTextAsync(Path.Combine(workspaceRoot, "README.md"), "Workspace admin search content.");
@@ -59,6 +59,32 @@ public sealed class WorkspaceHttpServerAdminTests
             var providersJson = await httpClient.GetStringAsync("v1/admin/providers");
             providersJson.Should().Contain("mock");
 
+            var authStatus = JsonSerializer.Deserialize(
+                await httpClient.GetStringAsync("v1/admin/auth/status"),
+                ProtocolJsonContext.Default.ApprovalAuthStatus);
+            authStatus.Should().NotBeNull();
+
+            using var createSessionResponse = await httpClient.PostAsync(
+                "v1/admin/sessions",
+                new StringContent("""{"permissionMode":"workspaceWrite","outputFormat":"json"}""", Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            createSessionResponse.EnsureSuccessStatusCode();
+            var createdSession = JsonSerializer.Deserialize(
+                await createSessionResponse.Content.ReadAsStringAsync(),
+                ProtocolJsonContext.Default.ConversationSession);
+            createdSession.Should().NotBeNull();
+
+            using var forkSessionResponse = await httpClient.PostAsync(
+                $"v1/admin/sessions/{createdSession!.Id}/fork",
+                new StringContent(string.Empty, Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            forkSessionResponse.EnsureSuccessStatusCode();
+            var forkedSession = JsonSerializer.Deserialize(
+                await forkSessionResponse.Content.ReadAsStringAsync(),
+                ProtocolJsonContext.Default.ConversationSession);
+            forkedSession.Should().NotBeNull();
+            forkedSession!.Id.Should().NotBe(createdSession.Id);
+
             using var refreshResponse = await httpClient.PostAsync("v1/admin/index/refresh", new StringContent(string.Empty), CancellationToken.None);
             refreshResponse.EnsureSuccessStatusCode();
             var refresh = JsonSerializer.Deserialize(
@@ -91,13 +117,27 @@ public sealed class WorkspaceHttpServerAdminTests
 
             using var promptResponse = await httpClient.PostAsync(
                 "v1/prompt",
-                new StringContent("""{"prompt":"run the admin server flow","model":"default"}""", Encoding.UTF8, "application/json"),
+                new StringContent($$"""{"prompt":"run the admin server flow","model":"default","sessionId":"{{createdSession.Id}}"}""", Encoding.UTF8, "application/json"),
                 CancellationToken.None);
             promptResponse.EnsureSuccessStatusCode();
             var promptResult = JsonSerializer.Deserialize(
                 await promptResponse.Content.ReadAsStringAsync(),
                 ProtocolJsonContext.Default.TurnExecutionResult);
             promptResult.Should().NotBeNull();
+
+            var usageSummary = JsonSerializer.Deserialize(
+                await httpClient.GetStringAsync($"v1/admin/usage/summary?sessionId={Uri.EscapeDataString(createdSession.Id)}"),
+                ProtocolJsonContext.Default.UsageMeteringSummaryReport);
+            usageSummary.Should().NotBeNull();
+            usageSummary!.ProviderRequestCount.Should().BeGreaterThan(0);
+            usageSummary.TurnCount.Should().BeGreaterThan(0);
+
+            var usageDetail = JsonSerializer.Deserialize(
+                await httpClient.GetStringAsync($"v1/admin/usage/detail?sessionId={Uri.EscapeDataString(createdSession.Id)}&limit=10"),
+                ProtocolJsonContext.Default.UsageMeteringDetailReport);
+            usageDetail.Should().NotBeNull();
+            usageDetail!.Records.Should().Contain(record => record.Kind == UsageMeteringRecordKind.ProviderUsage);
+            usageDetail.Records.Should().Contain(record => record.Kind == UsageMeteringRecordKind.TurnExecution);
 
             var events = JsonSerializer.Deserialize(
                 await httpClient.GetStringAsync("v1/admin/events/recent"),

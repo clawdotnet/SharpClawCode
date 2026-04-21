@@ -1,6 +1,8 @@
 using System.Text;
 using System.Text.Json;
+using System.IO.Compression;
 using SharpClaw.Code.Infrastructure.Abstractions;
+using SharpClaw.Code.Infrastructure.Models;
 using SharpClaw.Code.Plugins.Abstractions;
 using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Protocol.Enums;
@@ -17,8 +19,11 @@ public sealed class ToolPackageService(
     IFileSystem fileSystem,
     IPathService pathService,
     IRuntimeStoragePathResolver storagePathResolver,
+    IProcessRunner processRunner,
     IPluginManager pluginManager) : IToolPackageService
 {
+    private const string SupportedTargetFramework = "net10.0";
+
     /// <inheritdoc />
     public async Task<IReadOnlyList<InstalledToolPackage>> ListInstalledAsync(string workspaceRoot, CancellationToken cancellationToken)
     {
@@ -58,16 +63,19 @@ public sealed class ToolPackageService(
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(request);
-        Validate(request.Manifest);
 
         var normalizedWorkspace = pathService.GetFullPath(workspaceRoot);
+        Validate(request.Manifest);
+        await EnsureNoToolNameConflictsAsync(normalizedWorkspace, request.Manifest, cancellationToken).ConfigureAwait(false);
+        var resolvedInstall = await ResolveInstallAsync(normalizedWorkspace, request, cancellationToken).ConfigureAwait(false);
         var packagesRoot = storagePathResolver.GetToolPackagesRoot(normalizedWorkspace);
         fileSystem.CreateDirectory(packagesRoot);
 
         var installed = new InstalledToolPackage(
             Manifest: request.Manifest,
             InstalledAtUtc: DateTimeOffset.UtcNow,
-            InstallSource: request.InstallSource.Trim());
+            InstallSource: request.InstallSource.Trim(),
+            ResolvedInstall: resolvedInstall);
         var path = pathService.Combine(packagesRoot, $"{SanitizeFileName(request.Manifest.Package.PackageId)}.json");
         await fileSystem
             .WriteAllTextAsync(
@@ -76,13 +84,13 @@ public sealed class ToolPackageService(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        var pluginManifest = ToPluginManifest(request.Manifest);
+        var pluginManifest = ToPluginManifest(request.Manifest, resolvedInstall);
         await pluginManager
             .InstallAsync(
                 normalizedWorkspace,
                 new PluginInstallRequest(
                     pluginManifest,
-                    JsonSerializer.Serialize(request.Manifest, ProtocolJsonContext.Default.ToolPackageManifest)),
+                    JsonSerializer.Serialize(installed, ProtocolJsonContext.Default.InstalledToolPackage)),
                 cancellationToken)
             .ConfigureAwait(false);
         if (request.EnableAfterInstall)
@@ -93,14 +101,14 @@ public sealed class ToolPackageService(
         return installed;
     }
 
-    private static PluginManifest ToPluginManifest(ToolPackageManifest manifest)
+    private static PluginManifest ToPluginManifest(ToolPackageManifest manifest, ToolPackageResolvedInstall resolvedInstall)
         => new(
             Id: manifest.Package.PackageId,
             Name: manifest.Package.PackageId,
             Version: manifest.Package.Version,
             Description: manifest.Description,
-            EntryPoint: manifest.Package.EntryAssembly,
-            Arguments: [],
+            EntryPoint: SelectPluginEntryPoint(resolvedInstall),
+            Arguments: SelectPluginArguments(resolvedInstall),
             Capabilities:
             [
                 "tool-package",
@@ -132,9 +140,22 @@ public sealed class ToolPackageService(
         ArgumentException.ThrowIfNullOrWhiteSpace(manifest.Package.PackageId);
         ArgumentException.ThrowIfNullOrWhiteSpace(manifest.Package.Version);
         ArgumentException.ThrowIfNullOrWhiteSpace(manifest.Package.EntryAssembly);
+        if (!string.IsNullOrWhiteSpace(manifest.Package.TargetFramework)
+            && !string.Equals(manifest.Package.TargetFramework, SupportedTargetFramework, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Tool package '{manifest.Package.PackageId}' targets '{manifest.Package.TargetFramework}', but this runtime only supports '{SupportedTargetFramework}'.");
+        }
+
         if (manifest.Tools.Length == 0)
         {
             throw new InvalidOperationException("Tool packages must declare at least one tool.");
+        }
+
+        foreach (var tool in manifest.Tools)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(tool.Name);
+            ArgumentException.ThrowIfNullOrWhiteSpace(tool.Description);
         }
 
         var duplicate = manifest.Tools
@@ -143,6 +164,195 @@ public sealed class ToolPackageService(
         if (duplicate is not null)
         {
             throw new InvalidOperationException($"Tool package '{manifest.Package.PackageId}' declares duplicate tool '{duplicate.Key}'.");
+        }
+    }
+
+    private async Task EnsureNoToolNameConflictsAsync(
+        string workspaceRoot,
+        ToolPackageManifest manifest,
+        CancellationToken cancellationToken)
+    {
+        var installed = await ListInstalledAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+        var existingToolNames = installed
+            .Where(package => !string.Equals(package.Manifest.Package.PackageId, manifest.Package.PackageId, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(static package => package.Manifest.Tools)
+            .Select(static tool => tool.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var conflictingTool = manifest.Tools.FirstOrDefault(tool => existingToolNames.Contains(tool.Name));
+        if (conflictingTool is not null)
+        {
+            throw new InvalidOperationException(
+                $"Tool '{conflictingTool.Name}' is already installed from another package and cannot be activated twice.");
+        }
+    }
+
+    private async Task<ToolPackageResolvedInstall> ResolveInstallAsync(
+        string workspaceRoot,
+        ToolPackageInstallRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.Equals(request.Manifest.Package.PackageType, "nuget", StringComparison.OrdinalIgnoreCase))
+        {
+            return await ResolveNugetInstallAsync(workspaceRoot, request, cancellationToken).ConfigureAwait(false);
+        }
+
+        var resolvedEntryAssembly = ResolveLocalEntryAssembly(request.Manifest.Package.EntryAssembly, request.SourceReference);
+        return new ToolPackageResolvedInstall(
+            SourceReference: request.SourceReference,
+            PackageSource: request.PackageSource,
+            PackageFilePath: null,
+            ExtractedPackageRoot: null,
+            ResolvedEntryAssembly: resolvedEntryAssembly,
+            ResolvedEntryArguments: request.Manifest.Package.EntryArguments);
+    }
+
+    private async Task<ToolPackageResolvedInstall> ResolveNugetInstallAsync(
+        string workspaceRoot,
+        ToolPackageInstallRequest request,
+        CancellationToken cancellationToken)
+    {
+        var packageId = request.Manifest.Package.PackageId;
+        var version = request.Manifest.Package.Version;
+        var packagesRoot = storagePathResolver.GetToolPackagesRoot(workspaceRoot);
+        fileSystem.CreateDirectory(packagesRoot);
+
+        var packageFilePath = pathService.Combine(packagesRoot, $"{SanitizeFileName(packageId)}-{SanitizeFileName(version)}.nupkg");
+        if (!string.IsNullOrWhiteSpace(request.SourceReference)
+            && Path.GetExtension(request.SourceReference) is ".nupkg"
+            && fileSystem.FileExists(request.SourceReference))
+        {
+            await fileSystem.CopyFileAsync(request.SourceReference, packageFilePath, cancellationToken).ConfigureAwait(false);
+        }
+        else
+        {
+            var downloadRoot = pathService.Combine(packagesRoot, ".downloads", $"{SanitizeFileName(packageId)}-{Guid.NewGuid():N}");
+            fileSystem.CreateDirectory(downloadRoot);
+            var arguments = new List<string>
+            {
+                "nuget",
+                "download",
+                packageId,
+                "--version",
+                version,
+                "--output",
+                downloadRoot,
+            };
+            if (!string.IsNullOrWhiteSpace(request.PackageSource))
+            {
+                arguments.Add("--source");
+                arguments.Add(request.PackageSource!);
+            }
+
+            var result = await processRunner
+                .RunAsync(
+                    new ProcessRunRequest(
+                        FileName: "dotnet",
+                        Arguments: [.. arguments],
+                        WorkingDirectory: workspaceRoot,
+                        EnvironmentVariables: null),
+                    cancellationToken)
+                .ConfigureAwait(false);
+            if (result.ExitCode != 0)
+            {
+                throw new InvalidOperationException(
+                    string.IsNullOrWhiteSpace(result.StandardError)
+                        ? $"dotnet nuget download failed for '{packageId}'."
+                        : result.StandardError.Trim());
+            }
+
+            var downloadedPackage = fileSystem.EnumerateFiles(downloadRoot, "*.nupkg").FirstOrDefault()
+                ?? throw new InvalidOperationException($"No .nupkg was downloaded for '{packageId}'.");
+            await fileSystem.CopyFileAsync(downloadedPackage, packageFilePath, cancellationToken).ConfigureAwait(false);
+            fileSystem.DeleteDirectoryRecursive(downloadRoot);
+        }
+
+        var extractedPackageRoot = storagePathResolver.GetExtractedToolPackageRoot(workspaceRoot, packageId, version);
+        if (fileSystem.DirectoryExists(extractedPackageRoot))
+        {
+            fileSystem.DeleteDirectoryRecursive(extractedPackageRoot);
+        }
+
+        fileSystem.CreateDirectory(extractedPackageRoot);
+        ZipFile.ExtractToDirectory(packageFilePath, extractedPackageRoot, overwriteFiles: true);
+
+        var resolvedEntryAssembly = ResolveExtractedEntryAssembly(request.Manifest.Package.EntryAssembly, extractedPackageRoot);
+        EnsureUnixExecuteBit(resolvedEntryAssembly);
+        return new ToolPackageResolvedInstall(
+            SourceReference: request.SourceReference,
+            PackageSource: request.PackageSource,
+            PackageFilePath: packageFilePath,
+            ExtractedPackageRoot: extractedPackageRoot,
+            ResolvedEntryAssembly: resolvedEntryAssembly,
+            ResolvedEntryArguments: request.Manifest.Package.EntryArguments);
+    }
+
+    private string ResolveLocalEntryAssembly(string entryAssembly, string? sourceReference)
+    {
+        if (Path.IsPathRooted(entryAssembly) || string.IsNullOrWhiteSpace(sourceReference))
+        {
+            return entryAssembly;
+        }
+
+        if (fileSystem.DirectoryExists(sourceReference))
+        {
+            return pathService.GetFullPath(pathService.Combine(sourceReference, entryAssembly));
+        }
+
+        var sourceDirectory = Path.GetDirectoryName(sourceReference);
+        return string.IsNullOrWhiteSpace(sourceDirectory)
+            ? entryAssembly
+            : pathService.GetFullPath(pathService.Combine(sourceDirectory, entryAssembly));
+    }
+
+    private string ResolveExtractedEntryAssembly(string entryAssembly, string extractedPackageRoot)
+    {
+        if (Path.IsPathRooted(entryAssembly))
+        {
+            return entryAssembly;
+        }
+
+        return pathService.GetFullPath(pathService.Combine(extractedPackageRoot, entryAssembly));
+    }
+
+    private static string SelectPluginEntryPoint(ToolPackageResolvedInstall resolvedInstall)
+        => string.Equals(Path.GetExtension(resolvedInstall.ResolvedEntryAssembly), ".dll", StringComparison.OrdinalIgnoreCase)
+            ? "dotnet"
+            : resolvedInstall.ResolvedEntryAssembly;
+
+    private static string[] SelectPluginArguments(ToolPackageResolvedInstall resolvedInstall)
+    {
+        if (string.Equals(Path.GetExtension(resolvedInstall.ResolvedEntryAssembly), ".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            return [resolvedInstall.ResolvedEntryAssembly, .. resolvedInstall.ResolvedEntryArguments ?? []];
+        }
+
+        return resolvedInstall.ResolvedEntryArguments ?? [];
+    }
+
+    private static void EnsureUnixExecuteBit(string path)
+    {
+        if (OperatingSystem.IsWindows()
+            || string.Equals(Path.GetExtension(path), ".dll", StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetUnixFileMode(
+                path,
+                UnixFileMode.UserRead
+                | UnixFileMode.UserWrite
+                | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead
+                | UnixFileMode.GroupExecute
+                | UnixFileMode.OtherRead
+                | UnixFileMode.OtherExecute);
+        }
+        catch (PlatformNotSupportedException)
+        {
         }
     }
 

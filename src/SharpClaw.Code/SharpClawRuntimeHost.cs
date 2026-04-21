@@ -98,6 +98,35 @@ public sealed class SharpClawRuntimeHost : IAsyncDisposable
         => runtimeCommandService.ExecutePromptAsync(prompt, context, cancellationToken);
 
     /// <summary>
+    /// Executes a prompt through the runtime command service without requiring callers to construct runtime-specific context types.
+    /// </summary>
+    public Task<TurnExecutionResult> ExecutePromptAsync(
+        string prompt,
+        string workspacePath,
+        string? model,
+        PermissionMode permissionMode,
+        OutputFormat outputFormat,
+        string? sessionId = null,
+        RuntimeHostContext? hostContext = null,
+        PrimaryMode? primaryMode = null,
+        string? agentId = null,
+        bool isInteractive = true,
+        CancellationToken cancellationToken = default)
+        => runtimeCommandService.ExecutePromptAsync(
+            prompt,
+            new RuntimeCommandContext(
+                WorkingDirectory: workspacePath,
+                Model: model,
+                PermissionMode: permissionMode,
+                OutputFormat: outputFormat,
+                PrimaryMode: primaryMode,
+                SessionId: sessionId,
+                AgentId: agentId,
+                IsInteractive: isInteractive,
+                HostContext: hostContext),
+            cancellationToken);
+
+    /// <summary>
     /// Retrieves the runtime status report.
     /// </summary>
     public Task<CommandResult> GetStatusAsync(RuntimeCommandContext context, CancellationToken cancellationToken = default)

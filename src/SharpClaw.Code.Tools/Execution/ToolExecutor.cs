@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Permissions.Abstractions;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Events;
+using SharpClaw.Code.Protocol.Abstractions;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -18,6 +19,7 @@ public sealed class ToolExecutor(
     IToolRegistry toolRegistry,
     IPermissionPolicyEngine permissionPolicyEngine,
     IRuntimeEventPublisher? eventPublisher = null,
+    IRuntimeHostContextAccessor? hostContextAccessor = null,
     ILogger<ToolExecutor>? logger = null) : IToolExecutor
 {
     private readonly ILogger<ToolExecutor> logger = logger ?? NullLogger<ToolExecutor>.Instance;
@@ -62,7 +64,8 @@ public sealed class ToolExecutor(
             TrustedMcpServerNames: context.TrustedMcpServerNames,
             ToolOriginatingPluginId: pluginSource?.PluginId,
             ToolOriginatingPluginTrust: pluginSource?.Trust,
-            PrimaryMode: context.PrimaryMode);
+            PrimaryMode: context.PrimaryMode,
+            TenantId: hostContextAccessor?.Current?.TenantId);
 
         var publishOptions = CreatePublishOptions(context);
         var now = DateTimeOffset.UtcNow;

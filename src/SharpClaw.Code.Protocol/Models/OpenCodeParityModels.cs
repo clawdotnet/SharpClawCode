@@ -151,10 +151,12 @@ public sealed record HookDefinition(
 /// <param name="Host">Bind host.</param>
 /// <param name="Port">Bind port.</param>
 /// <param name="PublicBaseUrl">Optional externally reachable base URL used for share links.</param>
+/// <param name="ApprovalAuth">Optional approval-auth configuration for HTTP and admin callers.</param>
 public sealed record SharpClawServerOptions(
     string Host,
     int Port,
-    string? PublicBaseUrl = null);
+    string? PublicBaseUrl = null,
+    SharpClawApprovalAuthOptions? ApprovalAuth = null);
 
 /// <summary>
 /// Configures browser-based connection entry points for providers or MCP servers.

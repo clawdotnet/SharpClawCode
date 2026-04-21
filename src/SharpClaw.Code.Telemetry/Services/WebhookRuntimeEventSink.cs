@@ -34,15 +34,32 @@ public sealed class WebhookRuntimeEventSink(
         var payload = JsonSerializer.Serialize(envelope, ProtocolJsonContext.Default.RuntimeEventEnvelope);
         foreach (var url in telemetryOptions.EventWebhookUrls)
         {
-            try
+            var attempt = 0;
+            while (attempt++ < Math.Max(1, telemetryOptions.WebhookMaxAttempts))
             {
-                using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-                using var response = await httpClient.PostAsync(url, content, cancellationToken).ConfigureAwait(false);
-                response.EnsureSuccessStatusCode();
-            }
-            catch (Exception exception)
-            {
-                logger.LogWarning(exception, "Failed to post runtime event {EventId} to webhook {WebhookUrl}.", envelope.Event.EventId, url);
+                try
+                {
+                    using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+                    using var response = await httpClient.PostAsync(url, content, cancellationToken).ConfigureAwait(false);
+                    response.EnsureSuccessStatusCode();
+                    break;
+                }
+                catch (Exception exception) when (attempt < Math.Max(1, telemetryOptions.WebhookMaxAttempts))
+                {
+                    logger.LogWarning(
+                        exception,
+                        "Retrying runtime event {EventId} webhook delivery to {WebhookUrl} after attempt {Attempt}.",
+                        envelope.Event.EventId,
+                        url,
+                        attempt);
+                    var delay = TimeSpan.FromMilliseconds(telemetryOptions.WebhookInitialBackoffMilliseconds * Math.Pow(2, attempt - 1));
+                    await Task.Delay(delay, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    logger.LogWarning(exception, "Failed to post runtime event {EventId} to webhook {WebhookUrl}.", envelope.Event.EventId, url);
+                    break;
+                }
             }
         }
     }

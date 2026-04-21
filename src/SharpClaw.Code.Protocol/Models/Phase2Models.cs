@@ -66,6 +66,7 @@ public sealed record ToolPackageReference(
     string Version,
     string PackageType,
     string EntryAssembly,
+    string[]? EntryArguments = null,
     string? TargetFramework = null,
     string[]? Tags = null);
 
@@ -108,7 +109,8 @@ public sealed record ToolPackageManifest(
 public sealed record InstalledToolPackage(
     ToolPackageManifest Manifest,
     DateTimeOffset InstalledAtUtc,
-    string InstallSource);
+    string InstallSource,
+    ToolPackageResolvedInstall? ResolvedInstall = null);
 
 /// <summary>
 /// Request payload used to install a packaged tool manifest into a workspace catalog.
@@ -119,4 +121,6 @@ public sealed record InstalledToolPackage(
 public sealed record ToolPackageInstallRequest(
     ToolPackageManifest Manifest,
     string InstallSource,
-    bool EnableAfterInstall = true);
+    bool EnableAfterInstall = true,
+    string? SourceReference = null,
+    string? PackageSource = null);

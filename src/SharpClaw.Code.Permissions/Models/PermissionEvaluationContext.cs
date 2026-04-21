@@ -19,6 +19,7 @@ namespace SharpClaw.Code.Permissions.Models;
 /// <param name="ToolOriginatingPluginId">The plugin id when executing a plugin-surfaced tool; otherwise null.</param>
 /// <param name="ToolOriginatingPluginTrust">The manifest trust tier for the originating plugin tool, if any.</param>
 /// <param name="PrimaryMode">Build vs plan workflow; plan mode blocks mutating tools.</param>
+/// <param name="TenantId">The active tenant identifier, when one is bound to the host context.</param>
 public sealed record PermissionEvaluationContext(
     string SessionId,
     string WorkspaceRoot,
@@ -33,4 +34,5 @@ public sealed record PermissionEvaluationContext(
     IReadOnlyCollection<string>? TrustedMcpServerNames,
     string? ToolOriginatingPluginId = null,
     PluginTrustLevel? ToolOriginatingPluginTrust = null,
-    PrimaryMode PrimaryMode = PrimaryMode.Build);
+    PrimaryMode PrimaryMode = PrimaryMode.Build,
+    string? TenantId = null);

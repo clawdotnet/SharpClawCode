@@ -18,8 +18,10 @@ public static class PermissionsServiceCollectionExtensions
     public static IServiceCollection AddSharpClawPermissions(this IServiceCollection services)
     {
         services.AddSingleton<ISessionApprovalMemory, SessionApprovalMemory>();
+        services.AddSingleton<IApprovalPrincipalAccessor, ApprovalPrincipalAccessor>();
         services.AddSingleton<ConsoleApprovalService>();
         services.AddSingleton<NonInteractiveApprovalService>();
+        services.AddSingleton<IApprovalTransport, AuthenticatedApprovalTransport>();
         services.AddSingleton<IApprovalService, ApprovalService>();
         services.AddSingleton<IPermissionRule, WorkspaceBoundaryRule>();
         services.AddSingleton<IPermissionRule, PrimaryModeMutationRule>();

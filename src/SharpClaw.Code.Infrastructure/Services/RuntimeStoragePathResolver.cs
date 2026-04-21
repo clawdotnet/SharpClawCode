@@ -94,12 +94,27 @@ public sealed class RuntimeStoragePathResolver(
         => pathService.Combine(GetSharpClawRoot(workspacePath), "exports");
 
     /// <inheritdoc />
+    public string GetTelemetryRoot(string workspacePath)
+        => pathService.Combine(GetSharpClawRoot(workspacePath), "telemetry");
+
+    /// <inheritdoc />
+    public string GetUsageMeteringDatabasePath(string workspacePath)
+        => pathService.Combine(GetTelemetryRoot(workspacePath), "usage-metering.db");
+
+    /// <inheritdoc />
     public string GetSessionStoreDatabasePath(string workspacePath)
         => pathService.Combine(GetSharpClawRoot(workspacePath), "session-store.db");
 
     /// <inheritdoc />
     public string GetToolPackagesRoot(string workspacePath)
         => pathService.Combine(GetSharpClawRoot(workspacePath), "tool-packages");
+
+    /// <inheritdoc />
+    public string GetExtractedToolPackageRoot(string workspacePath, string packageId, string version)
+        => pathService.Combine(
+            GetToolPackagesRoot(workspacePath),
+            "extracted",
+            $"{SanitizeSegment(packageId)}-{SanitizeSegment(version)}");
 
     /// <inheritdoc />
     public string GetUserSharpClawRoot()

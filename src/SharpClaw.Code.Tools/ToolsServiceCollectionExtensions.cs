@@ -14,6 +14,7 @@ using SharpClaw.Code.Tools.Services;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
 using SharpClaw.Code.Web;
+using SharpClaw.Code.Protocol.Abstractions;
 
 namespace SharpClaw.Code.Tools;
 
@@ -89,7 +90,8 @@ public static class ToolsServiceCollectionExtensions
         services.AddSingleton<IToolExecutor>(serviceProvider => new ToolExecutor(
             serviceProvider.GetRequiredService<IToolRegistry>(),
             serviceProvider.GetRequiredService<IPermissionPolicyEngine>(),
-            serviceProvider.GetService<IRuntimeEventPublisher>()));
+            serviceProvider.GetService<IRuntimeEventPublisher>(),
+            serviceProvider.GetService<IRuntimeHostContextAccessor>()));
         services.AddSingleton<IToolPackageService, ToolPackageService>();
         return services;
     }

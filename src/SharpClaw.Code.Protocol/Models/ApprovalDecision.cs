@@ -21,4 +21,5 @@ public sealed record ApprovalDecision(
     string? Reason,
     DateTimeOffset ResolvedAtUtc,
     DateTimeOffset? ExpiresAtUtc,
-    bool RememberForSession = false);
+    bool RememberForSession = false,
+    ApprovalPrincipal? Principal = null);

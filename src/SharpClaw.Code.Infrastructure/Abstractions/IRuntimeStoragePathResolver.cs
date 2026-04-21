@@ -56,11 +56,20 @@ public interface IRuntimeStoragePathResolver
     /// <summary>Gets the workspace exports directory path.</summary>
     string GetExportsRoot(string workspacePath);
 
+    /// <summary>Gets the workspace telemetry directory path.</summary>
+    string GetTelemetryRoot(string workspacePath);
+
+    /// <summary>Gets the SQLite database path used by usage metering.</summary>
+    string GetUsageMeteringDatabasePath(string workspacePath);
+
     /// <summary>Gets the SQLite database path used by alternate session and event stores.</summary>
     string GetSessionStoreDatabasePath(string workspacePath);
 
     /// <summary>Gets the tool package catalog directory path.</summary>
     string GetToolPackagesRoot(string workspacePath);
+
+    /// <summary>Gets the extracted package directory path for a packaged tool install.</summary>
+    string GetExtractedToolPackageRoot(string workspacePath, string packageId, string version);
 
     /// <summary>Gets the user-level SharpClaw root with any active tenant partition applied.</summary>
     string GetUserSharpClawRoot();

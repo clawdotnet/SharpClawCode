@@ -1,9 +1,6 @@
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
-using SharpClaw.Code.Protocol.Commands;
+using SharpClaw.Code;
 using SharpClaw.Code.Protocol.Enums;
-using SharpClaw.Code.Runtime.Abstractions;
-using SharpClaw.Code.Runtime.Composition;
+using SharpClaw.Code.Protocol.Models;
 
 if (args.Length == 0)
 {
@@ -13,32 +10,31 @@ if (args.Length == 0)
 
 var prompt = string.Join(' ', args);
 
-var builder = Host.CreateApplicationBuilder(args);
-builder.Services.AddSharpClawRuntime(builder.Configuration);
-
-using var host = builder.Build();
-await host.StartAsync();
-
-var runtime = host.Services.GetRequiredService<IConversationRuntime>();
+await using var runtimeHost = new SharpClawRuntimeHostBuilder(args).Build();
+await runtimeHost.StartAsync();
 
 var workspacePath = Directory.GetCurrentDirectory();
-var session = await runtime.CreateSessionAsync(
+var hostContext = new RuntimeHostContext(
+    HostId: "minimal-console-agent",
+    IsEmbeddedHost: true);
+var session = await runtimeHost.CreateSessionAsync(
     workspacePath,
     PermissionMode.ReadOnly,
     OutputFormat.Text,
+    hostContext,
     CancellationToken.None);
 
-var request = new RunPromptRequest(
-    Prompt: prompt,
-    SessionId: session.Id,
-    WorkingDirectory: workspacePath,
-    PermissionMode: PermissionMode.ReadOnly,
-    OutputFormat: OutputFormat.Text,
-    Metadata: null);
-
-var result = await runtime.RunPromptAsync(request, CancellationToken.None);
+var result = await runtimeHost.ExecutePromptAsync(
+    prompt,
+    workspacePath,
+    model: "default",
+    permissionMode: PermissionMode.ReadOnly,
+    outputFormat: OutputFormat.Text,
+    sessionId: session.Id,
+    hostContext: hostContext,
+    cancellationToken: CancellationToken.None);
 
 Console.WriteLine(result.FinalOutput ?? "(no output)");
 
-await host.StopAsync();
+await runtimeHost.StopAsync();
 return 0;

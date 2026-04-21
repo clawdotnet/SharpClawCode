@@ -118,7 +118,8 @@ public sealed class PermissionPolicyEngine(
         CancellationToken cancellationToken)
     {
         var approvalKey = CreateApprovalKey(request, context);
-        if (ruleResult.CanRememberApproval && sessionApprovalMemory.TryGet(context.SessionId, approvalKey) is { } rememberedEntry && rememberedEntry.Decision.Approved)
+        var approvalMemorySessionId = GetApprovalMemorySessionId(context);
+        if (ruleResult.CanRememberApproval && sessionApprovalMemory.TryGet(approvalMemorySessionId, approvalKey) is { } rememberedEntry && rememberedEntry.Decision.Approved)
         {
             return CreateDecision(
                 request.ApprovalScope,
@@ -137,7 +138,7 @@ public sealed class PermissionPolicyEngine(
         var approvalDecision = await approvalService.RequestApprovalAsync(approvalRequest, context, cancellationToken).ConfigureAwait(false);
         if (approvalDecision.Approved && ruleResult.CanRememberApproval && approvalDecision.RememberForSession)
         {
-            sessionApprovalMemory.Store(context.SessionId, approvalKey, new ApprovalMemoryEntry(approvalDecision));
+            sessionApprovalMemory.Store(approvalMemorySessionId, approvalKey, new ApprovalMemoryEntry(approvalDecision));
         }
 
         return CreateDecision(
@@ -180,11 +181,17 @@ public sealed class PermissionPolicyEngine(
             request.ApprovalScope,
             context.SourceKind,
             context.SourceName ?? string.Empty,
+            context.TenantId ?? string.Empty,
             request.WorkingDirectory ?? string.Empty,
             context.ToolOriginatingPluginId ?? string.Empty,
             trustSegment,
             pathSegment);
     }
+
+    private static string GetApprovalMemorySessionId(PermissionEvaluationContext context)
+        => string.IsNullOrWhiteSpace(context.TenantId)
+            ? context.SessionId
+            : $"{context.TenantId}::{context.SessionId}";
 
     private static string TryReadPathArgument(string argumentsJson)
     {
