@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Sockets;
@@ -67,7 +68,6 @@ public sealed class ApprovalAuthIntegrationTests
                 BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                 Timeout = TimeSpan.FromSeconds(10),
             };
-            await WaitForServerAsync(httpClient, CancellationToken.None);
 
             using var unauthenticatedAdminResponse = await httpClient.GetAsync("v1/admin/providers", CancellationToken.None);
             unauthenticatedAdminResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -130,10 +130,18 @@ public sealed class ApprovalAuthIntegrationTests
             : content;
     }
 
-    private static async Task WaitForServerAsync(HttpClient httpClient, CancellationToken cancellationToken)
+    private static async Task WaitForServerAsync(HttpClient httpClient, Task serverTask, TimeSpan timeout, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 30; attempt++)
+        var timer = Stopwatch.StartNew();
+        var deadline = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < deadline)
         {
+            if (serverTask.IsCompleted)
+            {
+                await serverTask.ConfigureAwait(false);
+            }
+
             try
             {
                 using var response = await httpClient.GetAsync("v1/status", cancellationToken).ConfigureAwait(false);
@@ -145,11 +153,19 @@ public sealed class ApprovalAuthIntegrationTests
             catch (HttpRequestException)
             {
             }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested && !serverTask.IsCompleted)
+            {
+            }
 
             await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
 
-        throw new TimeoutException("Embedded workspace HTTP server did not become ready.");
+        if (serverTask.IsCompleted)
+        {
+            await serverTask.ConfigureAwait(false);
+        }
+
+        throw new TimeoutException($"Embedded workspace HTTP server did not become ready within {timer.ElapsedMilliseconds}ms.");
     }
 
     private static async Task<(int Port, Task ServerTask)> StartServerAsync(
@@ -170,23 +186,33 @@ public sealed class ApprovalAuthIntegrationTests
                     PermissionMode: PermissionMode.WorkspaceWrite,
                     OutputFormat: OutputFormat.Json),
                 cancellationToken);
-            await Task.Delay(100, CancellationToken.None).ConfigureAwait(false);
-            if (!serverTask.IsFaulted)
-            {
-                return (port, serverTask);
-            }
 
             try
             {
-                await serverTask.ConfigureAwait(false);
+                using var httpClient = new HttpClient
+                {
+                    BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
+                    Timeout = TimeSpan.FromMilliseconds(500),
+                };
+                await WaitForServerAsync(httpClient, serverTask, TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
+                return (port, serverTask);
             }
-            catch (HttpListenerException exception) when (exception.Message.Contains("Address already in use", StringComparison.OrdinalIgnoreCase))
+            catch (HttpListenerException exception) when (IsAddressInUse(exception))
             {
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
             }
         }
 
         throw new InvalidOperationException("The embedded workspace HTTP server could not bind to a free local port.");
     }
+
+    private static bool IsAddressInUse(HttpListenerException exception)
+        => exception.Message.Contains("Address already in use", StringComparison.OrdinalIgnoreCase)
+            || exception.ErrorCode == 48
+            || exception.ErrorCode == 10048;
 
     private static int FindFreePort()
     {
