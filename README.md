@@ -13,7 +13,7 @@ The repository now ships both a terminal-first agent runtime and an embeddable h
 
 ## What It Is
 
-SharpClaw Code is an open-source runtime for building and operating coding-agent experiences in the .NET ecosystem.
+SharpClaw Code is an open-source runtime for building and operating coding-agent experiences in the .NET ecosystem. think claude code meets opencode in C#
 
 It is designed for:
 
