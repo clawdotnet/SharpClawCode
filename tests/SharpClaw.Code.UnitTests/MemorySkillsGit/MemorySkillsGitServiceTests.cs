@@ -135,7 +135,7 @@ public sealed class MemorySkillsGitServiceTests
         var snapshot = await service.GetSnapshotAsync("/repo-linked", CancellationToken.None);
 
         snapshot.IsLinkedWorktree.Should().BeTrue();
-        snapshot.MainWorktreePath.Should().Be("/repo");
+        Path.GetFullPath(snapshot.MainWorktreePath!).Should().Be(Path.GetFullPath("/repo"));
         snapshot.WorktreeCount.Should().Be(2);
     }
 
