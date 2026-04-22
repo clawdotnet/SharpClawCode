@@ -162,8 +162,10 @@ public sealed class GitWorkspaceService(IProcessRunner processRunner) : IGitWork
             throw new InvalidOperationException(BuildGitFailureMessage("Failed to list git worktrees.", listResult));
         }
 
-        var mainWorktreePath = ResolveMainWorktreePath(commonDirResult, repositoryRoot);
-        var worktrees = ParseWorktreeEntries(listResult.StandardOutput, repositoryRoot, mainWorktreePath);
+        var mainWorktreePath = commonDirResult.ExitCode == 0
+            ? ResolveMainWorktreePath(commonDirResult, repositoryRoot)
+            : repositoryRoot;
+        var worktrees = ParseWorktreeEntries(listResult.StandardOutput, repositoryRoot);
         if (worktrees.Count == 0)
         {
             worktrees =
@@ -251,7 +253,7 @@ public sealed class GitWorkspaceService(IProcessRunner processRunner) : IGitWork
             : ["worktree", "add", "-b", branchName, path, startPoint.Trim()];
     }
 
-    private static List<GitWorktreeEntry> ParseWorktreeEntries(string output, string repositoryRoot, string mainWorktreePath)
+    private static List<GitWorktreeEntry> ParseWorktreeEntries(string output, string repositoryRoot)
     {
         var entries = new List<GitWorktreeEntry>();
         string? currentPath = null;
@@ -376,13 +378,28 @@ public sealed class GitWorkspaceService(IProcessRunner processRunner) : IGitWork
             return repositoryRoot;
         }
 
-        if (commonDir.EndsWith($"{Path.DirectorySeparatorChar}.git", OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+        var normalizedCommonDir = NormalizeDirectorySeparators(commonDir);
+        var comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        var dotGitSuffix = $"{Path.DirectorySeparatorChar}.git";
+        if (normalizedCommonDir.EndsWith(dotGitSuffix, comparison))
         {
-            return Path.GetDirectoryName(commonDir) ?? repositoryRoot;
+            return Path.GetDirectoryName(normalizedCommonDir) ?? repositoryRoot;
+        }
+
+        var linkedMarker = $"{Path.DirectorySeparatorChar}.git{Path.DirectorySeparatorChar}worktrees{Path.DirectorySeparatorChar}";
+        var linkedMarkerIndex = normalizedCommonDir.LastIndexOf(linkedMarker, comparison);
+        if (linkedMarkerIndex > 0)
+        {
+            return normalizedCommonDir[..linkedMarkerIndex];
         }
 
         return repositoryRoot;
     }
+
+    private static string NormalizeDirectorySeparators(string path)
+        => Path.DirectorySeparatorChar == Path.AltDirectorySeparatorChar
+            ? path
+            : path.Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
 
     private static string? NormalizeBranch(string? branch)
     {

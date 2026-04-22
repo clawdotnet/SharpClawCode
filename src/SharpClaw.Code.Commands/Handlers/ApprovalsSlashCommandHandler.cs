@@ -33,7 +33,7 @@ public sealed class ApprovalsSlashCommandHandler(
         if (string.Equals(command.Arguments[0], "reset", StringComparison.OrdinalIgnoreCase)
             || string.Equals(command.Arguments[0], "clear", StringComparison.OrdinalIgnoreCase))
         {
-            replState.ApprovalSettingsOverride = ApprovalSettings.Empty;
+            replState.ApprovalSettingsOverride = null;
             return RenderAsync("Auto-approval reset for the next prompt.", context, cancellationToken);
         }
 

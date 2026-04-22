@@ -69,23 +69,53 @@ public sealed class LocalFileSystem : IFileSystem
     /// <inheritdoc />
     public async Task<string?> ReadAllTextIfExistsAsync(string path, CancellationToken cancellationToken)
     {
-        if (!File.Exists(path))
+        for (var attempt = 0; ; attempt++)
         {
-            return null;
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!File.Exists(path))
+            {
+                return null;
+            }
 
-        return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException) when (attempt < MaxLockRetries)
+            {
+                await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException) when (attempt < MaxLockRetries)
+            {
+                await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <inheritdoc />
     public async Task<string[]> ReadAllLinesIfExistsAsync(string path, CancellationToken cancellationToken)
     {
-        if (!File.Exists(path))
+        for (var attempt = 0; ; attempt++)
         {
-            return [];
-        }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!File.Exists(path))
+            {
+                return [];
+            }
 
-        return await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await File.ReadAllLinesAsync(path, cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException) when (attempt < MaxLockRetries)
+            {
+                await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+            catch (UnauthorizedAccessException) when (attempt < MaxLockRetries)
+            {
+                await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
+            }
+        }
     }
 
     /// <inheritdoc />

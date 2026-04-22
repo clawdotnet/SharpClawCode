@@ -31,7 +31,7 @@ internal static class ApprovalSettingsResolver
     {
         ArgumentNullException.ThrowIfNull(settings);
 
-        var scopes = settings.AutoApproveScopes
+        var scopes = (settings.AutoApproveScopes ?? [])
             .Where(scope => scope != ApprovalScope.None)
             .Distinct()
             .OrderBy(static scope => scope)

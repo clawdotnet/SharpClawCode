@@ -136,6 +136,33 @@ public sealed class ModeAndCliOptionsTests
         renderer.LastCommandResult!.Message.Should().Contain("Auto-approval override set");
     }
 
+    [Fact]
+    public async Task Approvals_slash_command_reset_should_clear_override()
+    {
+        var replState = new ReplInteractionState
+        {
+            ApprovalSettingsOverride = new ApprovalSettings([ApprovalScope.ShellExecution], 1)
+        };
+        var renderer = new StubOutputRenderer();
+        var handler = new ApprovalsSlashCommandHandler(replState, new OutputRendererDispatcher([renderer]));
+        var context = new CommandExecutionContext(
+            WorkingDirectory: "/workspace",
+            Model: null,
+            PermissionMode: PermissionMode.WorkspaceWrite,
+            OutputFormat: OutputFormat.Text,
+            PrimaryMode: PrimaryMode.Build,
+            SessionId: null);
+
+        var exitCode = await handler.ExecuteAsync(
+            new SlashCommandParseResult(true, "approvals", ["reset"]),
+            context,
+            CancellationToken.None);
+
+        exitCode.Should().Be(0);
+        replState.ApprovalSettingsOverride.Should().BeNull();
+        renderer.LastCommandResult!.Message.Should().Contain("reset");
+    }
+
     private sealed class StubOutputRenderer : IOutputRenderer
     {
         public OutputFormat Format => OutputFormat.Text;

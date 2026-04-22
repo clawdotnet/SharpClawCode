@@ -118,10 +118,25 @@ public sealed class MemorySkillsGitServiceTests
         var pruned = await service.PruneWorktreesAsync("/repo", CancellationToken.None);
 
         initial.Worktrees.Should().HaveCount(2);
-        created.Worktree.Path.Should().Be("/repo-new");
+        created.Worktree.Path.Should().Be(Path.GetFullPath(Path.Combine("/repo", "../repo-new")));
         created.Worktree.Branch.Should().Be("feature/new");
         pruned.PrunedCount.Should().Be(1);
         pruned.Worktrees.Should().NotContain(entry => entry.IsPrunable);
+    }
+
+    /// <summary>
+    /// Ensures linked worktrees resolve the main worktree path from git-common-dir output.
+    /// </summary>
+    [Fact]
+    public async Task GitWorkspaceService_should_detect_linked_worktree_main_path()
+    {
+        IGitWorkspaceService service = new GitWorkspaceService(new LinkedWorktreeProcessRunner());
+
+        var snapshot = await service.GetSnapshotAsync("/repo-linked", CancellationToken.None);
+
+        snapshot.IsLinkedWorktree.Should().BeTrue();
+        snapshot.MainWorktreePath.Should().Be("/repo");
+        snapshot.WorktreeCount.Should().Be(2);
     }
 
     private static string CreateTemporaryWorkspace()
@@ -202,5 +217,35 @@ public sealed class MemorySkillsGitServiceTests
         }
 
         private sealed record WorktreeState(string Branch, string Head, bool IsPrunable);
+    }
+
+    private sealed class LinkedWorktreeProcessRunner : IProcessRunner
+    {
+        public Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken cancellationToken)
+        {
+            var output = request.Arguments switch
+            {
+                ["rev-parse", "--show-toplevel"] => "/repo-linked\n",
+                ["rev-parse", "--path-format=absolute", "--git-common-dir"] => "/repo/.git/worktrees/repo-linked\n",
+                ["branch", "--show-current"] => "feature/worktrees\n",
+                ["rev-parse", "HEAD"] => "def456\n",
+                ["status", "--porcelain=v1", "--branch"] => "## feature/worktrees\n",
+                ["diff", "--no-ext-diff", "--stat"] => string.Empty,
+                ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"] => "0\t0\n",
+                ["worktree", "list", "--porcelain"] => """
+                    worktree /repo
+                    HEAD abc123
+                    branch refs/heads/main
+
+                    worktree /repo-linked
+                    HEAD def456
+                    branch refs/heads/feature/worktrees
+
+                    """,
+                _ => throw new InvalidOperationException($"Unexpected git command: {string.Join(' ', request.Arguments)}")
+            };
+
+            return Task.FromResult(new ProcessRunResult(0, output, string.Empty, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow));
+        }
     }
 }

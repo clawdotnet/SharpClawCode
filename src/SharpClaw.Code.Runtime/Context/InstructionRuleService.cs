@@ -171,10 +171,7 @@ public sealed class InstructionRuleService(
         }
 
         var maxForDocument = Math.Min(MaxDocumentCharacters, remaining);
-        var isTruncated = normalized.Length > maxForDocument;
-        var trimmed = isTruncated
-            ? normalized[..Math.Max(0, maxForDocument - 28)].TrimEnd() + Environment.NewLine + "[Instruction truncated]"
-            : normalized;
+        var trimmed = TrimToBudget(normalized, maxForDocument, out var isTruncated);
 
         if (string.IsNullOrWhiteSpace(trimmed))
         {
@@ -229,6 +226,41 @@ public sealed class InstructionRuleService(
 
     private static bool BudgetExhausted(List<InstructionRuleDocument> documents, RuleBudget budget)
         => documents.Count >= MaxDocumentCount || budget.TotalCharacters >= MaxTotalCharacters;
+
+    private static string? TrimToBudget(string content, int maxCharacters, out bool isTruncated)
+    {
+        isTruncated = false;
+        if (maxCharacters <= 0)
+        {
+            return null;
+        }
+
+        if (content.Length <= maxCharacters)
+        {
+            return content;
+        }
+
+        isTruncated = true;
+        const string marker = "[Instruction truncated]";
+        var markerWithNewLineLength = marker.Length + Environment.NewLine.Length;
+        if (maxCharacters > markerWithNewLineLength)
+        {
+            var prefixLength = Math.Max(0, maxCharacters - markerWithNewLineLength);
+            var prefix = content[..prefixLength].TrimEnd();
+            if (!string.IsNullOrWhiteSpace(prefix))
+            {
+                return prefix + Environment.NewLine + marker;
+            }
+        }
+
+        var fallback = content[..maxCharacters].TrimEnd();
+        if (!string.IsNullOrWhiteSpace(fallback))
+        {
+            return fallback;
+        }
+
+        return marker[..Math.Min(marker.Length, maxCharacters)];
+    }
 
     private sealed class RuleBudget
     {
