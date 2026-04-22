@@ -50,6 +50,7 @@ public sealed class ConversationRuntime(
     CheckpointMutationCoordinator checkpointMutationCoordinator,
     ISessionCoordinator sessionCoordinator,
     IPortableSessionBundleService portableSessionBundleService,
+    IPlanWorkflowService planWorkflowService,
     ISpecWorkflowService specWorkflowService,
     ISharpClawConfigService sharpClawConfigService,
     IAgentCatalogService agentCatalogService,
@@ -128,6 +129,7 @@ public sealed class ConversationRuntime(
         }
 
         session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
+        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
         var sessionMutex = GetSessionMutex(workspacePath, session.Id);
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -246,15 +248,31 @@ public sealed class ConversationRuntime(
         try
         {
             var effectivePrimary = PrimaryModeResolver.ResolveEffective(request, session);
+            var effectiveApprovalSettings = ApprovalSettingsResolver.ResolveEffective(request, session);
             var runnerRequest = request with
             {
                 WorkingDirectory = workspacePath,
-                Metadata = MergeMetadata(request.Metadata, request.PermissionMode, request.OutputFormat, effectivePrimary)
+                Metadata = MergeMetadata(request.Metadata, request.PermissionMode, request.OutputFormat, effectivePrimary, effectiveApprovalSettings),
+                ApprovalSettings = effectiveApprovalSettings
             };
 
             var turnRunResult = await turnRunner.RunAsync(session, turn, runnerRequest, cancellationToken).ConfigureAwait(false);
             SpecArtifactSet? specArtifacts = null;
-            if (effectivePrimary == PrimaryMode.Spec)
+            PlanExecutionResult? planResult = null;
+            if (effectivePrimary == PrimaryMode.Plan)
+            {
+                planResult = await planWorkflowService
+                    .MaterializeAsync(workspacePath, session.Id, request.Prompt, turnRunResult.Output, cancellationToken)
+                    .ConfigureAwait(false);
+                session = await sessionStore.GetByIdAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false) ?? session;
+
+                turnRunResult = turnRunResult with
+                {
+                    Output = planWorkflowService.RenderCompletionMessage(planResult),
+                    Summary = planResult.Summary
+                };
+            }
+            else if (effectivePrimary == PrimaryMode.Spec)
             {
                 specArtifacts = await specWorkflowService
                     .MaterializeAsync(workspacePath, request.Prompt, turnRunResult.Output, cancellationToken)
@@ -396,7 +414,8 @@ public sealed class ConversationRuntime(
                 Usage: turnRunResult.Usage,
                 Checkpoint: checkpoint,
                 Events: runtimeEvents.ToArray(),
-                SpecArtifacts: finalSpecArtifacts);
+                SpecArtifacts: finalSpecArtifacts,
+                PlanResult: planResult);
         }
         catch (OperationCanceledException exception)
         {
@@ -472,7 +491,8 @@ public sealed class ConversationRuntime(
                 PrimaryMode: context.PrimaryMode,
                 AgentId: context.AgentId,
                 IsInteractive: context.IsInteractive,
-                HostContext: context.HostContext),
+                HostContext: context.HostContext,
+                ApprovalSettings: context.ApprovalSettings),
             cancellationToken);
 
     /// <inheritdoc />
@@ -519,7 +539,8 @@ public sealed class ConversationRuntime(
                 PrimaryMode: primary,
                 AgentId: definition.AgentId,
                 IsInteractive: context.IsInteractive,
-                HostContext: context.HostContext),
+                HostContext: context.HostContext,
+                ApprovalSettings: context.ApprovalSettings),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -532,7 +553,8 @@ public sealed class ConversationRuntime(
             context.Model,
             context.PermissionMode,
             context.OutputFormat,
-            context.PrimaryMode);
+            context.PrimaryMode,
+            context.ApprovalSettings);
         var report = await operationalDiagnostics
             .BuildStatusReportAsync(input, cancellationToken)
             .ConfigureAwait(false);
@@ -556,7 +578,8 @@ public sealed class ConversationRuntime(
             context.Model,
             context.PermissionMode,
             context.OutputFormat,
-            context.PrimaryMode);
+            context.PrimaryMode,
+            context.ApprovalSettings);
         var report = await operationalDiagnostics.RunDoctorAsync(input, cancellationToken).ConfigureAwait(false);
         var payload = JsonSerializer.Serialize(report, ProtocolJsonContext.Default.DoctorReport);
         var exitCode = report.OverallStatus == OperationalCheckStatus.Error ? 1 : 0;
@@ -579,7 +602,8 @@ public sealed class ConversationRuntime(
             context.Model,
             context.PermissionMode,
             context.OutputFormat,
-            context.PrimaryMode);
+            context.PrimaryMode,
+            context.ApprovalSettings);
         var inspection = await operationalDiagnostics
             .InspectSessionAsync(sessionId, input, cancellationToken)
             .ConfigureAwait(false);
@@ -1034,6 +1058,66 @@ public sealed class ConversationRuntime(
         return updated;
     }
 
+    private async Task<ConversationSession> EnsureApprovalSettingsPersistedAsync(
+        string workspacePath,
+        ConversationSession session,
+        ApprovalSettings? approvalSettings,
+        CancellationToken cancellationToken)
+    {
+        if (approvalSettings is null)
+        {
+            return session;
+        }
+
+        var normalized = ApprovalSettingsResolver.Normalize(approvalSettings);
+        var metadata = CloneMetadata(session.Metadata);
+        var changed = false;
+
+        if (normalized.AutoApproveScopes.Count == 0)
+        {
+            changed |= metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
+        }
+        else
+        {
+            var serializedScopes = JsonSerializer.Serialize(normalized.AutoApproveScopes.ToList(), ProtocolJsonContext.Default.ListApprovalScope);
+            if (!metadata.TryGetValue(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson, out var currentScopes)
+                || !string.Equals(currentScopes, serializedScopes, StringComparison.Ordinal))
+            {
+                metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson] = serializedScopes;
+                changed = true;
+            }
+        }
+
+        if (normalized.AutoApproveBudget is null)
+        {
+            changed |= metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
+        }
+        else
+        {
+            var budgetText = normalized.AutoApproveBudget.Value.ToString(CultureInfo.InvariantCulture);
+            if (!metadata.TryGetValue(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget, out var currentBudget)
+                || !string.Equals(currentBudget, budgetText, StringComparison.Ordinal))
+            {
+                metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget] = budgetText;
+                changed = true;
+            }
+        }
+
+        if (!changed)
+        {
+            return session;
+        }
+
+        var updated = session with
+        {
+            Metadata = metadata,
+            UpdatedAtUtc = systemClock.UtcNow,
+        };
+
+        await sessionStore.SaveAsync(workspacePath, updated, cancellationToken).ConfigureAwait(false);
+        return updated;
+    }
+
     private static string FormatDoctorMessage(DoctorReport report)
         => string.Join(
             Environment.NewLine,
@@ -1048,8 +1132,15 @@ public sealed class ConversationRuntime(
         var sessionLabel = report.LatestSessionId is null
             ? "no session"
             : $"{report.LatestSessionId} ({report.LatestSessionState})";
+        var approvalLabel = report.ApprovalSettings is null
+            ? "manual approvals"
+            : report.ApprovalSettings.AutoApproveScopes.Count == 0
+                ? "manual approvals"
+                : report.ApprovalSettings.AutoApproveBudget is { } budget
+                    ? $"auto-approve {string.Join(',', report.ApprovalSettings.AutoApproveScopes)} (budget {budget})"
+                    : $"auto-approve {string.Join(',', report.ApprovalSettings.AutoApproveScopes)}";
         var headline =
-            $"Ready · {report.WorkspaceRoot} · model {report.SelectedModel} · mode {report.PrimaryMode} · latest {sessionLabel} · "
+            $"Ready · {report.WorkspaceRoot} · model {report.SelectedModel} · mode {report.PrimaryMode} · approvals {approvalLabel} · latest {sessionLabel} · "
             + $"MCP {report.McpReadyCount}/{report.McpServerCount} · plugins {report.PluginEnabledCount}/{report.PluginInstalledCount} · "
             + $"LSP {report.LspServerCount} · diagnostics {report.DiagnosticsErrorCount} error(s), {report.DiagnosticsWarningCount} warning(s)";
         var notable = report.Checks.FirstOrDefault(static c
@@ -1483,12 +1574,33 @@ public sealed class ConversationRuntime(
         Dictionary<string, string>? metadata,
         PermissionMode permissionMode,
         OutputFormat outputFormat,
-        PrimaryMode primaryMode)
+        PrimaryMode primaryMode,
+        ApprovalSettings? approvalSettings)
     {
         var merged = CloneMetadata(metadata);
         merged["permissionMode"] = permissionMode.ToString();
         merged["outputFormat"] = outputFormat.ToString();
         merged[SharpClawWorkflowMetadataKeys.PrimaryMode] = primaryMode.ToString();
+        if (approvalSettings is not null && approvalSettings.AutoApproveScopes.Count > 0)
+        {
+            merged[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson] = JsonSerializer.Serialize(
+                approvalSettings.AutoApproveScopes.ToList(),
+                ProtocolJsonContext.Default.ListApprovalScope);
+        }
+        else
+        {
+            merged.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
+        }
+
+        if (approvalSettings?.AutoApproveBudget is { } budget)
+        {
+            merged[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget] = budget.ToString(CultureInfo.InvariantCulture);
+        }
+        else
+        {
+            merged.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
+        }
+
         return merged;
     }
 

@@ -12,8 +12,7 @@ namespace SharpClaw.Code.Commands;
 /// Implements the prompt command.
 /// </summary>
 public sealed class PromptCommandHandler(
-    IRuntimeCommandService runtimeCommandService,
-    OutputRendererDispatcher outputRendererDispatcher) : ICommandHandler
+    PromptInvocationService promptInvocationService) : ICommandHandler
 {
     /// <inheritdoc />
     public string Name => "prompt";
@@ -27,37 +26,18 @@ public sealed class PromptCommandHandler(
         var command = new Command(Name, Description);
         var promptArgument = new Argument<string[]>("text")
         {
-            Description = "The prompt text to execute."
+            Description = "The prompt text to execute. When omitted, stdin is used if redirected.",
+            Arity = ArgumentArity.ZeroOrMore,
         };
 
         command.Arguments.Add(promptArgument);
-        command.SetAction(async (parseResult, cancellationToken) =>
-        {
-            var prompt = string.Join(' ', parseResult.GetValue(promptArgument) ?? []).Trim();
-            var context = globalOptions.Resolve(parseResult);
-            try
-            {
-                var result = await runtimeCommandService.ExecutePromptAsync(prompt, context.ToRuntimeCommandContext(), cancellationToken);
-                await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
-                return 0;
-            }
-            catch (ProviderExecutionException exception)
-            {
-                await outputRendererDispatcher.RenderCommandResultAsync(
-                    CreateProviderFailureResult(exception, context.OutputFormat),
-                    context.OutputFormat,
-                    cancellationToken);
-                return 1;
-            }
-        });
+        command.SetAction((parseResult, cancellationToken) =>
+            promptInvocationService.ExecuteAsync(
+                parseResult.GetValue(promptArgument) ?? [],
+                globalOptions.Resolve(parseResult),
+                forceNonInteractive: false,
+                cancellationToken));
 
         return command;
     }
-    private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
-        => new(
-            Succeeded: false,
-            ExitCode: 1,
-            OutputFormat: outputFormat,
-            Message: $"Provider failure ({exception.Kind}): {exception.Message}",
-            DataJson: null);
 }

@@ -17,6 +17,8 @@ public sealed class CliCommandFactory(
     GlobalCliOptions globalCliOptions,
     IReplHost replHost,
     ReplCommandHandler replCommandHandler,
+    ICliInvocationEnvironment cliInvocationEnvironment,
+    PromptInvocationService promptInvocationService,
     ICustomCommandDiscoveryService customCommandDiscovery,
     IPathService pathService,
     IRuntimeCommandService runtimeCommandService,
@@ -29,11 +31,17 @@ public sealed class CliCommandFactory(
     public async Task<RootCommand> CreateRootCommandAsync(CancellationToken cancellationToken = default)
     {
         var rootCommand = new RootCommand("SharpClaw Code CLI. Starts interactive mode when no command is supplied.");
+        var rootPromptArgument = new Argument<string[]>("text")
+        {
+            Description = "Optional initial prompt text. When stdin is redirected, SharpClaw runs a one-shot prompt instead of entering the REPL.",
+            Arity = ArgumentArity.ZeroOrMore,
+        };
 
         foreach (var option in globalCliOptions.All)
         {
             rootCommand.Options.Add(option);
         }
+        rootCommand.Arguments.Add(rootPromptArgument);
 
         foreach (var handler in commandRegistry.GetCommandHandlers())
         {
@@ -43,7 +51,23 @@ public sealed class CliCommandFactory(
         await AddDiscoveredCustomCommandsAsync(rootCommand, cancellationToken).ConfigureAwait(false);
 
         rootCommand.Subcommands.Add(replCommandHandler.BuildCommand(globalCliOptions));
-        rootCommand.SetAction((parseResult, ct) => replHost.RunAsync(globalCliOptions.Resolve(parseResult), ct));
+        rootCommand.SetAction((parseResult, ct) =>
+        {
+            var context = globalCliOptions.Resolve(parseResult);
+            var promptTokens = parseResult.GetValue(rootPromptArgument) ?? [];
+            var shouldRunHeadless = cliInvocationEnvironment.IsInputRedirected
+                || cliInvocationEnvironment.IsOutputRedirected
+                || parseResult.GetValue(globalCliOptions.YoloOption)
+                || context.OutputFormat == Protocol.Enums.OutputFormat.Json;
+
+            if (shouldRunHeadless)
+            {
+                return promptInvocationService.ExecuteAsync(promptTokens, context, forceNonInteractive: true, ct);
+            }
+
+            var initialPrompt = string.Join(' ', promptTokens).Trim();
+            return replHost.RunAsync(context, string.IsNullOrWhiteSpace(initialPrompt) ? null : initialPrompt, ct);
+        });
         return rootCommand;
     }
 

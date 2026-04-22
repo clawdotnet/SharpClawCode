@@ -12,7 +12,8 @@ namespace SharpClaw.Code.Permissions.Services;
 public sealed class PermissionPolicyEngine(
     IEnumerable<IPermissionRule> rules,
     IApprovalService approvalService,
-    ISessionApprovalMemory sessionApprovalMemory) : IPermissionPolicyEngine
+    ISessionApprovalMemory sessionApprovalMemory,
+    IAutoApprovalBudgetTracker autoApprovalBudgetTracker) : IPermissionPolicyEngine
 {
     private readonly IPermissionRule[] orderedRules = rules.ToArray();
 
@@ -128,6 +129,11 @@ public sealed class PermissionPolicyEngine(
                 $"Reused remembered approval for '{request.ToolName}'.");
         }
 
+        if (TryResolveAutoApproval(request, context, out var autoApprovedDecision))
+        {
+            return autoApprovedDecision;
+        }
+
         var approvalRequest = new ApprovalRequest(
             Scope: request.ApprovalScope,
             ToolName: request.ToolName,
@@ -146,6 +152,44 @@ public sealed class PermissionPolicyEngine(
             context.PermissionMode,
             approvalDecision.Approved,
             CombineReasons(ruleResult.Reason, approvalDecision.Reason));
+    }
+
+    private bool TryResolveAutoApproval(
+        ToolExecutionRequest request,
+        PermissionEvaluationContext context,
+        out PermissionDecision decision)
+    {
+        decision = default!;
+
+        var settings = context.ApprovalSettings;
+        if (settings is null
+            || settings.AutoApproveScopes.Count == 0
+            || !settings.AutoApproveScopes.Contains(request.ApprovalScope))
+        {
+            return false;
+        }
+
+        if (settings.AutoApproveBudget is not { } budget)
+        {
+            decision = CreateDecision(
+                request.ApprovalScope,
+                context.PermissionMode,
+                true,
+                $"Auto-approved '{request.ToolName}' for scope '{request.ApprovalScope}' via session settings.");
+            return true;
+        }
+
+        if (autoApprovalBudgetTracker.TryConsume(context, request.ApprovalScope, budget, out var remainingBudget))
+        {
+            decision = CreateDecision(
+                request.ApprovalScope,
+                context.PermissionMode,
+                true,
+                $"Auto-approved '{request.ToolName}' for scope '{request.ApprovalScope}' via session settings. Remaining budget: {remainingBudget}.");
+            return true;
+        }
+
+        return false;
     }
 
     private static PermissionDecision CreateDecision(ApprovalScope scope, PermissionMode mode, bool isAllowed, string? reason)

@@ -46,6 +46,7 @@ public sealed class OperationalReportsJsonTests
             RuntimeState: "ready",
             SelectedModel: "deterministic",
             PermissionMode: PermissionMode.ReadOnly,
+            ApprovalSettings: new ApprovalSettings([ApprovalScope.ToolExecution], 3),
             PrimaryMode: PrimaryMode.Build,
             LatestSessionId: "sess-1",
             LatestSessionState: SessionLifecycleState.Active,
@@ -63,6 +64,7 @@ public sealed class OperationalReportsJsonTests
         var restored = JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.RuntimeStatusReport);
         restored.Should().NotBeNull();
         restored!.LatestSessionState.Should().Be(SessionLifecycleState.Active);
+        restored.ApprovalSettings.Should().NotBeNull();
         restored.McpFaultedCount.Should().Be(1);
         restored.LspServerCount.Should().Be(1);
         restored.DiagnosticsErrorCount.Should().Be(2);

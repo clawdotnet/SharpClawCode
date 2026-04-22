@@ -20,6 +20,7 @@ public static class AgentsServiceCollectionExtensions
     public static IServiceCollection AddSharpClawAgents(this IServiceCollection services)
     {
         services.AddOptions<AgentLoopOptions>();
+        services.AddSingleton<ISubAgentOrchestrator, SubAgentOrchestrator>();
         services.AddSingleton<ToolCallDispatcher>();
         services.AddSingleton<ProviderBackedAgentKernel>();
         services.AddSingleton<IAgentFrameworkBridge, AgentFrameworkBridge>();

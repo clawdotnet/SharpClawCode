@@ -16,7 +16,7 @@ public sealed class ReplCommandHandler(IReplHost replHost)
     public Command BuildCommand(GlobalCliOptions globalOptions)
     {
         var command = new Command("repl", "Starts the interactive REPL shell.");
-        command.SetAction((parseResult, cancellationToken) => replHost.RunAsync(globalOptions.Resolve(parseResult), cancellationToken));
+        command.SetAction((parseResult, cancellationToken) => replHost.RunAsync(globalOptions.Resolve(parseResult), cancellationToken: cancellationToken));
         return command;
     }
 }

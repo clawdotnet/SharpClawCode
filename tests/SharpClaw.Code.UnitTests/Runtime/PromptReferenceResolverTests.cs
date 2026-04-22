@@ -53,7 +53,8 @@ public sealed class PromptReferenceResolverTests
                 new McpTrustRule()
             ],
             new NonInteractiveApprovalService(),
-            new SessionApprovalMemory());
+            new SessionApprovalMemory(),
+            new AutoApprovalBudgetTracker());
         var resolver = new PromptReferenceResolver(new LocalFileSystem(), pathService, engine);
         var session = new ConversationSession(
             "session-001",

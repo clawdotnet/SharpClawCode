@@ -1,4 +1,5 @@
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Permissions.Models;
 
@@ -20,6 +21,7 @@ namespace SharpClaw.Code.Permissions.Models;
 /// <param name="ToolOriginatingPluginTrust">The manifest trust tier for the originating plugin tool, if any.</param>
 /// <param name="PrimaryMode">Build vs plan workflow; plan mode blocks mutating tools.</param>
 /// <param name="TenantId">The active tenant identifier, when one is bound to the host context.</param>
+/// <param name="ApprovalSettings">Optional bounded auto-approval settings for the current session.</param>
 public sealed record PermissionEvaluationContext(
     string SessionId,
     string WorkspaceRoot,
@@ -35,4 +37,5 @@ public sealed record PermissionEvaluationContext(
     string? ToolOriginatingPluginId = null,
     PluginTrustLevel? ToolOriginatingPluginTrust = null,
     PrimaryMode PrimaryMode = PrimaryMode.Build,
-    string? TenantId = null);
+    string? TenantId = null,
+    ApprovalSettings? ApprovalSettings = null);

@@ -11,6 +11,9 @@ namespace SharpClaw.Code.Git.Models;
 /// <param name="StatusEntries">The parsed git status entries.</param>
 /// <param name="StatusSummary">A concise status summary.</param>
 /// <param name="DiffSummary">A concise diff summary.</param>
+/// <param name="IsLinkedWorktree">Whether the current repository root is a linked worktree instead of the main worktree.</param>
+/// <param name="MainWorktreePath">The main worktree path for the repository, when known.</param>
+/// <param name="WorktreeCount">The number of worktrees associated with the repository.</param>
 public sealed record GitWorkspaceSnapshot(
     bool IsRepository,
     string? RepositoryRoot,
@@ -19,7 +22,10 @@ public sealed record GitWorkspaceSnapshot(
     GitBranchFreshness BranchFreshness,
     IReadOnlyList<GitStatusEntry> StatusEntries,
     string? StatusSummary,
-    string? DiffSummary)
+    string? DiffSummary,
+    bool IsLinkedWorktree,
+    string? MainWorktreePath,
+    int WorktreeCount)
 {
     /// <summary>
     /// Renders the git snapshot as a prompt-ready section.
@@ -47,6 +53,16 @@ public sealed record GitWorkspaceSnapshot(
         if (!string.IsNullOrWhiteSpace(StatusSummary))
         {
             lines.Add($"- Status: {StatusSummary}");
+        }
+
+        if (WorktreeCount > 0)
+        {
+            lines.Add($"- Worktrees: {WorktreeCount}");
+        }
+
+        if (IsLinkedWorktree)
+        {
+            lines.Add($"- Linked worktree: yes (main: {MainWorktreePath ?? "(unknown)"})");
         }
 
         if (!string.IsNullOrWhiteSpace(DiffSummary))

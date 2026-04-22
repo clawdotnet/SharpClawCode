@@ -53,6 +53,8 @@ Prompt references are resolved before provider execution. Outside-workspace file
 
 When the effective **`PrimaryMode`** is **`Spec`**, the assembler appends a structured output contract that requires the model to return machine-readable requirements, design, and task content.
 
+When the effective **`PrimaryMode`** is **`Plan`**, the assembler now appends a deep-planning JSON contract that requires the model to return summary, assumptions, risks, next action, and task data.
+
 Conversation history is rebuilt from persisted session events and truncated by token budget before being attached to the next provider request. Assistant history prefers the persisted final turn output and only falls back to streamed provider deltas when needed.
 
 Cross-session memory is sourced from:
@@ -76,6 +78,17 @@ The runtime injects only compact recall text and index freshness metadata. Detai
 - places them under `docs/superpowers/specs/<yyyy-MM-dd>-<slug>/`
 
 Each spec-mode prompt creates a fresh folder. If the same slug already exists, the runtime appends `-2`, `-3`, and so on instead of overwriting an existing spec set.
+
+## Plan workflow
+
+**`IPlanWorkflowService`** handles the post-processing path for **`plan`** mode:
+
+- parses the model response as structured JSON
+- persists the latest deep-plan summary and next action into session metadata
+- synchronizes planning-owned session todos through **`ITodoService`**
+- returns a structured **`PlanExecutionResult`** on the turn result contract
+
+Planning-managed todos are isolated by owner id (`deep-planning`) so manual session todos remain untouched.
 
 ## Operational diagnostics
 
@@ -102,6 +115,7 @@ The parity layer adds several runtime-owned services:
 - **`IShareSessionService`** — creates and removes self-hosted share snapshots
 - **`IHookDispatcher`** — executes configured hook processes for turn/tool/share/server events and exposes hook inspection/testing
 - **`ITodoService`** — persists session and workspace todo items under session metadata and `.sharpclaw/tasks.json`
+- deep plan mode also uses `ITodoService.SyncManagedSessionTodosAsync(...)` to reconcile planning-owned session tasks
 - **`IWorkspaceInsightsService`** — reconstructs durable usage, cost, and execution stats from persisted event logs
 
 These services are intentionally small and runtime-owned rather than separate orchestration subsystems.

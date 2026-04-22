@@ -1,5 +1,6 @@
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Tools.Abstractions;
 
 namespace SharpClaw.Code.Tools.Models;
@@ -14,6 +15,9 @@ namespace SharpClaw.Code.Tools.Models;
 /// <param name="PermissionMode">The active permission mode.</param>
 /// <param name="OutputFormat">The preferred output format.</param>
 /// <param name="EnvironmentVariables">Optional environment variables for subprocess tools.</param>
+/// <param name="Model">The active model identifier for the parent agent, if any.</param>
+/// <param name="AgentId">The parent agent id for agent-originated tool calls, if any.</param>
+/// <param name="Metadata">Additional parent-agent metadata forwarded to internal tool orchestration.</param>
 /// <param name="AllowedTools">The explicitly allowed tools, if tool execution is restricted.</param>
 /// <param name="AllowDangerousBypass">Indicates whether dangerous shell approval can be bypassed explicitly.</param>
 /// <param name="IsInteractive">Indicates whether approval prompts can interact with the caller.</param>
@@ -23,6 +27,7 @@ namespace SharpClaw.Code.Tools.Models;
 /// <param name="TrustedMcpServerNames">The trusted MCP server names for the current session.</param>
 /// <param name="PrimaryMode">Workflow mode forwarded to permission evaluation.</param>
 /// <param name="MutationRecorder">Optional recorder for reversible workspace file mutations.</param>
+/// <param name="ApprovalSettings">Optional bounded auto-approval settings forwarded to permission evaluation.</param>
 public sealed record ToolExecutionContext(
     string SessionId,
     string TurnId,
@@ -31,6 +36,9 @@ public sealed record ToolExecutionContext(
     PermissionMode PermissionMode,
     OutputFormat OutputFormat,
     IReadOnlyDictionary<string, string?>? EnvironmentVariables,
+    string? Model = null,
+    string? AgentId = null,
+    IReadOnlyDictionary<string, string>? Metadata = null,
     IReadOnlyCollection<string>? AllowedTools = null,
     bool AllowDangerousBypass = false,
     bool IsInteractive = true,
@@ -39,4 +47,5 @@ public sealed record ToolExecutionContext(
     IReadOnlyCollection<string>? TrustedPluginNames = null,
     IReadOnlyCollection<string>? TrustedMcpServerNames = null,
     PrimaryMode PrimaryMode = PrimaryMode.Build,
-    IToolMutationRecorder? MutationRecorder = null);
+    IToolMutationRecorder? MutationRecorder = null,
+    ApprovalSettings? ApprovalSettings = null);

@@ -1,7 +1,10 @@
 using FluentAssertions;
+using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Agents.Internal;
+using SharpClaw.Code.Agents.Models;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.Models;
@@ -25,7 +28,7 @@ public sealed class ToolCallDispatcherTests
         var envelope = BuildEnvelope("read_file", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
 
-        var dispatcher = new ToolCallDispatcher(executor);
+        var dispatcher = new ToolCallDispatcher(executor, new StubSubAgentOrchestrator());
 
         var providerEvent = BuildToolUseEvent("tool-use-id-1", "read_file", "{}");
         var context = BuildContext();
@@ -50,7 +53,7 @@ public sealed class ToolCallDispatcherTests
         var envelope = BuildEnvelope("write_file", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
 
-        var dispatcher = new ToolCallDispatcher(executor);
+        var dispatcher = new ToolCallDispatcher(executor, new StubSubAgentOrchestrator());
 
         var providerEvent = BuildToolUseEvent("tool-use-id-2", "write_file", "{\"path\":\"x\"}");
         var context = BuildContext();
@@ -74,7 +77,7 @@ public sealed class ToolCallDispatcherTests
         var result = new ToolResult("req-3", "bash", true, OutputFormat.Text, "done", null, 0, 50, null);
         var envelope = BuildEnvelope("bash", result);
         var executor = new StubToolExecutor { ReturnValue = envelope };
-        var dispatcher = new ToolCallDispatcher(executor);
+        var dispatcher = new ToolCallDispatcher(executor, new StubSubAgentOrchestrator());
 
         var providerEvent = BuildToolUseEvent("tool-use-id-3", "bash", "{\"command\":\"ls\"}");
         var context = BuildContext();
@@ -92,7 +95,7 @@ public sealed class ToolCallDispatcherTests
     public async Task DispatchAsync_returns_error_when_tool_name_missing()
     {
         var executor = new StubToolExecutor();
-        var dispatcher = new ToolCallDispatcher(executor);
+        var dispatcher = new ToolCallDispatcher(executor, new StubSubAgentOrchestrator());
 
         var providerEvent = BuildToolUseEvent("tool-use-id-4", null!, "{}");
         var context = BuildContext();
@@ -102,6 +105,45 @@ public sealed class ToolCallDispatcherTests
         resultBlock.Kind.Should().Be(ContentBlockKind.ToolResult);
         resultBlock.IsError.Should().Be(true);
         resultBlock.Text.Should().Contain("tool name");
+    }
+
+    /// <summary>
+    /// Ensures delegated subagent tool calls return the orchestrator payload and runtime events.
+    /// </summary>
+    [Fact]
+    public async Task DispatchAsync_handles_subagent_tool_calls()
+    {
+        var executor = new StubToolExecutor();
+        RuntimeEvent[] subAgentEvents =
+        [
+            new AgentSpawnedEvent("event-1", "s1", "t1", DateTimeOffset.UtcNow, "sub-agent-worker", "subAgent", "primary-coding-agent")
+        ];
+        var orchestrator = new StubSubAgentOrchestrator
+        {
+            ReturnValue = new SubAgentBatchExecutionResult(
+                new SubAgentBatchResult(
+                    [
+                        new SubAgentTaskResult("task-1", "Inspect auth flow", "Return concise findings", true, "Found the auth entry point.", null, "sub-agent-worker")
+                    ],
+                    CompletedCount: 1,
+                    FailedCount: 0),
+                subAgentEvents)
+        };
+        var dispatcher = new ToolCallDispatcher(executor, orchestrator);
+
+        var providerEvent = BuildToolUseEvent(
+            "tool-use-id-5",
+            "use_subagents",
+            """{"tasks":[{"goal":"Inspect auth flow","expectedOutput":"Return concise findings"}]}""");
+        var context = BuildContext();
+
+        var (resultBlock, toolResult, events) = await dispatcher.DispatchAsync(providerEvent, context, CancellationToken.None);
+
+        resultBlock.IsError.Should().BeNull();
+        resultBlock.Text.Should().Contain("Inspect auth flow");
+        toolResult.ToolName.Should().Be("use_subagents");
+        toolResult.Succeeded.Should().BeTrue();
+        events.Should().ContainSingle(ev => ev is AgentSpawnedEvent);
     }
 
     private static ProviderEvent BuildToolUseEvent(string toolUseId, string toolName, string toolInputJson)
@@ -163,4 +205,16 @@ public sealed class ToolCallDispatcherTests
             => Task.FromResult(ReturnValue!);
     }
 
+    private sealed class StubSubAgentOrchestrator : ISubAgentOrchestrator
+    {
+        public SubAgentBatchExecutionResult? ReturnValue { get; set; }
+
+        public Task<SubAgentBatchExecutionResult> ExecuteAsync(
+            SubAgentBatchRequest request,
+            ToolExecutionContext context,
+            CancellationToken cancellationToken)
+            => Task.FromResult(ReturnValue ?? new SubAgentBatchExecutionResult(
+                new SubAgentBatchResult([], 0, 0),
+                []));
+    }
 }

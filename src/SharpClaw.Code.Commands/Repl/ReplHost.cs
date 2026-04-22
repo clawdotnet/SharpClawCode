@@ -20,7 +20,7 @@ public sealed class ReplHost(
     IReplTerminal terminal) : IReplHost
 {
     /// <inheritdoc />
-    public async Task<int> RunAsync(CommandExecutionContext context, CancellationToken cancellationToken)
+    public async Task<int> RunAsync(CommandExecutionContext context, string? initialPrompt = null, CancellationToken cancellationToken = default)
     {
         var ctrlCPressed = false;
 
@@ -36,6 +36,15 @@ public sealed class ReplHost(
         try
         {
             terminal.WriteInfo("SharpClaw Code interactive mode. Type /help for commands or /exit to quit.");
+
+            if (!string.IsNullOrWhiteSpace(initialPrompt))
+            {
+                var initialExitCode = await ExecutePromptAsync(initialPrompt.Trim(), context, cancellationToken).ConfigureAwait(false);
+                if (initialExitCode != 0)
+                {
+                    return initialExitCode;
+                }
+            }
 
             while (!cancellationToken.IsCancellationRequested && !ctrlCPressed)
             {
@@ -94,10 +103,10 @@ public sealed class ReplHost(
                     var slashHandler = commandRegistry.FindSlashCommandHandler(parsed.CommandName ?? string.Empty);
                     if (slashHandler is not null)
                     {
-                        var exitCode = await slashHandler.ExecuteAsync(parsed, context, cancellationToken);
-                        if (exitCode != 0)
+                        var slashExitCode = await slashHandler.ExecuteAsync(parsed, context, cancellationToken);
+                        if (slashExitCode != 0)
                         {
-                            return exitCode;
+                            return slashExitCode;
                         }
 
                         continue;
@@ -115,7 +124,8 @@ public sealed class ReplHost(
                                     argLine,
                                     context.ToRuntimeCommandContext(
                                         primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
-                                        agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId),
+                                        agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId,
+                                        approvalSettingsOverride: replInteractionState.ApprovalSettingsOverride),
                                     cancellationToken)
                                 .ConfigureAwait(false);
                             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
@@ -143,23 +153,10 @@ public sealed class ReplHost(
                     continue;
                 }
 
-                try
+                var exitCode = await ExecutePromptAsync(trimmed, context, cancellationToken).ConfigureAwait(false);
+                if (exitCode != 0)
                 {
-                    var result = await runtimeCommandService.ExecutePromptAsync(
-                        trimmed,
-                        context.ToRuntimeCommandContext(
-                            primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
-                            agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId),
-                        cancellationToken);
-
-                    await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
-                }
-                catch (ProviderExecutionException exception)
-                {
-                    await outputRendererDispatcher.RenderCommandResultAsync(
-                        CreateProviderFailureResult(exception, context.OutputFormat),
-                        context.OutputFormat,
-                        cancellationToken);
+                    return exitCode;
                 }
             }
 
@@ -184,6 +181,32 @@ public sealed class ReplHost(
 
         return await customCommandDiscovery.FindAsync(workspace, name, cancellationToken).ConfigureAwait(false);
     }
+
+    private async Task<int> ExecutePromptAsync(string prompt, CommandExecutionContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var result = await runtimeCommandService.ExecutePromptAsync(
+                prompt,
+                context.ToRuntimeCommandContext(
+                    primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
+                    agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId,
+                    approvalSettingsOverride: replInteractionState.ApprovalSettingsOverride),
+                cancellationToken).ConfigureAwait(false);
+
+            await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
+            return 0;
+        }
+        catch (ProviderExecutionException exception)
+        {
+            await outputRendererDispatcher.RenderCommandResultAsync(
+                CreateProviderFailureResult(exception, context.OutputFormat),
+                context.OutputFormat,
+                cancellationToken).ConfigureAwait(false);
+            return 1;
+        }
+    }
+
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
             Succeeded: false,

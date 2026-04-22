@@ -1,4 +1,5 @@
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Protocol.Operational;
 
@@ -11,6 +12,7 @@ namespace SharpClaw.Code.Protocol.Operational;
 /// <param name="RuntimeState">High-level host state.</param>
 /// <param name="SelectedModel">Effective model id if known.</param>
 /// <param name="PermissionMode">Active permission mode.</param>
+/// <param name="ApprovalSettings">Active bounded auto-approval settings, when configured.</param>
 /// <param name="PrimaryMode">Effective primary workflow mode.</param>
 /// <param name="LatestSessionId">Latest session id, if any.</param>
 /// <param name="LatestSessionState">Latest session lifecycle state, if any.</param>
@@ -30,6 +32,7 @@ public sealed record RuntimeStatusReport(
     string RuntimeState,
     string? SelectedModel,
     PermissionMode PermissionMode,
+    ApprovalSettings? ApprovalSettings,
     PrimaryMode PrimaryMode,
     string? LatestSessionId,
     SessionLifecycleState? LatestSessionState,

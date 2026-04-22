@@ -18,9 +18,11 @@ public sealed class PromptContextAssembler(
     IProjectMemoryService projectMemoryService,
     IMemoryRecallService memoryRecallService,
     ISessionSummaryService sessionSummaryService,
+    IInstructionRuleService instructionRuleService,
     ISkillRegistry skillRegistry,
     IGitWorkspaceService gitWorkspaceService,
     IPromptReferenceResolver promptReferenceResolver,
+    IPlanWorkflowService planWorkflowService,
     ISpecWorkflowService specWorkflowService,
     IWorkspaceDiagnosticsService workspaceDiagnosticsService,
     IWorkspaceIndexService workspaceIndexService,
@@ -43,16 +45,18 @@ public sealed class PromptContextAssembler(
             : request.WorkingDirectory;
         var memoryContextTask = projectMemoryService.BuildContextAsync(workspaceRoot, cancellationToken);
         var sessionSummaryTask = sessionSummaryService.BuildSummaryAsync(session, cancellationToken);
+        var instructionRulesTask = instructionRuleService.LoadAsync(workspaceRoot, cancellationToken);
         var skillsTask = skillRegistry.ListAsync(workspaceRoot, cancellationToken);
         var gitTask = gitWorkspaceService.GetSnapshotAsync(workspaceRoot, cancellationToken);
         var diagnosticsTask = workspaceDiagnosticsService.BuildSnapshotAsync(workspaceRoot, cancellationToken);
         var indexStatusTask = workspaceIndexService.GetStatusAsync(workspaceRoot, cancellationToken);
         var todoTask = todoService.GetSnapshotAsync(workspaceRoot, session.Id, cancellationToken);
 
-        await Task.WhenAll(memoryContextTask, sessionSummaryTask, skillsTask, gitTask, diagnosticsTask, indexStatusTask, todoTask).ConfigureAwait(false);
+        await Task.WhenAll(memoryContextTask, sessionSummaryTask, instructionRulesTask, skillsTask, gitTask, diagnosticsTask, indexStatusTask, todoTask).ConfigureAwait(false);
 
         var memoryContext = await memoryContextTask.ConfigureAwait(false);
         var sessionSummary = await sessionSummaryTask.ConfigureAwait(false);
+        var instructionRules = await instructionRulesTask.ConfigureAwait(false);
         var skills = await skillsTask.ConfigureAwait(false);
         var gitSnapshot = await gitTask.ConfigureAwait(false);
         var diagnostics = await diagnosticsTask.ConfigureAwait(false);
@@ -134,6 +138,24 @@ public sealed class PromptContextAssembler(
             sections.Add($"Session summary:\n{sessionSummary}");
         }
 
+        if (session.Metadata is not null
+            && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.DeepPlanningSummary, out var deepPlanningSummary)
+            && !string.IsNullOrWhiteSpace(deepPlanningSummary))
+        {
+            var nextAction = session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.DeepPlanningNextAction, out var storedNextAction)
+                ? storedNextAction
+                : null;
+            sections.Add(
+                string.IsNullOrWhiteSpace(nextAction)
+                    ? $"Latest deep plan:\n{deepPlanningSummary}"
+                    : $"Latest deep plan:\n{deepPlanningSummary}\nNext action: {nextAction}");
+        }
+
+        if (instructionRules.Documents.Count > 0)
+        {
+            sections.Add(RenderInstructionRules(instructionRules));
+        }
+
         if (skills.Count > 0)
         {
             sections.Add(
@@ -182,7 +204,11 @@ public sealed class PromptContextAssembler(
                 + $"Indexed files: {indexStatus.IndexedFileCount}, chunks: {indexStatus.ChunkCount}, symbols: {indexStatus.SymbolCount}");
         }
 
-        if (effectivePrimary == Protocol.Enums.PrimaryMode.Spec)
+        if (effectivePrimary == Protocol.Enums.PrimaryMode.Plan)
+        {
+            sections.Add(planWorkflowService.BuildPromptInstructions());
+        }
+        else if (effectivePrimary == Protocol.Enums.PrimaryMode.Spec)
         {
             sections.Add(specWorkflowService.BuildPromptInstructions());
         }
@@ -211,5 +237,17 @@ public sealed class PromptContextAssembler(
             Prompt: string.Join(Environment.NewLine + Environment.NewLine, sections),
             Metadata: metadata,
             ConversationHistory: conversationHistory);
+    }
+
+    private static string RenderInstructionRules(InstructionRuleSnapshot snapshot)
+    {
+        var lines = new List<string> { "Persistent rules:" };
+        foreach (var document in snapshot.Documents)
+        {
+            lines.Add($"Source: {document.SourceKind} {document.DisplayPath}");
+            lines.Add(document.Content);
+        }
+
+        return string.Join(Environment.NewLine, lines);
     }
 }

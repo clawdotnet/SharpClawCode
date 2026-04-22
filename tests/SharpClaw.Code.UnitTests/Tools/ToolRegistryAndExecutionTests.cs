@@ -318,7 +318,8 @@ public sealed class ToolRegistryAndExecutionTests
                     new McpTrustRule()
                 ],
                 new NonInteractiveApprovalService(),
-                new SessionApprovalMemory()));
+                new SessionApprovalMemory(),
+                new AutoApprovalBudgetTracker()));
 
     private static ToolExecutionContext CreateContext(string workspacePath, PermissionMode permissionMode)
         => new(

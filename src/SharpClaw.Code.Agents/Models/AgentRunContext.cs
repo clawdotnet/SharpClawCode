@@ -25,6 +25,7 @@ namespace SharpClaw.Code.Agents.Models;
 /// to the provider request so the model has multi-turn context.
 /// </param>
 /// <param name="IsInteractive">Whether tool approvals can interact with the caller.</param>
+/// <param name="ApprovalSettings">Optional bounded auto-approval settings forwarded to tool execution.</param>
 public sealed record AgentRunContext(
     string SessionId,
     string TurnId,
@@ -40,4 +41,5 @@ public sealed record AgentRunContext(
     PrimaryMode PrimaryMode = PrimaryMode.Build,
     IToolMutationRecorder? ToolMutationRecorder = null,
     IReadOnlyList<ChatMessage>? ConversationHistory = null,
-    bool IsInteractive = true);
+    bool IsInteractive = true,
+    ApprovalSettings? ApprovalSettings = null);

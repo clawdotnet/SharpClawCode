@@ -70,6 +70,7 @@ public sealed partial class PromptReferenceResolver(
                     request.PermissionMode,
                     primaryMode,
                     isInteractive,
+                    request.ApprovalSettings,
                     request.Metadata is not null
                         && request.Metadata.TryGetValue("acp", out var acp)
                         && string.Equals(acp, "true", StringComparison.OrdinalIgnoreCase),
@@ -115,6 +116,7 @@ public sealed partial class PromptReferenceResolver(
         PermissionMode permissionMode,
         PrimaryMode primaryMode,
         bool isInteractive,
+        ApprovalSettings? approvalSettings,
         bool isAcp,
         string absolutePath,
         CancellationToken cancellationToken)
@@ -146,7 +148,8 @@ public sealed partial class PromptReferenceResolver(
             TrustedPluginNames: null,
             TrustedMcpServerNames: null,
             PrimaryMode: primaryMode,
-            TenantId: hostContextAccessor?.Current?.TenantId);
+            TenantId: hostContextAccessor?.Current?.TenantId,
+            ApprovalSettings: approvalSettings);
 
         var decision = await permissionPolicyEngine
             .EvaluateAsync(toolRequest, context, cancellationToken)

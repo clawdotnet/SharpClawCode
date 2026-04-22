@@ -65,7 +65,8 @@ public sealed class ToolExecutor(
             ToolOriginatingPluginId: pluginSource?.PluginId,
             ToolOriginatingPluginTrust: pluginSource?.Trust,
             PrimaryMode: context.PrimaryMode,
-            TenantId: hostContextAccessor?.Current?.TenantId);
+            TenantId: hostContextAccessor?.Current?.TenantId,
+            ApprovalSettings: context.ApprovalSettings);
 
         var publishOptions = CreatePublishOptions(context);
         var now = DateTimeOffset.UtcNow;

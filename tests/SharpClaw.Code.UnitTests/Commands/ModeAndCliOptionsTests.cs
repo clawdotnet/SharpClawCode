@@ -53,6 +53,40 @@ public sealed class ModeAndCliOptionsTests
     }
 
     [Fact]
+    public void Global_cli_options_should_force_danger_full_access_when_yolo_is_set()
+    {
+        var options = new GlobalCliOptions();
+        var command = new RootCommand();
+        foreach (var option in options.All)
+        {
+            command.Options.Add(option);
+        }
+
+        var parseResult = command.Parse("-y");
+        var context = options.Resolve(parseResult);
+
+        context.PermissionMode.Should().Be(PermissionMode.DangerFullAccess);
+    }
+
+    [Fact]
+    public void Global_cli_options_should_parse_auto_approve_settings_and_budget()
+    {
+        var options = new GlobalCliOptions();
+        var command = new RootCommand();
+        foreach (var option in options.All)
+        {
+            command.Options.Add(option);
+        }
+
+        var parseResult = command.Parse("--auto-approve shell,network --auto-approve-budget 4");
+        var context = options.Resolve(parseResult);
+
+        context.ApprovalSettings.Should().BeEquivalentTo(new ApprovalSettings(
+            [ApprovalScope.ShellExecution, ApprovalScope.NetworkAccess],
+            4));
+    }
+
+    [Fact]
     public async Task Mode_slash_command_should_set_spec_mode()
     {
         var replState = new ReplInteractionState();
@@ -74,6 +108,59 @@ public sealed class ModeAndCliOptionsTests
         exitCode.Should().Be(0);
         replState.PrimaryModeOverride.Should().Be(PrimaryMode.Spec);
         renderer.LastCommandResult!.Message.Should().Contain("Primary mode set to Spec");
+    }
+
+    [Fact]
+    public async Task Approvals_slash_command_should_set_auto_approve_override()
+    {
+        var replState = new ReplInteractionState();
+        var renderer = new StubOutputRenderer();
+        var handler = new ApprovalsSlashCommandHandler(replState, new OutputRendererDispatcher([renderer]));
+        var context = new CommandExecutionContext(
+            WorkingDirectory: "/workspace",
+            Model: null,
+            PermissionMode: PermissionMode.WorkspaceWrite,
+            OutputFormat: OutputFormat.Text,
+            PrimaryMode: PrimaryMode.Build,
+            SessionId: null);
+
+        var exitCode = await handler.ExecuteAsync(
+            new SlashCommandParseResult(true, "approvals", ["set", "shell,promptRead", "2"]),
+            context,
+            CancellationToken.None);
+
+        exitCode.Should().Be(0);
+        replState.ApprovalSettingsOverride.Should().BeEquivalentTo(new ApprovalSettings(
+            [ApprovalScope.ShellExecution, ApprovalScope.PromptOutsideWorkspaceRead],
+            2));
+        renderer.LastCommandResult!.Message.Should().Contain("Auto-approval override set");
+    }
+
+    [Fact]
+    public async Task Approvals_slash_command_reset_should_clear_override()
+    {
+        var replState = new ReplInteractionState
+        {
+            ApprovalSettingsOverride = new ApprovalSettings([ApprovalScope.ShellExecution], 1)
+        };
+        var renderer = new StubOutputRenderer();
+        var handler = new ApprovalsSlashCommandHandler(replState, new OutputRendererDispatcher([renderer]));
+        var context = new CommandExecutionContext(
+            WorkingDirectory: "/workspace",
+            Model: null,
+            PermissionMode: PermissionMode.WorkspaceWrite,
+            OutputFormat: OutputFormat.Text,
+            PrimaryMode: PrimaryMode.Build,
+            SessionId: null);
+
+        var exitCode = await handler.ExecuteAsync(
+            new SlashCommandParseResult(true, "approvals", ["reset"]),
+            context,
+            CancellationToken.None);
+
+        exitCode.Should().Be(0);
+        replState.ApprovalSettingsOverride.Should().BeNull();
+        renderer.LastCommandResult!.Message.Should().Contain("reset");
     }
 
     private sealed class StubOutputRenderer : IOutputRenderer

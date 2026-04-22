@@ -120,4 +120,67 @@ public sealed class ProtocolJsonContextTests
         json.Should().Contain("\"specArtifacts\":");
         json.Should().Contain("\"slug\":\"my-spec\"");
     }
+
+    /// <summary>
+    /// Ensures plan-mode execution metadata serializes through the shared protocol context.
+    /// </summary>
+    [Fact]
+    public void Turn_execution_result_should_serialize_plan_result()
+    {
+        var result = new TurnExecutionResult(
+            Session: new ConversationSession(
+                Id: "session-001",
+                Title: "Plan session",
+                State: SessionLifecycleState.Active,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Json,
+                WorkingDirectory: "/workspace",
+                RepositoryRoot: "/workspace",
+                CreatedAtUtc: DateTimeOffset.Parse("2026-04-21T00:00:00Z"),
+                UpdatedAtUtc: DateTimeOffset.Parse("2026-04-21T00:05:00Z"),
+                ActiveTurnId: null,
+                LastCheckpointId: null,
+                Metadata: []),
+            Turn: new ConversationTurn(
+                Id: "turn-001",
+                SessionId: "session-001",
+                SequenceNumber: 1,
+                Input: "plan this",
+                Output: "Deep plan ready.",
+                StartedAtUtc: DateTimeOffset.Parse("2026-04-21T00:00:00Z"),
+                CompletedAtUtc: DateTimeOffset.Parse("2026-04-21T00:05:00Z"),
+                AgentId: "primary-coding-agent",
+                SlashCommandName: null,
+                Usage: null,
+                Metadata: []),
+            FinalOutput: "Deep plan ready.",
+            ToolResults: [],
+            Usage: null,
+            Checkpoint: null,
+            Events: [],
+            PlanResult: new PlanExecutionResult(
+                Summary: "Audit current seams before editing.",
+                Assumptions: ["Git is available."],
+                Risks: ["Branch naming collisions."],
+                NextAction: "Inspect the git service.",
+                Tasks:
+                [
+                    new PlanTaskItem("PLAN-001", "Inspect the git service", TodoStatus.Open, null, null)
+                ],
+                TodoSync: new ManagedTodoSyncResult(
+                    OwnerAgentId: "deep-planning",
+                    AddedCount: 1,
+                    UpdatedCount: 0,
+                    RemovedCount: 0,
+                    ActiveTodos:
+                    [
+                        new TodoItem("todo-001", "PLAN-001: Inspect the git service", TodoStatus.Open, TodoScope.Session, DateTimeOffset.Parse("2026-04-21T00:04:00Z"), DateTimeOffset.Parse("2026-04-21T00:04:00Z"), "deep-planning", "session-001")
+                    ])));
+
+        var json = JsonSerializer.Serialize(result, ProtocolJsonContext.Default.TurnExecutionResult);
+
+        json.Should().Contain("\"planResult\":");
+        json.Should().Contain("\"nextAction\":\"Inspect the git service.\"");
+        json.Should().Contain("\"ownerAgentId\":\"deep-planning\"");
+    }
 }

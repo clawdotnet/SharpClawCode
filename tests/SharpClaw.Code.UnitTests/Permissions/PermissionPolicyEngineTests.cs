@@ -280,6 +280,58 @@ public sealed class PermissionPolicyEngineTests
         decision.IsAllowed.Should().BeTrue();
     }
 
+    /// <summary>
+    /// Ensures configured auto-approval allows matching scopes without prompting the user.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_auto_approve_matching_scope_without_prompt()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(
+            PermissionMode.WorkspaceWrite,
+            isInteractive: false,
+            approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], 2));
+        var request = CreateRequest(
+            "bash",
+            """{"command":"git status","workingDirectory":".","environmentVariables":null}""",
+            ApprovalScope.ShellExecution,
+            requiresApproval: true,
+            isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeTrue();
+        decision.Reason.Should().Contain("Auto-approved");
+        approvalService.RequestCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Ensures auto-approval budget exhaustion falls back to explicit approval flow.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_fall_back_to_prompt_when_auto_approve_budget_is_exhausted()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(
+            PermissionMode.WorkspaceWrite,
+            approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], 1));
+        var request = CreateRequest(
+            "bash",
+            """{"command":"git status","workingDirectory":".","environmentVariables":null}""",
+            ApprovalScope.ShellExecution,
+            requiresApproval: true,
+            isDestructive: true);
+
+        var firstDecision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+        var secondDecision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        firstDecision.IsAllowed.Should().BeTrue();
+        secondDecision.IsAllowed.Should().BeTrue();
+        approvalService.RequestCount.Should().Be(1);
+    }
+
     private static IPermissionPolicyEngine CreateEngine(IApprovalService approvalService)
         => new PermissionPolicyEngine(
             [
@@ -291,7 +343,8 @@ public sealed class PermissionPolicyEngineTests
                 new McpTrustRule()
             ],
             approvalService,
-            new SessionApprovalMemory());
+            new SessionApprovalMemory(),
+            new AutoApprovalBudgetTracker());
 
     private static PermissionEvaluationContext CreateContext(
         PermissionMode permissionMode,
@@ -304,7 +357,8 @@ public sealed class PermissionPolicyEngineTests
         string[]? trustedMcpServers = null,
         string? toolOriginatingPluginId = null,
         PluginTrustLevel? toolOriginatingPluginTrust = null,
-        PrimaryMode primaryMode = PrimaryMode.Build)
+        PrimaryMode primaryMode = PrimaryMode.Build,
+        ApprovalSettings? approvalSettings = null)
         => new(
             SessionId: "session-001",
             WorkspaceRoot: "/workspace",
@@ -319,7 +373,8 @@ public sealed class PermissionPolicyEngineTests
             TrustedMcpServerNames: trustedMcpServers,
             ToolOriginatingPluginId: toolOriginatingPluginId,
             ToolOriginatingPluginTrust: toolOriginatingPluginTrust,
-            PrimaryMode: primaryMode);
+            PrimaryMode: primaryMode,
+            ApprovalSettings: approvalSettings);
 
     private static ToolExecutionRequest CreateRequest(
         string toolName,
