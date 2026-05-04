@@ -435,6 +435,14 @@ public sealed class ConversationRuntime(
         }
         catch (ProviderExecutionException exception)
         {
+            await AppendProviderFailureEventsAsync(
+                workspacePath,
+                session.Id,
+                turnId,
+                exception,
+                runtimeEvents,
+                CancellationToken.None).ConfigureAwait(false);
+
             session = await PersistTurnFailureAsync(
                 workspacePath,
                 session,
@@ -1260,6 +1268,48 @@ public sealed class ConversationRuntime(
         }
 
         var providerRequest = turnRunResult.ProviderRequest;
+        await AppendProviderEventsAsync(
+            workspacePath,
+            sessionId,
+            turnId,
+            providerRequest,
+            turnRunResult.ProviderEvents,
+            collectedEvents,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AppendProviderFailureEventsAsync(
+        string workspacePath,
+        string sessionId,
+        string turnId,
+        ProviderExecutionException exception,
+        List<RuntimeEvent> collectedEvents,
+        CancellationToken cancellationToken)
+    {
+        if (exception.ProviderRequest is null)
+        {
+            return;
+        }
+
+        await AppendProviderEventsAsync(
+            workspacePath,
+            sessionId,
+            turnId,
+            exception.ProviderRequest,
+            exception.ProviderEvents,
+            collectedEvents,
+            cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task AppendProviderEventsAsync(
+        string workspacePath,
+        string sessionId,
+        string turnId,
+        ProviderRequest providerRequest,
+        IReadOnlyList<ProviderEvent>? providerEvents,
+        List<RuntimeEvent> collectedEvents,
+        CancellationToken cancellationToken)
+    {
         await AppendEventAsync(
             workspacePath,
             sessionId,
@@ -1274,7 +1324,7 @@ public sealed class ConversationRuntime(
             collectedEvents,
             cancellationToken).ConfigureAwait(false);
 
-        foreach (var providerEvent in turnRunResult.ProviderEvents ?? [])
+        foreach (var providerEvent in providerEvents ?? [])
         {
             if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
             {

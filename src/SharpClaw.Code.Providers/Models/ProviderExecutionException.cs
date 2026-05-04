@@ -1,3 +1,5 @@
+using SharpClaw.Code.Protocol.Models;
+
 namespace SharpClaw.Code.Providers.Models;
 
 /// <summary>
@@ -13,17 +15,23 @@ public sealed class ProviderExecutionException : Exception
     /// <param name="kind">The classified failure kind.</param>
     /// <param name="message">The failure message.</param>
     /// <param name="innerException">The underlying exception, if any.</param>
+    /// <param name="providerRequest">The provider request active when the failure occurred, if available.</param>
+    /// <param name="providerEvents">The provider events observed before the failure, if available.</param>
     public ProviderExecutionException(
         string providerName,
         string model,
         ProviderFailureKind kind,
         string message,
-        Exception? innerException = null)
+        Exception? innerException = null,
+        ProviderRequest? providerRequest = null,
+        IReadOnlyList<ProviderEvent>? providerEvents = null)
         : base(message, innerException)
     {
         ProviderName = providerName;
         Model = model;
         Kind = kind;
+        ProviderRequest = providerRequest;
+        ProviderEvents = providerEvents;
     }
 
     /// <summary>
@@ -40,4 +48,14 @@ public sealed class ProviderExecutionException : Exception
     /// Gets the classified provider failure kind.
     /// </summary>
     public ProviderFailureKind Kind { get; }
+
+    /// <summary>
+    /// Gets the provider request active when the failure occurred, if available.
+    /// </summary>
+    public ProviderRequest? ProviderRequest { get; }
+
+    /// <summary>
+    /// Gets the provider events observed before the failure, if available.
+    /// </summary>
+    public IReadOnlyList<ProviderEvent>? ProviderEvents { get; }
 }

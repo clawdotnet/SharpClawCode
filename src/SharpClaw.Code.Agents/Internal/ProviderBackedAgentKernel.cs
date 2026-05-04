@@ -174,7 +174,9 @@ public sealed class ProviderBackedAgentKernel(
                                 resolvedProviderName,
                                 requestedModel,
                                 failureKind,
-                                CreateProviderFailedEventMessage(resolvedProviderName, providerEvent));
+                                CreateProviderFailedEventMessage(resolvedProviderName, providerEvent),
+                                providerRequest: providerRequest,
+                                providerEvents: allProviderEvents.ToArray());
                         }
 
                         if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))

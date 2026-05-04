@@ -183,6 +183,7 @@ public sealed class ProviderRuntimeEventFlowTests
         });
         var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
         var sessionStore = serviceProvider.GetRequiredService<ISessionStore>();
+        var eventStore = serviceProvider.GetRequiredService<IEventStore>();
 
         var act = async () => await runtime.RunPromptAsync(
             new RunPromptRequest(
@@ -205,6 +206,11 @@ public sealed class ProviderRuntimeEventFlowTests
         var latestSession = await sessionStore.GetLatestAsync(workspacePath, CancellationToken.None);
         latestSession.Should().NotBeNull();
         latestSession!.State.Should().Be(SessionLifecycleState.Failed);
+
+        var events = await eventStore.ReadAllAsync(workspacePath, latestSession.Id, CancellationToken.None);
+        events.Should().ContainSingle(runtimeEvent => runtimeEvent is ProviderStartedEvent);
+        events.OfType<ProviderDeltaEvent>().Select(providerDeltaEvent => providerDeltaEvent.Content).Should().ContainSingle("partial");
+        events.OfType<ProviderCompletedEvent>().Should().ContainSingle(providerCompletedEvent => providerCompletedEvent.Kind == "failed");
     }
 
     /// <summary>
