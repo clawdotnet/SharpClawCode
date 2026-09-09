@@ -5,6 +5,7 @@ using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Providers.Abstractions;
+using SharpClaw.Code.Providers.Configuration;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Runtime;
 using SharpClaw.Code.Runtime.Abstractions;
@@ -240,6 +241,40 @@ public sealed class ProviderRuntimeEventFlowTests
         exception.Which.Kind.Should().Be(ProviderFailureKind.AuthenticationUnavailable);
     }
 
+    /// <summary>
+    /// Ensures a failed primary stream can be replaced by an authenticated fallback.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_use_fallback_provider_after_primary_stream_failure()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        using var serviceProvider = CreateRuntimeServices(services =>
+        {
+            services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+            services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
+            services.AddSingleton<IModelProviderResolver, FallbackModelProviderResolver>();
+            services.Configure<ProviderCatalogOptions>(options => options.FallbackModels["fallback-provider"] = "fallback-model");
+        });
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var result = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "use a fallback",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = "stub-provider",
+                    ["model"] = "stub-model"
+                }),
+            CancellationToken.None);
+
+        result.FinalOutput.Should().Be("Hello world");
+        result.Events.OfType<ProviderStartedEvent>().Should().ContainSingle(e => e.ProviderName == "fallback-provider");
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-provider-tests", Guid.NewGuid().ToString("N"));
@@ -300,6 +335,16 @@ public sealed class ProviderRuntimeEventFlowTests
         public IModelProvider Resolve(string providerName) => new ThrowingModelProvider();
     }
 
+    private sealed class FallbackModelProviderResolver : IModelProviderResolver
+    {
+        private readonly IModelProvider _primary = new ThrowingModelProvider();
+        private readonly IModelProvider _fallback = new StubModelProvider("fallback-provider", "fallback-model");
+
+        public IModelProvider Resolve(string providerName) => _primary;
+
+        public IReadOnlyList<IModelProvider> ResolveCandidates(string providerName) => [_primary, _fallback];
+    }
+
     private sealed class FailIfInvokedModelProviderResolver : IModelProviderResolver
     {
         public IModelProvider Resolve(string providerName) => new FailIfInvokedModelProvider();
@@ -310,15 +355,17 @@ public sealed class ProviderRuntimeEventFlowTests
         public IModelProvider Resolve(string providerName) => new AuthFailedEventModelProvider();
     }
 
-    private sealed class StubModelProvider : IModelProvider
+    private sealed class StubModelProvider(string providerName = "stub-provider", string? expectedModel = null) : IModelProvider
     {
-        public string ProviderName => "stub-provider";
+        public string ProviderName => providerName;
 
         public Task<AuthStatus> GetAuthStatusAsync(CancellationToken cancellationToken)
             => Task.FromResult(new AuthStatus("stub-subject", true, ProviderName, null, null, ["api"]));
 
         public Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken cancellationToken)
-            => Task.FromResult(new ProviderStreamHandle(request, StreamEventsAsync(request)));
+            => expectedModel is not null && !string.Equals(request.Model, expectedModel, StringComparison.Ordinal)
+                ? throw new InvalidOperationException($"Expected model '{expectedModel}', received '{request.Model}'.")
+                : Task.FromResult(new ProviderStreamHandle(request, StreamEventsAsync(request)));
 
         private static async IAsyncEnumerable<ProviderEvent> StreamEventsAsync(ProviderRequest request)
         {

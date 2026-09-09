@@ -1,0 +1,25 @@
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "build-and-test (ubuntu-latest)",
+      "build-and-test (windows-latest)",
+      "build-and-test (macos-latest)",
+      "package-smoke (ubuntu-latest)",
+      "package-smoke (windows-latest)",
+      "package-smoke (macos-latest)",
+      "vscode-extension",
+      "documentation"
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": null,
+  "restrictions": null,
+  "required_linear_history": true,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "block_creations": false,
+  "required_conversation_resolution": true,
+  "lock_branch": false,
+  "allow_fork_syncing": true
+}

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using Microsoft.Extensions.Options;
 using SharpClaw.Code.Agents.Abstractions;
 using SharpClaw.Code.Agents.Agents;
 using SharpClaw.Code.Agents.Models;
@@ -7,6 +8,7 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Telemetry.Diagnostics;
+using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Tools.Abstractions;
 
 namespace SharpClaw.Code.Runtime.Turns;
@@ -18,7 +20,8 @@ public sealed class DefaultTurnRunner(
     IEnumerable<ISharpClawAgent> agents,
     PrimaryCodingAgent primaryCodingAgentFallback,
     IToolExecutor toolExecutor,
-    IPromptContextAssembler promptContextAssembler) : ITurnRunner
+    IPromptContextAssembler promptContextAssembler,
+    IOptions<TelemetryOptions> telemetryOptions) : ITurnRunner
 {
     private readonly ISharpClawAgent[] agentList = agents.ToArray();
 
@@ -62,7 +65,12 @@ public sealed class DefaultTurnRunner(
             ApprovalSettings: request.ApprovalSettings,
             UserContent: promptContext.UserContent);
 
-        using var turnScope = new TurnActivityScope(session.Id, turn.Id, promptContext.Prompt);
+        var telemetry = telemetryOptions.Value;
+        using var turnScope = new TurnActivityScope(
+            session.Id,
+            turn.Id,
+            telemetry.CapturePromptPreview ? promptContext.Prompt : null,
+            telemetry.PromptPreviewMaxLength);
         var sw = Stopwatch.StartNew();
         AgentRunResult agentResult;
         try

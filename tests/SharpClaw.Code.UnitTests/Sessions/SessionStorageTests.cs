@@ -1,4 +1,5 @@
 using FluentAssertions;
+using Microsoft.Data.Sqlite;
 using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Events;
@@ -58,6 +59,43 @@ public sealed class SessionStorageTests : IDisposable
         loaded!.Id.Should().Be("s1");
         loaded.Title.Should().Be("Test s1");
         loaded.State.Should().Be(SessionLifecycleState.Active);
+        var snapshotPath = Path.Combine(_tempDir, ".sharpclaw", "sessions", "s1", "session.json");
+        (await File.ReadAllTextAsync(snapshotPath)).Should().Contain("\"schemaVersion\":1");
+    }
+
+    [Fact]
+    public async Task FileSessionStore_loads_legacy_prompt_permission_mode()
+    {
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
+        var session = CreateSession("legacy", DateTimeOffset.UtcNow);
+        await store.SaveAsync(_tempDir, session, CancellationToken.None);
+        var snapshotPath = Path.Combine(_tempDir, ".sharpclaw", "sessions", "legacy", "session.json");
+        var legacyJson = (await File.ReadAllTextAsync(snapshotPath))
+            .Replace("\"workspaceWrite\"", "\"prompt\"", StringComparison.Ordinal)
+            .Replace(",\"schemaVersion\":1", string.Empty, StringComparison.Ordinal);
+        await File.WriteAllTextAsync(snapshotPath, legacyJson);
+
+        var loaded = await store.GetByIdAsync(_tempDir, "legacy", CancellationToken.None);
+
+        loaded.Should().NotBeNull();
+        loaded!.PermissionMode.Should().Be(PermissionMode.WorkspaceWrite);
+    }
+
+    [Fact]
+    public async Task FileSessionStore_skips_malformed_snapshot_when_listing()
+    {
+        var store = new FileSessionStore(_fileSystem, CreateStoragePathResolver());
+        await store.SaveAsync(_tempDir, CreateSession("valid", DateTimeOffset.UtcNow), CancellationToken.None);
+        var malformedDirectory = Path.Combine(_tempDir, ".sharpclaw", "sessions", "broken");
+        Directory.CreateDirectory(malformedDirectory);
+        await File.WriteAllTextAsync(Path.Combine(malformedDirectory, "session.json"), "{not-json");
+
+        var sessions = await store.ListAllAsync(_tempDir, CancellationToken.None);
+        var latest = await store.GetLatestAsync(_tempDir, CancellationToken.None);
+
+        sessions.Should().ContainSingle().Which.Id.Should().Be("valid");
+        latest.Should().NotBeNull();
+        latest!.Id.Should().Be("valid");
     }
 
     [Fact]
@@ -124,6 +162,27 @@ public sealed class SessionStorageTests : IDisposable
 
         var loaded = await store.GetByIdAsync(_tempDir, "s1", CancellationToken.None);
         loaded!.Title.Should().Be("Updated");
+    }
+
+    [Fact]
+    public async Task SqliteSessionStore_skips_malformed_snapshots_when_listing()
+    {
+        var resolver = CreateStoragePathResolver();
+        var store = new SqliteSessionStore(_fileSystem, resolver);
+        await store.SaveAsync(_tempDir, CreateSession("valid", DateTimeOffset.UtcNow), CancellationToken.None);
+        await store.SaveAsync(_tempDir, CreateSession("broken", DateTimeOffset.UtcNow.AddMinutes(1)), CancellationToken.None);
+
+        await using (var connection = new SqliteConnection($"Data Source={resolver.GetSessionStoreDatabasePath(_tempDir)}"))
+        {
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "UPDATE sessions SET payload_json = '{not-json' WHERE session_id = 'broken';";
+            await command.ExecuteNonQueryAsync();
+        }
+
+        var sessions = await store.ListAllAsync(_tempDir, CancellationToken.None);
+
+        sessions.Should().ContainSingle().Which.Id.Should().Be("valid");
     }
 
     // ── NdjsonEventStore ──

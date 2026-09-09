@@ -62,4 +62,4 @@ Providers bind to **`IConfiguration`** sections (see `docs/providers.md`). The C
 
 - Runtime details: [runtime.md](runtime.md)  
 - Sessions layout: [sessions.md](sessions.md)  
-- Backlog notes: [../ARCHITECTURE-NOTES.md](../ARCHITECTURE-NOTES.md)
+- Backlog notes are maintained in `ARCHITECTURE-NOTES.md` at the repository root.

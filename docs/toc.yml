@@ -1,0 +1,28 @@
+- name: Getting started
+  href: getting-started.md
+- name: Architecture
+  href: architecture.md
+- name: Runtime
+  href: runtime.md
+- name: Providers
+  href: providers.md
+- name: Tools and permissions
+  items:
+    - name: Tools
+      href: tools.md
+    - name: Permissions
+      href: permissions.md
+- name: Integrations
+  items:
+    - name: Agent Framework
+      href: agent-framework-integration.md
+    - name: MCP
+      href: mcp.md
+    - name: Plugins
+      href: plugins.md
+    - name: ACP
+      href: acp.md
+- name: Testing
+  href: testing.md
+- name: API reference
+  href: api/toc.yml

@@ -24,7 +24,7 @@ jobs:
       - name: Restore
         run: dotnet restore SharpClawCode.sln
       - name: Build
-        run: dotnet build SharpClawCode.sln --no-restore --configuration Release
+        run: dotnet build SharpClawCode.sln --no-restore --configuration Release --warnaserror
       - name: Build examples
         run: |
           dotnet build examples/WebApiAgent/WebApiAgent.csproj --no-restore --configuration Release
@@ -43,3 +43,48 @@ jobs:
         with:
           name: coverage-report
           path: ./coverage/**/coverage.cobertura.xml
+      - name: Enforce coverage floor
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: ./.github/scripts/Test-Coverage.ps1 -CoverageRoot ./coverage -MinimumLineCoverage 38
+
+  package-smoke:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Pack and install production artifacts
+        shell: pwsh
+        run: ./.github/scripts/Test-Packages.ps1
+
+  vscode-extension:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: extensions/vscode
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: extensions/vscode/package-lock.json
+      - run: npm ci
+      - run: npm run compile
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet tool restore
+      - run: dotnet docfx docs/docfx.json --warningsAsErrors

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.RegularExpressions;
 
 namespace SharpClaw.Code.Telemetry.Diagnostics;
 
@@ -14,16 +15,19 @@ public sealed class TurnActivityScope : IDisposable
     /// </summary>
     /// <param name="sessionId">Owning session identifier.</param>
     /// <param name="turnId">Turn identifier.</param>
-    /// <param name="prompt">Optional prompt preview.</param>
-    public TurnActivityScope(string sessionId, string turnId, string? prompt = null)
+    /// <param name="prompt">Optional prompt preview. Callers must opt in before passing prompt content.</param>
+    /// <param name="promptPreviewMaxLength">Maximum redacted preview length.</param>
+    public TurnActivityScope(string sessionId, string turnId, string? prompt = null, int promptPreviewMaxLength = 200)
     {
         _activity = SharpClawActivitySource.Instance.StartActivity("sharpclaw.turn");
         _activity?.SetTag("sharpclaw.session.id", sessionId);
         _activity?.SetTag("sharpclaw.turn.id", turnId);
         if (prompt is not null)
         {
-            // Truncate prompt to avoid huge spans
-            _activity?.SetTag("sharpclaw.turn.prompt_preview", prompt.Length > 200 ? prompt[..200] + "..." : prompt);
+            var redacted = RedactSecrets(prompt);
+            _activity?.SetTag(
+                "sharpclaw.turn.prompt_preview",
+                redacted.Length > promptPreviewMaxLength ? redacted[..promptPreviewMaxLength] + "..." : redacted);
         }
     }
 
@@ -60,4 +64,20 @@ public sealed class TurnActivityScope : IDisposable
 
     /// <inheritdoc />
     public void Dispose() => _activity?.Dispose();
+
+    private static string RedactSecrets(string prompt)
+    {
+        var redactedAssignments = Regex.Replace(
+            prompt,
+            @"(?i)\b(api[_-]?key|access[_-]?token|token|password|secret)\s*[:=]\s*[^\s,;]+",
+            "$1=[REDACTED]",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+        return Regex.Replace(
+            redactedAssignments,
+            @"\bsk-[A-Za-z0-9_-]{8,}\b",
+            "[REDACTED]",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+    }
 }

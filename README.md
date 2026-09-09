@@ -236,6 +236,7 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `m
 | [docs/acp.md](docs/acp.md) | ACP stdio host and protocol notes |
 | [docs/plugins.md](docs/plugins.md) | Plugin discovery, trust, and CLI flows |
 | [docs/testing.md](docs/testing.md) | Unit, integration, and parity-harness coverage |
+| [docs/index.md](docs/index.md) | DocFX documentation entry point and generated API reference |
 | [ARCHITECTURE-NOTES.md](ARCHITECTURE-NOTES.md) | Architectural follow-ups and cleanup ideas |
 
 ## Configuration
@@ -254,11 +255,11 @@ Key runtime configuration sections:
 
 | Section | Purpose |
 |---|---|
-| `SharpClaw:Providers:Catalog` | Default provider, model aliases |
+| `SharpClaw:Providers:Catalog` | Default provider, model aliases, ordered fallback providers |
 | `SharpClaw:Providers:Anthropic` | Anthropic API key, base URL, default model |
 | `SharpClaw:Providers:OpenAiCompatible` | OpenAI-compatible base settings plus local runtime profiles, auth mode, and default embedding model |
 | `SharpClaw:Web` | Web search provider name, endpoint template, user agent |
-| `SharpClaw:Telemetry` | Runtime event ring buffer capacity plus webhook event export behavior |
+| `SharpClaw:Telemetry` | Runtime event buffer, webhook export, and opt-in redacted prompt previews |
 
 Key `sharpclaw.jsonc` capabilities:
 
@@ -298,6 +299,7 @@ dotnet build examples/WebApiAgent/WebApiAgent.csproj
 dotnet build examples/MinimalConsoleAgent/MinimalConsoleAgent.csproj
 dotnet build examples/WorkerServiceHost/WorkerServiceHost.csproj
 dotnet build examples/McpToolAgent/McpToolAgent.csproj
+pwsh .github/scripts/Test-Packages.ps1
 ```
 
 ## License

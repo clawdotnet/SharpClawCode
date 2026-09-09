@@ -135,21 +135,26 @@ Alternatively, configure providers in `appsettings.json`:
 }
 ```
 
-The runtime loads from standard .NET configuration sources:
-1. Environment variables (highest priority, double-underscore path format)
-2. `appsettings.{Environment}.json`
-3. `appsettings.json` (default)
-4. Command-line arguments
+The runtime follows the standard .NET precedence used by the CLI host:
+
+1. Command-line arguments
+2. Environment variables (double-underscore path format)
+3. `appsettings.{Environment}.json`
+4. `appsettings.json`
 
 ## Embed in Your Own App
 
 Use SharpClaw as a library in your .NET application.
 
-### 1. Install the NuGet Package
+### 1. Reference the Runtime
+
+After the first tagged package release, install the preview from NuGet:
 
 ```bash
-dotnet add package SharpClaw.Code.Runtime
+dotnet add package SharpClaw.Code.Runtime --prerelease
 ```
+
+Until that release is published, clone this repository and add a project reference to `src/SharpClaw.Code.Runtime/SharpClaw.Code.Runtime.csproj`.
 
 ### 2. Register the Runtime
 
@@ -182,7 +187,7 @@ var request = new RunPromptRequest(
     Prompt: "Analyze the current workspace",
     SessionId: null,                                  // new session
     WorkingDirectory: Environment.CurrentDirectory,
-    PermissionMode: PermissionMode.Auto,
+    PermissionMode: PermissionMode.WorkspaceWrite,
     OutputFormat: OutputFormat.Markdown,
     Metadata: new Dictionary<string, string> 
     { 
@@ -210,7 +215,7 @@ var request = new RunPromptRequest(
     Prompt: "Continue from before",
     SessionId: latestSession?.Id,  // Resume this session
     WorkingDirectory: Environment.CurrentDirectory,
-    PermissionMode: PermissionMode.Auto,
+    PermissionMode: PermissionMode.WorkspaceWrite,
     OutputFormat: OutputFormat.Markdown,
     Metadata: null
 );
@@ -243,7 +248,7 @@ try
             "What is in this directory?",
             SessionId: null,
             WorkingDirectory: Environment.CurrentDirectory,
-            PermissionMode: PermissionMode.Auto,
+            PermissionMode: PermissionMode.WorkspaceWrite,
             OutputFormat: OutputFormat.Markdown,
             Metadata: null
         ),
@@ -317,4 +322,4 @@ Check that all prerequisites are installed and your internet connection is stabl
 ## Questions?
 
 - Open an issue: [github.com/clawdotnet/SharpClawCode/issues](https://github.com/clawdotnet/SharpClawCode/issues)
-- Read the [README](../README.md) for a full feature overview
+- Read the repository `README.md` for a full feature overview

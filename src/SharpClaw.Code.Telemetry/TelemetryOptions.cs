@@ -6,6 +6,16 @@ namespace SharpClaw.Code.Telemetry;
 public sealed class TelemetryOptions
 {
     /// <summary>
+    /// Gets or sets whether a redacted prompt preview is added to turn activities. Disabled by default.
+    /// </summary>
+    public bool CapturePromptPreview { get; set; }
+
+    /// <summary>
+    /// Gets or sets the maximum redacted prompt-preview length.
+    /// </summary>
+    public int PromptPreviewMaxLength { get; set; } = 200;
+
+    /// <summary>
     /// Maximum number of <see cref="SharpClaw.Code.Protocol.Events.RuntimeEvent" /> instances retained in the ring buffer.
     /// </summary>
     public int RuntimeEventRingBufferCapacity { get; set; } = 10_000;

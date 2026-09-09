@@ -104,9 +104,11 @@ public static class ProvidersServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<ProviderCatalogOptions>, ProviderCatalogOptionsValidator>();
         services.AddSingleton<IValidateOptions<AnthropicProviderOptions>, AnthropicProviderOptionsValidator>();
         services.AddSingleton<IValidateOptions<OpenAiCompatibleProviderOptions>, OpenAiCompatibleProviderOptionsValidator>();
+        services.AddSingleton<IValidateOptions<ProviderResilienceOptions>, ProviderResilienceOptionsValidator>();
         services.AddOptions<ProviderCatalogOptions>().ValidateOnStart();
         services.AddOptions<AnthropicProviderOptions>().ValidateOnStart();
         services.AddOptions<OpenAiCompatibleProviderOptions>().ValidateOnStart();
+        services.AddOptions<ProviderResilienceOptions>().ValidateOnStart();
 
         services.AddSingleton<AnthropicProvider>();
         services.AddSingleton<OpenAiCompatibleProvider>();
