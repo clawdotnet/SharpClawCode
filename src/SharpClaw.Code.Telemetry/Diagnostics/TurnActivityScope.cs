@@ -27,7 +27,9 @@ public sealed class TurnActivityScope : IDisposable
             var redacted = RedactSecrets(prompt);
             _activity?.SetTag(
                 "sharpclaw.turn.prompt_preview",
-                redacted.Length > promptPreviewMaxLength ? redacted[..promptPreviewMaxLength] + "..." : redacted);
+                redacted.Length > promptPreviewMaxLength
+                    ? redacted[..(promptPreviewMaxLength - 3)] + "..."
+                    : redacted);
         }
     }
 
@@ -67,15 +69,27 @@ public sealed class TurnActivityScope : IDisposable
 
     private static string RedactSecrets(string prompt)
     {
-        var redactedAssignments = Regex.Replace(
+        var redactedAuthorization = Regex.Replace(
             prompt,
+            @"(?i)\bauthorization\s*[:=]\s*(?:bearer|basic)\s+[^\s,;]+",
+            "Authorization=[REDACTED]",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+        var redactedAssignments = Regex.Replace(
+            redactedAuthorization,
             @"(?i)\b(api[_-]?key|access[_-]?token|token|password|secret)\s*[:=]\s*[^\s,;]+",
             "$1=[REDACTED]",
             RegexOptions.CultureInvariant,
             TimeSpan.FromMilliseconds(100));
-        return Regex.Replace(
+        var redactedProviderKeys = Regex.Replace(
             redactedAssignments,
             @"\bsk-[A-Za-z0-9_-]{8,}\b",
+            "[REDACTED]",
+            RegexOptions.CultureInvariant,
+            TimeSpan.FromMilliseconds(100));
+        return Regex.Replace(
+            redactedProviderKeys,
+            @"\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b",
             "[REDACTED]",
             RegexOptions.CultureInvariant,
             TimeSpan.FromMilliseconds(100));

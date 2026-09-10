@@ -35,12 +35,17 @@ jobs:
       - run: dotnet build src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --configuration Release --warnaserror
       - name: Select credential reference
         shell: pwsh
+        env:
+          PROVIDER: ${{ inputs.provider }}
         run: |
-          $provider = '${{ inputs.provider }}'
+          $provider = $env:PROVIDER
           $variableName = if ($provider -eq 'anthropic') { 'ANTHROPIC_API_KEY' } else { 'OPENAI_API_KEY' }
           if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($variableName))) {
             throw "The $variableName repository secret is required for this smoke test."
           }
           dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- auth set-key --provider $provider --env-var $variableName
       - name: Run real provider prompt
-        run: dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- --output-format json --model '${{ inputs.provider }}/${{ inputs.model }}' prompt 'Reply with exactly SHARPCLAW_PROVIDER_OK.'
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+        run: dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- --output-format json --model "$PROVIDER/$MODEL" prompt 'Reply with exactly SHARPCLAW_PROVIDER_OK.'

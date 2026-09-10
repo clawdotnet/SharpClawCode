@@ -16,8 +16,10 @@ jobs:
       - name: Validate semantic version tag
         id: version
         shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $version = $env:REF_NAME -replace '^v', ''
           if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Tag is not a supported semantic version." }
           "value=$version" >> $env:GITHUB_OUTPUT
       - name: Setup .NET
@@ -27,7 +29,8 @@ jobs:
       - name: Restore
         run: dotnet restore SharpClawCode.sln
       - name: Audit dependencies
-        run: dotnet list SharpClawCode.sln package --vulnerable --include-transitive
+        shell: pwsh
+        run: ./.github/scripts/Test-VulnerablePackages.ps1 -Target SharpClawCode.sln
       - name: Build
         run: dotnet build SharpClawCode.sln --no-restore --configuration Release --warnaserror
       - name: Test

@@ -34,6 +34,13 @@ public sealed class PlatformSecretProtectorTests : IDisposable
         payload.Should().NotContain("super-secret-value");
         protector.Unprotect(payload).Should().Be("super-secret-value");
         protector.CanProtect.Should().BeTrue();
+        if (!OperatingSystem.IsWindows())
+        {
+            File.GetUnixFileMode(_tempDirectory).Should().Be(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            File.GetUnixFileMode(Path.Combine(_tempDirectory, "secret-protection.key")).Should().Be(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
     }
 
     /// <summary>

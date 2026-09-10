@@ -78,7 +78,11 @@ public sealed class ProviderBackedAgentKernel(
             ProviderExecutionException? lastCandidateFailure = null;
             foreach (var candidate in resolvedCandidates)
             {
-                var candidateModel = ResolveCandidateModel(providerCatalogOptions.Value, candidate.ProviderName, requestedModel);
+                var candidateModel = ResolveCandidateModel(
+                    providerCatalogOptions.Value,
+                    resolvedProviderName,
+                    candidate.ProviderName,
+                    requestedModel);
                 try
                 {
                     var authStatus = string.Equals(candidate.ProviderName, resolvedProviderName, StringComparison.OrdinalIgnoreCase)
@@ -144,7 +148,11 @@ public sealed class ProviderBackedAgentKernel(
 
             var activeProviderIndex = 0;
             var activeProviderName = providerCandidates[0].ProviderName;
-            var activeModel = ResolveCandidateModel(providerCatalogOptions.Value, activeProviderName, requestedModel);
+            var activeModel = ResolveCandidateModel(
+                providerCatalogOptions.Value,
+                resolvedProviderName,
+                activeProviderName,
+                requestedModel);
 
             // --- Build initial conversation messages ---
             // Do not add request.Instructions as a shared "system" chat message here.
@@ -185,7 +193,11 @@ public sealed class ProviderBackedAgentKernel(
                 for (var candidateIndex = activeProviderIndex; candidateIndex < providerCandidates.Count; candidateIndex++)
                 {
                     var provider = providerCandidates[candidateIndex];
-                    var candidateModel = ResolveCandidateModel(providerCatalogOptions.Value, provider.ProviderName, requestedModel);
+                    var candidateModel = ResolveCandidateModel(
+                        providerCatalogOptions.Value,
+                        resolvedProviderName,
+                        provider.ProviderName,
+                        requestedModel);
                     var providerRequest = providerRequestPreflight.Prepare(new ProviderRequest(
                         Id: $"provider-request-{Guid.NewGuid():N}",
                         SessionId: request.Context.SessionId,
@@ -451,8 +463,14 @@ public sealed class ProviderBackedAgentKernel(
         return $"Provider '{providerName}' stream failed: {detail}";
     }
 
-    private static string ResolveCandidateModel(ProviderCatalogOptions options, string providerName, string primaryModel)
-        => options.FallbackModels.TryGetValue(providerName, out var fallbackModel) && !string.IsNullOrWhiteSpace(fallbackModel)
+    private static string ResolveCandidateModel(
+        ProviderCatalogOptions options,
+        string primaryProviderName,
+        string candidateProviderName,
+        string primaryModel)
+        => !string.Equals(candidateProviderName, primaryProviderName, StringComparison.OrdinalIgnoreCase)
+            && options.FallbackModels.TryGetValue(candidateProviderName, out var fallbackModel)
+            && !string.IsNullOrWhiteSpace(fallbackModel)
             ? fallbackModel
             : primaryModel;
 }

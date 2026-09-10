@@ -9,6 +9,7 @@ $scratchRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sharpclaw-package-s
 $packageOutput = Join-Path $scratchRoot "packages"
 $toolPath = Join-Path $scratchRoot "tool"
 $consumerPath = Join-Path $scratchRoot "consumer"
+$nugetConfigPath = Join-Path $scratchRoot "NuGet.Config"
 
 try {
     New-Item -ItemType Directory -Path $packageOutput -Force | Out-Null
@@ -24,7 +25,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Could not create package smoke consumer." }
     & dotnet add (Join-Path $consumerPath "consumer.csproj") package SharpClaw.Code --version $PackageVersion --no-restore
     if ($LASTEXITCODE -ne 0) { throw "Could not add the aggregate SDK package." }
-    & dotnet restore (Join-Path $consumerPath "consumer.csproj") --source $packageOutput --source https://api.nuget.org/v3/index.json
+
+    [System.IO.File]::WriteAllText(
+        $nugetConfigPath,
+        '<?xml version="1.0" encoding="utf-8"?><configuration><packageSources><clear /></packageSources></configuration>')
+    & dotnet nuget add source $packageOutput --name sharpclaw-local --configfile $nugetConfigPath
+    if ($LASTEXITCODE -ne 0) { throw "Could not configure the local package source." }
+    & dotnet nuget add source "https://api.nuget.org/v3/index.json" --name nuget.org --configfile $nugetConfigPath
+    if ($LASTEXITCODE -ne 0) { throw "Could not configure the NuGet.org package source." }
+
+    & dotnet restore (Join-Path $consumerPath "consumer.csproj") --configfile $nugetConfigPath
     if ($LASTEXITCODE -ne 0) { throw "Could not restore the aggregate SDK package." }
     & dotnet build (Join-Path $consumerPath "consumer.csproj") --configuration $Configuration --no-restore
     if ($LASTEXITCODE -ne 0) { throw "The aggregate SDK package failed to build in a clean consumer." }

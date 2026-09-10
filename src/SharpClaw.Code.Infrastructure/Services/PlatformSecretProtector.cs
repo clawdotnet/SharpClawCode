@@ -112,17 +112,34 @@ public sealed class PlatformSecretProtector(IUserProfilePaths userProfilePaths) 
 
     private byte[] GetOrCreateUnixKey()
     {
+        if (OperatingSystem.IsWindows())
+        {
+            throw new PlatformNotSupportedException("AES key-file protection is available only on macOS and Linux.");
+        }
+
         var root = userProfilePaths.GetUserSharpClawRoot();
-        Directory.CreateDirectory(root);
+        var directoryMode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
+        Directory.CreateDirectory(root, directoryMode);
+        File.SetUnixFileMode(root, directoryMode);
         var keyPath = Path.Combine(root, KeyFileName);
 
         if (!File.Exists(keyPath))
         {
+            var temporaryKeyPath = Path.Combine(root, $".{KeyFileName}.{Guid.NewGuid():N}.tmp");
             var generatedKey = RandomNumberGenerator.GetBytes(32);
             try
             {
-                using var stream = new FileStream(keyPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+                using var stream = new FileStream(temporaryKeyPath, new FileStreamOptions
+                {
+                    Mode = FileMode.CreateNew,
+                    Access = FileAccess.Write,
+                    Share = FileShare.None,
+                    Options = FileOptions.WriteThrough,
+                    UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+                });
                 stream.Write(generatedKey);
+                stream.Flush(flushToDisk: true);
+                File.Move(temporaryKeyPath, keyPath, overwrite: false);
             }
             catch (IOException) when (File.Exists(keyPath))
             {
@@ -130,15 +147,21 @@ public sealed class PlatformSecretProtector(IUserProfilePaths userProfilePaths) 
             }
             finally
             {
+                if (File.Exists(temporaryKeyPath))
+                {
+                    File.Delete(temporaryKeyPath);
+                }
+
                 CryptographicOperations.ZeroMemory(generatedKey);
             }
         }
 
-        if (!OperatingSystem.IsWindows())
+        if ((File.GetAttributes(keyPath) & FileAttributes.ReparsePoint) != 0)
         {
-            File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            throw new CryptographicException($"The local secret-protection key at '{keyPath}' cannot be a symbolic link.");
         }
 
+        File.SetUnixFileMode(keyPath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
         var key = File.ReadAllBytes(keyPath);
         return key.Length == 32
             ? key

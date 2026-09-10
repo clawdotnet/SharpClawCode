@@ -59,15 +59,16 @@ public sealed class SqliteSessionStore(
             .ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT payload_json
+            SELECT session_id, payload_json
             FROM sessions
             ORDER BY updated_at_utc DESC;
             """;
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var payload = reader.IsDBNull(0) ? null : reader.GetString(0);
-            var session = Deserialize(payload, sessionId: null);
+            var sessionId = reader.IsDBNull(0) ? null : reader.GetString(0);
+            var payload = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var session = Deserialize(payload, sessionId);
             if (session is not null)
             {
                 return session;
@@ -85,7 +86,7 @@ public sealed class SqliteSessionStore(
             .ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT payload_json
+            SELECT session_id, payload_json
             FROM sessions
             ORDER BY updated_at_utc DESC;
             """;
@@ -94,8 +95,9 @@ public sealed class SqliteSessionStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var payload = reader.IsDBNull(0) ? null : reader.GetString(0);
-            var session = Deserialize(payload, sessionId: null);
+            var sessionId = reader.IsDBNull(0) ? null : reader.GetString(0);
+            var payload = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var session = Deserialize(payload, sessionId);
             if (session is not null)
             {
                 sessions.Add(session);

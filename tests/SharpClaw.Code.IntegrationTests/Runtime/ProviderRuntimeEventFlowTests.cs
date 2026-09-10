@@ -275,6 +275,39 @@ public sealed class ProviderRuntimeEventFlowTests
         result.Events.OfType<ProviderStartedEvent>().Should().ContainSingle(e => e.ProviderName == "fallback-provider");
     }
 
+    /// <summary>
+    /// Ensures a provider's fallback-model mapping cannot replace its explicitly requested primary model.
+    /// </summary>
+    [Fact]
+    public async Task RunPrompt_should_preserve_requested_model_for_primary_provider()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        using var serviceProvider = CreateRuntimeServices(services =>
+        {
+            services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+            services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
+            services.AddSingleton<IModelProviderResolver>(new ExpectedModelProviderResolver("stub-model"));
+            services.Configure<ProviderCatalogOptions>(options => options.FallbackModels["stub-provider"] = "fallback-model");
+        });
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+
+        var result = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "preserve the primary model",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    ["provider"] = "stub-provider",
+                    ["model"] = "stub-model"
+                }),
+            CancellationToken.None);
+
+        result.FinalOutput.Should().Be("Hello world");
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-provider-tests", Guid.NewGuid().ToString("N"));
@@ -343,6 +376,13 @@ public sealed class ProviderRuntimeEventFlowTests
         public IModelProvider Resolve(string providerName) => _primary;
 
         public IReadOnlyList<IModelProvider> ResolveCandidates(string providerName) => [_primary, _fallback];
+    }
+
+    private sealed class ExpectedModelProviderResolver(string expectedModel) : IModelProviderResolver
+    {
+        private readonly IModelProvider _provider = new StubModelProvider(expectedModel: expectedModel);
+
+        public IModelProvider Resolve(string providerName) => _provider;
     }
 
     private sealed class FailIfInvokedModelProviderResolver : IModelProviderResolver

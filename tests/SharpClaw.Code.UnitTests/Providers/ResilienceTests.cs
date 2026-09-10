@@ -224,6 +224,51 @@ public sealed class ResilienceTests
         mock.CallCount.Should().Be(1);
     }
 
+    [Fact]
+    public async Task Retries_operation_canceled_failure_when_caller_is_not_canceled()
+    {
+        var fakeHandle = new ProviderStreamHandle(FakeRequest, AsyncEnumerable.Empty<ProviderEvent>());
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => throw new OperationCanceledException("provider timeout"));
+        mock.Behaviors.Enqueue(() => Task.FromResult(fakeHandle));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await DrainAsync(stream.Events);
+
+        mock.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Circuit_breaker_stops_retries_in_current_request()
+    {
+        var options = new ProviderResilienceOptions
+        {
+            MaxRetries = 3,
+            InitialRetryDelay = TimeSpan.Zero,
+            MaxRetryDelay = TimeSpan.Zero,
+            RequestTimeout = TimeSpan.FromSeconds(30),
+            CircuitBreakerFailureThreshold = 2,
+            CircuitBreakerBreakDuration = TimeSpan.FromHours(1),
+        };
+        var mock = new CountingMockProvider();
+        for (var i = 0; i < 4; i++)
+        {
+            mock.Behaviors.Enqueue(() => throw new IOException("provider unavailable"));
+        }
+        var decorator = BuildDecorator(mock, options);
+
+        var act = async () =>
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        };
+
+        var exception = await act.Should().ThrowAsync<ProviderExecutionException>();
+        exception.Which.Message.Should().Contain("after 2 attempt(s)");
+        mock.CallCount.Should().Be(2);
+    }
+
     private static async Task DrainAsync(IAsyncEnumerable<ProviderEvent> events)
         => _ = await CollectAsync(events);
 

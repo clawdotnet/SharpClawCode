@@ -42,7 +42,42 @@ public sealed class TurnActivityScopeTests
         var preview = completed!.GetTagItem("sharpclaw.turn.prompt_preview")?.ToString();
         preview.Should().NotContain("hunter2").And.NotContain("top-secret").And.NotContain("sk-abcdefghijklm");
         preview.Should().Contain("[REDACTED]");
-        preview!.Length.Should().BeLessThanOrEqualTo(51);
+        preview!.Length.Should().BeLessThanOrEqualTo(48);
+    }
+
+    /// <summary>
+    /// Ensures authorization headers and JWT-shaped values are removed before export.
+    /// </summary>
+    [Fact]
+    public void Prompt_preview_should_redact_bearer_authorization()
+    {
+        Activity? completed = null;
+        using var listener = new ActivityListener
+        {
+            ShouldListenTo = source => source.Name == SharpClawActivitySource.SourceName,
+            Sample = static (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData,
+            ActivityStopped = activity =>
+            {
+                if (Equals(activity.GetTagItem("sharpclaw.session.id"), "bearer-session"))
+                {
+                    completed = activity;
+                }
+            },
+        };
+        ActivitySource.AddActivityListener(listener);
+        const string credential = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature";
+
+        using (new TurnActivityScope(
+            "bearer-session",
+            "turn",
+            $"Authorization: Bearer {credential}",
+            promptPreviewMaxLength: 200))
+        {
+        }
+
+        var preview = completed!.GetTagItem("sharpclaw.turn.prompt_preview")?.ToString();
+        preview.Should().Be("Authorization=[REDACTED]");
+        preview.Should().NotContain(credential);
     }
 
     /// <summary>

@@ -50,9 +50,11 @@ internal sealed class ResilientProviderDecorator : IModelProvider
         [EnumeratorCancellation] CancellationToken callerCancellationToken)
     {
         Exception? lastException = null;
+        var attemptsMade = 0;
 
         for (var attempt = 0; attempt <= _options.MaxRetries; attempt++)
         {
+            attemptsMade = attempt + 1;
             callerCancellationToken.ThrowIfCancellationRequested();
             using var timeoutCts = new CancellationTokenSource(_options.RequestTimeout);
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(callerCancellationToken, timeoutCts.Token);
@@ -140,7 +142,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
 
             lastException = attemptException;
             RecordFailureAndOpenCircuitIfNeeded();
-            if (emittedEvent || attempt >= _options.MaxRetries)
+            if (emittedEvent || attempt >= _options.MaxRetries || IsCircuitOpen())
             {
                 break;
             }
@@ -160,7 +162,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
             ProviderName,
             request.Model,
             ProviderFailureKind.StreamFailed,
-            $"Provider '{ProviderName}' failed while streaming after {_options.MaxRetries + 1} attempt(s).",
+            $"Provider '{ProviderName}' failed while streaming after {attemptsMade} attempt(s).",
             lastException);
     }
 
@@ -205,7 +207,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
         }
 
         return exception is not ArgumentException
-            && exception is HttpRequestException or TaskCanceledException or TimeoutException or IOException;
+            && exception is HttpRequestException or OperationCanceledException or TimeoutException or IOException;
     }
 
     private TimeSpan ComputeDelay(int attempt, Exception exception)
@@ -234,6 +236,14 @@ internal sealed class ResilientProviderDecorator : IModelProvider
 
             _consecutiveFailures = 0;
             _circuitOpen = false;
+        }
+    }
+
+    private bool IsCircuitOpen()
+    {
+        lock (_lock)
+        {
+            return _circuitOpen;
         }
     }
 

@@ -23,6 +23,7 @@ public sealed class SessionStorageTests : IDisposable
 
     public void Dispose()
     {
+        SqliteConnection.ClearAllPools();
         if (Directory.Exists(_tempDir))
         {
             Directory.Delete(_tempDir, recursive: true);
