@@ -1,7 +1,8 @@
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Protocol.Models;
-using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Sessions.Abstractions;
 
 namespace SharpClaw.Code.Sessions.Storage;
@@ -9,7 +10,10 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// <summary>
 /// Stores session snapshots as readable JSON files under the workspace.
 /// </summary>
-public sealed class FileSessionStore(IFileSystem fileSystem, IRuntimeStoragePathResolver storagePathResolver) : ISessionStore
+public sealed class FileSessionStore(
+    IFileSystem fileSystem,
+    IRuntimeStoragePathResolver storagePathResolver,
+    ILogger<FileSessionStore>? logger = null) : ISessionStore
 {
     /// <inheritdoc />
     public Task SaveAsync(string workspacePath, ConversationSession session, CancellationToken cancellationToken)
@@ -18,7 +22,7 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IRuntimeStoragePath
         fileSystem.CreateDirectory(sessionsRoot);
 
         var path = storagePathResolver.GetSessionSnapshotPath(workspacePath, session.Id);
-        var json = JsonSerializer.Serialize(session, ProtocolJsonContext.Default.ConversationSession);
+        var json = SessionSnapshotSerializer.Serialize(session);
         return fileSystem.WriteAllTextAsync(path, json, cancellationToken);
     }
 
@@ -27,9 +31,19 @@ public sealed class FileSessionStore(IFileSystem fileSystem, IRuntimeStoragePath
     {
         var path = storagePathResolver.GetSessionSnapshotPath(workspacePath, sessionId);
         var content = await fileSystem.ReadAllTextIfExistsAsync(path, cancellationToken).ConfigureAwait(false);
-        return string.IsNullOrWhiteSpace(content)
-            ? null
-            : JsonSerializer.Deserialize(content, ProtocolJsonContext.Default.ConversationSession);
+        try
+        {
+            return SessionSnapshotSerializer.Deserialize(content);
+        }
+        catch (JsonException exception)
+        {
+            (logger ?? NullLogger<FileSessionStore>.Instance).LogWarning(
+                exception,
+                "Skipping unreadable session snapshot {SessionId} at {Path}.",
+                sessionId,
+                path);
+            return null;
+        }
     }
 
     /// <inheritdoc />

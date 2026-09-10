@@ -3,19 +3,19 @@
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
   <ItemGroup>
-    <PackageVersion Include="AngleSharp" Version="1.2.0" />
+    <PackageVersion Include="AngleSharp" Version="1.7.2" />
     <PackageVersion Include="coverlet.collector" Version="6.0.4" />
     <PackageVersion Include="FluentAssertions" Version="8.9.0" />
     <PackageVersion Include="Microsoft.Agents.AI" Version="1.0.0" />
-    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.5" />
-    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.5" />
+    <PackageVersion Include="Microsoft.Extensions.Configuration" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Options.ConfigurationExtensions" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.11" />
+    <PackageVersion Include="Microsoft.Extensions.Logging" Version="10.0.11" />
     <PackageVersion Include="Microsoft.IdentityModel.JsonWebTokens" Version="8.14.0" />
     <PackageVersion Include="Microsoft.IdentityModel.Protocols.OpenIdConnect" Version="8.14.0" />
     <PackageVersion Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
@@ -24,9 +24,9 @@
     <PackageVersion Include="Microsoft.Extensions.AI.OpenAI" Version="10.4.1" />
     <PackageVersion Include="ModelContextProtocol" Version="1.2.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="5.0.0" />
-    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.0" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="10.0.11" />
     <PackageVersion Include="Spectre.Console" Version="0.55.0" />
-    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+    <PackageVersion Include="System.Security.Cryptography.ProtectedData" Version="10.0.11" />
     <PackageVersion Include="System.CommandLine" Version="2.0.5" />
     <PackageVersion Include="xunit" Version="2.9.3" />
     <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.4" />

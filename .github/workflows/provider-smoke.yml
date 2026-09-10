@@ -1,0 +1,51 @@
+name: Live provider smoke
+
+on:
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: Provider to validate
+        required: true
+        default: openai-compatible
+        type: choice
+        options:
+          - openai-compatible
+          - anthropic
+      model:
+        description: Provider model id
+        required: true
+        default: gpt-4.1-mini
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  prompt:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet build src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --configuration Release --warnaserror
+      - name: Select credential reference
+        shell: pwsh
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          $provider = $env:PROVIDER
+          $variableName = if ($provider -eq 'anthropic') { 'ANTHROPIC_API_KEY' } else { 'OPENAI_API_KEY' }
+          if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($variableName))) {
+            throw "The $variableName repository secret is required for this smoke test."
+          }
+          dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- auth set-key --provider $provider --env-var $variableName
+      - name: Run real provider prompt
+        env:
+          PROVIDER: ${{ inputs.provider }}
+          MODEL: ${{ inputs.model }}
+        run: dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- --output-format json --model "$PROVIDER/$MODEL" prompt 'Reply with exactly SHARPCLAW_PROVIDER_OK.'

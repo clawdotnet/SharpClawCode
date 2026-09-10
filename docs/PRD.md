@@ -111,7 +111,7 @@ SharpClaw Code is a **complement to Microsoft Agent Framework**, not a competito
 
 ---
 
-## 4. Phase 1 Requirements
+## 4. Phase 1 Delivery Status
 
 ### 4.1 Core Runtime (Exists)
 
@@ -128,12 +128,14 @@ The following are implemented and tested:
 - [x] Spec workflow mode for structured requirements generation
 - [x] Cross-platform support with Windows-safe behavior
 
-### 4.2 Phase 1 Gaps (Must Build)
+### 4.2 Phase 1 Completion
 
-#### 4.2.1 Tool-Calling Loop in Agent Framework Bridge
+The original seven gaps below are now implemented in the repository. NuGet publishing remains a release operation: the package set, installation smoke test, semantic-version tag workflow, and GitHub release creation are ready, but no package is considered published until the tagged workflow succeeds.
+
+#### 4.2.1 Tool-Calling Loop in Agent Framework Bridge (Implemented)
 
 **Priority:** P0
-**Why:** The current agent bridge streams provider responses but does not execute tools within the agent loop. This is the single biggest functional gap — without it, SharpClaw Code is a streaming wrapper, not a coding agent.
+**Delivered:** The agent bridge advertises typed tools, executes requested calls through the permission-aware executor, returns tool results to the provider, records runtime events, and enforces a configurable iteration limit.
 
 **Requirements:**
 - Agent receives tool-use requests from the provider response
@@ -142,10 +144,10 @@ The following are implemented and tested:
 - Multi-turn tool loops terminate on provider completion or configurable max iterations
 - Each tool call is recorded as a runtime event (ToolStartedEvent, ToolCompletedEvent)
 
-#### 4.2.2 Conversation History
+#### 4.2.2 Conversation History (Implemented)
 
 **Priority:** P0
-**Why:** Multi-turn conversations require prior context. Currently each prompt is stateless within the provider call.
+**Delivered:** Persisted session turns are assembled into provider conversation history with workspace instructions and compaction support, including resume-safe state.
 
 **Requirements:**
 - Session-scoped conversation history assembled from persisted events
@@ -153,23 +155,22 @@ The following are implemented and tested:
 - System prompt injection from workspace context (CLAUDE.md equivalent)
 - History survives session resume
 
-#### 4.2.3 NuGet Package Distribution
+#### 4.2.3 NuGet Package Distribution (Release-Ready)
 
 **Priority:** P1
-**Why:** Adoption requires `dotnet add package`, not `git clone`.
+**Delivered:** Only production `SharpClaw.Code*` projects are packable. Packages include XML documentation, symbols, repository metadata, and a README. CI installs the aggregate SDK and CLI tool from a clean local feed before a tag can publish packages.
 
 **Requirements:**
 - Publish core packages to NuGet.org:
   - `SharpClaw.Code.Protocol` — contracts only, zero dependencies
   - `SharpClaw.Code.Runtime` — full runtime with DI extensions
-  - `SharpClaw.Code.Providers.Anthropic` — Anthropic provider
-  - `SharpClaw.Code.Providers.OpenAi` — OpenAI-compatible provider
+  - `SharpClaw.Code.Providers` — Anthropic and OpenAI-compatible providers
   - `SharpClaw.Code.Tools` — built-in tools and tool SDK
   - `SharpClaw.Code.Mcp` — MCP client integration
 - Stable API surface with semantic versioning
 - XML documentation included in packages
 
-#### 4.2.4 Documentation and Getting Started
+#### 4.2.4 Documentation and Getting Started (Implemented)
 
 **Priority:** P1
 **Why:** Framework adoption lives or dies on docs.
@@ -184,10 +185,10 @@ The following are implemented and tested:
   - Web API agent with session persistence
   - MCP-enabled agent with custom tools
 
-#### 4.2.5 CI/CD Pipeline
+#### 4.2.5 CI/CD Pipeline (Implemented)
 
 **Priority:** P1
-**Why:** No CI currently exists. Contributors need confidence their PRs don't break things.
+**Delivered:** CI builds and tests on Linux, Windows, and macOS; enforces warnings, dependency advisories, and a coverage floor; compiles the VS Code extension; and smoke-installs release packages on all three operating systems.
 
 **Requirements:**
 - GitHub Actions workflow: build + test on push/PR
@@ -195,10 +196,10 @@ The following are implemented and tested:
 - NuGet package publishing on release tags
 - Code coverage reporting
 
-#### 4.2.6 Provider Resilience
+#### 4.2.6 Provider Resilience (Implemented)
 
 **Priority:** P2
-**Why:** Production workloads need retry logic, rate limiting, and graceful degradation.
+**Delivered:** Resilience covers provider startup and full async enumeration, avoids replay after partial output, applies timeouts and circuit breaking, and can advance through an ordered authenticated fallback chain.
 
 **Requirements:**
 - Configurable retry with exponential backoff for transient HTTP failures
@@ -207,10 +208,10 @@ The following are implemented and tested:
 - Circuit breaker pattern for repeated failures
 - Fallback provider chain (try Anthropic, fall back to OpenAI)
 
-#### 4.2.7 Observability
+#### 4.2.7 Observability (Implemented)
 
 **Priority:** P2
-**Why:** Production deployments need more than a ring buffer.
+**Delivered:** Activity spans, correlated structured runtime events, usage and duration metrics, webhook/SSE delivery, and JSON/NDJSON diagnostics are available. Prompt previews are opt-in, bounded, and redacted.
 
 **Requirements:**
 - OpenTelemetry activity/span integration for distributed tracing

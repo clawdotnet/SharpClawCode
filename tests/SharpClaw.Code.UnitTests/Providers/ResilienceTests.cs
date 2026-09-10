@@ -1,5 +1,6 @@
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using System.Runtime.CompilerServices;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Configuration;
 using SharpClaw.Code.Providers.Models;
@@ -57,9 +58,10 @@ public sealed class ResilienceTests
 
         // Act
         var result = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await DrainAsync(result.Events);
 
         // Assert
-        result.Should().BeSameAs(fakeHandle);
+        result.Request.Should().Be(FakeRequest);
         mock.CallCount.Should().Be(3);
     }
 
@@ -73,7 +75,11 @@ public sealed class ResilienceTests
         var decorator = BuildDecorator(mock);
 
         // Act
-        Func<Task> act = () => decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        Func<Task> act = async () =>
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        };
 
         // Assert: propagates immediately after a single call
         await act.Should().ThrowAsync<ArgumentException>();
@@ -107,7 +113,11 @@ public sealed class ResilienceTests
         for (var i = 0; i < 3; i++)
         {
             await FluentActions
-                .Awaiting(() => decorator.StartStreamAsync(FakeRequest, CancellationToken.None))
+                .Awaiting(async () =>
+                {
+                    var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+                    await DrainAsync(stream.Events);
+                })
                 .Should().ThrowAsync<ProviderExecutionException>();
         }
 
@@ -147,17 +157,170 @@ public sealed class ResilienceTests
         var decorator = BuildDecorator(mock, opts);
 
         // First call: should fail and open the circuit
-        await FluentActions
-            .Awaiting(() => decorator.StartStreamAsync(FakeRequest, CancellationToken.None))
-            .Should().ThrowAsync<ProviderExecutionException>();
+        await FluentActions.Awaiting(async () =>
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        }).Should().ThrowAsync<ProviderExecutionException>();
 
         mock.CallCount.Should().Be(1);
 
         // Second call: break duration has elapsed (it's zero), so probe should reach inner provider
         var result = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
-        result.Should().BeSameAs(fakeHandle);
+        await DrainAsync(result.Events);
+        result.Request.Should().Be(FakeRequest);
         mock.CallCount.Should().Be(2, "probe attempt must reach the inner provider");
     }
+
+    [Fact]
+    public async Task Retries_when_stream_fails_before_first_event()
+    {
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailBeforeFirstEvent())));
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, SingleEvent())));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        var events = await CollectAsync(stream.Events);
+
+        events.Should().ContainSingle();
+        mock.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Does_not_retry_after_stream_has_emitted_an_event()
+    {
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailAfterFirstEvent())));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        Func<Task> act = () => DrainAsync(stream.Events);
+
+        await act.Should().ThrowAsync<ProviderExecutionException>();
+        mock.CallCount.Should().Be(1, "replaying a partial stream would duplicate output");
+    }
+
+    [Fact]
+    public async Task Request_timeout_covers_async_enumeration()
+    {
+        var options = new ProviderResilienceOptions
+        {
+            MaxRetries = 0,
+            InitialRetryDelay = TimeSpan.Zero,
+            MaxRetryDelay = TimeSpan.Zero,
+            RequestTimeout = TimeSpan.FromMilliseconds(25),
+            CircuitBreakerFailureThreshold = 5,
+            CircuitBreakerBreakDuration = TimeSpan.FromSeconds(30),
+        };
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, NeverCompletes())));
+        var decorator = BuildDecorator(mock, options);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        Func<Task> act = () => DrainAsync(stream.Events);
+
+        await act.Should().ThrowAsync<ProviderExecutionException>();
+        mock.CallCount.Should().Be(1);
+    }
+
+    [Fact]
+    public async Task Retries_operation_canceled_failure_when_caller_is_not_canceled()
+    {
+        var fakeHandle = new ProviderStreamHandle(FakeRequest, AsyncEnumerable.Empty<ProviderEvent>());
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => throw new OperationCanceledException("provider timeout"));
+        mock.Behaviors.Enqueue(() => Task.FromResult(fakeHandle));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await DrainAsync(stream.Events);
+
+        mock.CallCount.Should().Be(2);
+    }
+
+    [Fact]
+    public async Task Circuit_breaker_stops_retries_in_current_request()
+    {
+        var options = new ProviderResilienceOptions
+        {
+            MaxRetries = 3,
+            InitialRetryDelay = TimeSpan.Zero,
+            MaxRetryDelay = TimeSpan.Zero,
+            RequestTimeout = TimeSpan.FromSeconds(30),
+            CircuitBreakerFailureThreshold = 2,
+            CircuitBreakerBreakDuration = TimeSpan.FromHours(1),
+        };
+        var mock = new CountingMockProvider();
+        for (var i = 0; i < 4; i++)
+        {
+            mock.Behaviors.Enqueue(() => throw new IOException("provider unavailable"));
+        }
+        var decorator = BuildDecorator(mock, options);
+
+        var act = async () =>
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        };
+
+        var exception = await act.Should().ThrowAsync<ProviderExecutionException>();
+        exception.Which.Message.Should().Contain("after 2 attempt(s)");
+        mock.CallCount.Should().Be(2);
+    }
+
+    private static async Task DrainAsync(IAsyncEnumerable<ProviderEvent> events)
+        => _ = await CollectAsync(events);
+
+    private static async Task<IReadOnlyList<ProviderEvent>> CollectAsync(IAsyncEnumerable<ProviderEvent> events)
+    {
+        var result = new List<ProviderEvent>();
+        await foreach (var providerEvent in events)
+        {
+            result.Add(providerEvent);
+        }
+
+        return result;
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> FailBeforeFirstEvent()
+    {
+        await Task.Yield();
+        throw new IOException("stream failed");
+#pragma warning disable CS0162
+        yield break;
+#pragma warning restore CS0162
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> FailAfterFirstEvent()
+    {
+        yield return CreateEvent("delta");
+        await Task.Yield();
+        throw new IOException("stream failed after output");
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> SingleEvent()
+    {
+        await Task.Yield();
+        yield return CreateEvent("completed");
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> NeverCompletes(
+        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        yield break;
+    }
+
+    private static ProviderEvent CreateEvent(string kind)
+        => new(
+            Id: Guid.NewGuid().ToString("N"),
+            RequestId: FakeRequest.Id,
+            Kind: kind,
+            CreatedAtUtc: DateTimeOffset.UtcNow,
+            Content: null,
+            IsTerminal: string.Equals(kind, "completed", StringComparison.Ordinal),
+            Usage: null);
 
     // -----------------------------------------------------------------------
     // Test double

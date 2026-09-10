@@ -15,6 +15,47 @@ public sealed class ProviderCatalogOptionsValidator : IValidateOptions<ProviderC
             return ValidateOptionsResult.Fail("ProviderCatalogOptions.DefaultProvider must be set.");
         }
 
+        if (options.FallbackProviders.Any(string.IsNullOrWhiteSpace))
+        {
+            return ValidateOptionsResult.Fail("ProviderCatalogOptions.FallbackProviders cannot contain empty provider names.");
+        }
+
+        if (options.FallbackProviders.Distinct(StringComparer.OrdinalIgnoreCase).Count() != options.FallbackProviders.Count)
+        {
+            return ValidateOptionsResult.Fail("ProviderCatalogOptions.FallbackProviders cannot contain duplicate provider names.");
+        }
+
+        if (options.FallbackModels.Any(entry => string.IsNullOrWhiteSpace(entry.Key) || string.IsNullOrWhiteSpace(entry.Value)))
+        {
+            return ValidateOptionsResult.Fail("ProviderCatalogOptions.FallbackModels must contain non-empty provider names and model ids.");
+        }
+
+        return ValidateOptionsResult.Success;
+    }
+}
+
+/// <summary>
+/// Validates provider resilience settings after configuration binding.
+/// </summary>
+public sealed class ProviderResilienceOptionsValidator : IValidateOptions<ProviderResilienceOptions>
+{
+    /// <inheritdoc />
+    public ValidateOptionsResult Validate(string? name, ProviderResilienceOptions options)
+    {
+        if (options.MaxRetries < 0)
+        {
+            return ValidateOptionsResult.Fail("ProviderResilienceOptions.MaxRetries cannot be negative.");
+        }
+
+        if (options.RequestTimeout <= TimeSpan.Zero
+            || options.InitialRetryDelay < TimeSpan.Zero
+            || options.MaxRetryDelay < options.InitialRetryDelay
+            || options.CircuitBreakerFailureThreshold <= 0
+            || options.CircuitBreakerBreakDuration < TimeSpan.Zero)
+        {
+            return ValidateOptionsResult.Fail("Provider resilience durations and thresholds must be positive and internally consistent.");
+        }
+
         return ValidateOptionsResult.Success;
     }
 }

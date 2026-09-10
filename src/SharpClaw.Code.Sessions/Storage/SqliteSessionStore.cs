@@ -1,8 +1,9 @@
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Protocol.Models;
-using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Sessions.Abstractions;
 
 namespace SharpClaw.Code.Sessions.Storage;
@@ -12,7 +13,8 @@ namespace SharpClaw.Code.Sessions.Storage;
 /// </summary>
 public sealed class SqliteSessionStore(
     IFileSystem fileSystem,
-    IRuntimeStoragePathResolver storagePathResolver) : ISessionStore
+    IRuntimeStoragePathResolver storagePathResolver,
+    ILogger<SqliteSessionStore>? logger = null) : ISessionStore
 {
     /// <inheritdoc />
     public async Task SaveAsync(string workspacePath, ConversationSession session, CancellationToken cancellationToken)
@@ -32,7 +34,7 @@ public sealed class SqliteSessionStore(
             """;
         command.Parameters.AddWithValue("$sessionId", session.Id);
         command.Parameters.AddWithValue("$updatedAtUtc", session.UpdatedAtUtc.ToString("O"));
-        command.Parameters.AddWithValue("$payloadJson", JsonSerializer.Serialize(session, ProtocolJsonContext.Default.ConversationSession));
+        command.Parameters.AddWithValue("$payloadJson", SessionSnapshotSerializer.Serialize(session));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }
 
@@ -46,7 +48,7 @@ public sealed class SqliteSessionStore(
         command.CommandText = "SELECT payload_json FROM sessions WHERE session_id = $sessionId LIMIT 1;";
         command.Parameters.AddWithValue("$sessionId", sessionId);
         var payload = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
-        return Deserialize(payload);
+        return Deserialize(payload, sessionId);
     }
 
     /// <inheritdoc />
@@ -57,13 +59,23 @@ public sealed class SqliteSessionStore(
             .ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT payload_json
+            SELECT session_id, payload_json
             FROM sessions
-            ORDER BY updated_at_utc DESC
-            LIMIT 1;
+            ORDER BY updated_at_utc DESC;
             """;
-        var payload = await command.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) as string;
-        return Deserialize(payload);
+        await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+        while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            var sessionId = reader.IsDBNull(0) ? null : reader.GetString(0);
+            var payload = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var session = Deserialize(payload, sessionId);
+            if (session is not null)
+            {
+                return session;
+            }
+        }
+
+        return null;
     }
 
     /// <inheritdoc />
@@ -74,7 +86,7 @@ public sealed class SqliteSessionStore(
             .ConfigureAwait(false);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT payload_json
+            SELECT session_id, payload_json
             FROM sessions
             ORDER BY updated_at_utc DESC;
             """;
@@ -83,8 +95,9 @@ public sealed class SqliteSessionStore(
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            var payload = reader.IsDBNull(0) ? null : reader.GetString(0);
-            var session = Deserialize(payload);
+            var sessionId = reader.IsDBNull(0) ? null : reader.GetString(0);
+            var payload = reader.IsDBNull(1) ? null : reader.GetString(1);
+            var session = Deserialize(payload, sessionId);
             if (session is not null)
             {
                 sessions.Add(session);
@@ -94,8 +107,19 @@ public sealed class SqliteSessionStore(
         return sessions;
     }
 
-    private static ConversationSession? Deserialize(string? payload)
-        => string.IsNullOrWhiteSpace(payload)
-            ? null
-            : JsonSerializer.Deserialize(payload, ProtocolJsonContext.Default.ConversationSession);
+    private ConversationSession? Deserialize(string? payload, string? sessionId)
+    {
+        try
+        {
+            return SessionSnapshotSerializer.Deserialize(payload);
+        }
+        catch (JsonException exception)
+        {
+            (logger ?? NullLogger<SqliteSessionStore>.Instance).LogWarning(
+                exception,
+                "Skipping unreadable SQLite session snapshot {SessionId}.",
+                sessionId ?? "unknown");
+            return null;
+        }
+    }
 }

@@ -143,24 +143,31 @@ public sealed record ResearchReport(
 [JsonConverter(typeof(JsonStringEnumConverter<EvolutionProposalCategory>))]
 public enum EvolutionProposalCategory
 {
+    /// <summary>Changes prompt assembly or instruction policy.</summary>
     [JsonStringEnumMemberName("promptPolicy")]
     PromptPolicy,
 
+    /// <summary>Changes provider or model routing.</summary>
     [JsonStringEnumMemberName("modelRouting")]
     ModelRouting,
 
+    /// <summary>Changes default permission approvals.</summary>
     [JsonStringEnumMemberName("approvalDefaults")]
     ApprovalDefaults,
 
+    /// <summary>Suggests a skill to add or revise.</summary>
     [JsonStringEnumMemberName("skillSuggestion")]
     SkillSuggestion,
 
+    /// <summary>Suggests a plugin to add or revise.</summary>
     [JsonStringEnumMemberName("pluginSuggestion")]
     PluginSuggestion,
 
+    /// <summary>Refreshes durable workspace knowledge.</summary>
     [JsonStringEnumMemberName("knowledgeRefresh")]
     KnowledgeRefresh,
 
+    /// <summary>Produces a reviewable code specification.</summary>
     [JsonStringEnumMemberName("codeSpec")]
     CodeSpec,
 }
@@ -171,12 +178,15 @@ public enum EvolutionProposalCategory
 [JsonConverter(typeof(JsonStringEnumConverter<EvolutionProposalStatus>))]
 public enum EvolutionProposalStatus
 {
+    /// <summary>The proposal awaits a decision.</summary>
     [JsonStringEnumMemberName("open")]
     Open,
 
+    /// <summary>The proposal has been applied.</summary>
     [JsonStringEnumMemberName("applied")]
     Applied,
 
+    /// <summary>The proposal was declined.</summary>
     [JsonStringEnumMemberName("rejected")]
     Rejected,
 }

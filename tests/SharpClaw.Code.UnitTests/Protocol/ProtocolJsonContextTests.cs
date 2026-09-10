@@ -14,6 +14,28 @@ namespace SharpClaw.Code.UnitTests.Protocol;
 public sealed class ProtocolJsonContextTests
 {
     /// <summary>
+    /// Ensures legacy permission names remain readable while new payloads use canonical values.
+    /// </summary>
+    [Theory]
+    [InlineData("prompt", PermissionMode.WorkspaceWrite)]
+    [InlineData("auto-approve-safe", PermissionMode.WorkspaceWrite)]
+    [InlineData("full-trust", PermissionMode.DangerFullAccess)]
+    [InlineData("read-only", PermissionMode.ReadOnly)]
+    public void Permission_mode_should_read_legacy_aliases(string serializedValue, PermissionMode expected)
+    {
+        var mode = JsonSerializer.Deserialize<PermissionMode>($"\"{serializedValue}\"");
+
+        mode.Should().Be(expected);
+        JsonSerializer.Serialize(mode).Should().Be($"\"{expected switch
+        {
+            PermissionMode.ReadOnly => "readOnly",
+            PermissionMode.WorkspaceWrite => "workspaceWrite",
+            PermissionMode.DangerFullAccess => "dangerFullAccess",
+            _ => throw new InvalidOperationException(),
+        }}\"");
+    }
+
+    /// <summary>
     /// Ensures provider requests serialize with camelCase names and string enums.
     /// </summary>
     [Fact]

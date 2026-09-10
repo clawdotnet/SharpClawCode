@@ -7,6 +7,8 @@
     <Deterministic>true</Deterministic>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
     <AnalysisLevel>latest</AnalysisLevel>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
     <GenerateDocumentationFile Condition="'$(IsTestProject)' != 'true'">true</GenerateDocumentationFile>
     <GenerateDocumentationFile Condition="'$(IsTestProject)' == 'true'">false</GenerateDocumentationFile>
     <NoWarn Condition="'$(IsTestProject)' == 'true'">1591;$(NoWarn)</NoWarn>
@@ -16,6 +18,20 @@
     <PackageProjectUrl>https://github.com/clawdotnet/SharpClawCode</PackageProjectUrl>
     <RepositoryUrl>https://github.com/clawdotnet/SharpClawCode</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <Copyright>Copyright (c) 2025 clawdotnet</Copyright>
+    <Copyright>Copyright (c) 2026 clawdotnet</Copyright>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <VersionSuffix>preview.1</VersionSuffix>
+    <IsPackable>false</IsPackable>
+    <IsPackable Condition="$([System.String]::Copy('$(MSBuildProjectName)').StartsWith('SharpClaw.Code'))">true</IsPackable>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>ai;agents;coding-agent;dotnet;cli</PackageTags>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
   </PropertyGroup>
+
+  <ItemGroup Condition="'$(IsPackable)' == 'true'">
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="/" Link="README.md" />
+  </ItemGroup>
 </Project>

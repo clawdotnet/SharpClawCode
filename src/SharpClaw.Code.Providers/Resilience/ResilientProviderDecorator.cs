@@ -1,4 +1,5 @@
 using System.Net;
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.Logging;
 using SharpClaw.Code.Providers.Abstractions;
 using SharpClaw.Code.Providers.Configuration;
@@ -8,24 +9,19 @@ using SharpClaw.Code.Protocol.Models;
 namespace SharpClaw.Code.Providers.Resilience;
 
 /// <summary>
-/// Decorates an <see cref="IModelProvider"/> with retry, rate-limit handling, and circuit-breaker resilience.
+/// Decorates an <see cref="IModelProvider"/> with full-stream timeouts, retry handling, and a circuit breaker.
 /// </summary>
 internal sealed class ResilientProviderDecorator : IModelProvider
 {
     private readonly IModelProvider _inner;
     private readonly ProviderResilienceOptions _options;
     private readonly ILogger _logger;
-
-    // Circuit breaker state
+    private readonly object _lock = new();
     private int _consecutiveFailures;
     private DateTimeOffset _circuitOpenedAt;
     private bool _circuitOpen;
-    private readonly object _lock = new();
 
-    public ResilientProviderDecorator(
-        IModelProvider inner,
-        ProviderResilienceOptions options,
-        ILogger logger)
+    public ResilientProviderDecorator(IModelProvider inner, ProviderResilienceOptions options, ILogger logger)
     {
         _inner = inner;
         _options = options;
@@ -43,144 +39,190 @@ internal sealed class ResilientProviderDecorator : IModelProvider
         => _inner.GetAuthStatusAsync(cancellationToken);
 
     /// <inheritdoc />
-    public async Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken ct)
+    public Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken cancellationToken)
     {
-        // 1. Check circuit breaker
-        lock (_lock)
-        {
-            if (_circuitOpen)
-            {
-                var elapsed = DateTimeOffset.UtcNow - _circuitOpenedAt;
-                if (elapsed < _options.CircuitBreakerBreakDuration)
-                {
-                    var remaining = _options.CircuitBreakerBreakDuration - elapsed;
-                    _logger.LogWarning(
-                        "Circuit breaker is open for provider {Provider}. Rejecting request. Circuit resets in {Remaining}.",
-                        ProviderName,
-                        remaining);
-                    throw new ProviderExecutionException(
-                        ProviderName,
-                        request.Model,
-                        ProviderFailureKind.StreamFailed,
-                        $"Circuit breaker is open for provider '{ProviderName}'. Try again in {remaining.TotalSeconds:F1}s.");
-                }
+        ThrowIfCircuitOpen(request);
+        return Task.FromResult(new ProviderStreamHandle(request, ExecuteWithResilienceAsync(request, cancellationToken)));
+    }
 
-                // Break duration elapsed — allow a probe attempt (half-open)
-                _circuitOpen = false;
-                _logger.LogInformation(
-                    "Circuit breaker entering half-open state for provider {Provider}. Allowing probe request.",
-                    ProviderName);
-            }
-        }
-
-        // 2. Retry loop
+    private async IAsyncEnumerable<ProviderEvent> ExecuteWithResilienceAsync(
+        ProviderRequest request,
+        [EnumeratorCancellation] CancellationToken callerCancellationToken)
+    {
         Exception? lastException = null;
+        var attemptsMade = 0;
 
         for (var attempt = 0; attempt <= _options.MaxRetries; attempt++)
         {
-            ct.ThrowIfCancellationRequested();
-
+            attemptsMade = attempt + 1;
+            callerCancellationToken.ThrowIfCancellationRequested();
             using var timeoutCts = new CancellationTokenSource(_options.RequestTimeout);
-            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token);
+            using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(callerCancellationToken, timeoutCts.Token);
+            var emittedEvent = false;
+            Exception? attemptException = null;
+            IAsyncEnumerator<ProviderEvent>? enumerator = null;
 
             try
             {
-                var result = await _inner.StartStreamAsync(request, linkedCts.Token).ConfigureAwait(false);
-
-                // Success — reset circuit breaker
-                ResetCircuit();
-                return result;
+                var handle = await _inner.StartStreamAsync(request, linkedCts.Token).ConfigureAwait(false);
+                enumerator = handle.Events.GetAsyncEnumerator(linkedCts.Token);
             }
-            catch (Exception ex) when (!IsTransient(ex))
+            catch (Exception exception)
             {
-                // Non-transient: fail immediately without retrying
+                attemptException = exception;
+            }
+
+            if (enumerator is not null)
+            {
+                var streamCompleted = false;
+                try
+                {
+                    while (true)
+                    {
+                        bool hasNext;
+                        try
+                        {
+                            hasNext = await enumerator.MoveNextAsync().AsTask().WaitAsync(linkedCts.Token).ConfigureAwait(false);
+                        }
+                        catch (Exception exception)
+                        {
+                            attemptException = exception;
+                            break;
+                        }
+
+                        if (!hasNext)
+                        {
+                            streamCompleted = true;
+                            break;
+                        }
+
+                        emittedEvent = true;
+                        yield return enumerator.Current;
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        await enumerator.DisposeAsync().ConfigureAwait(false);
+                    }
+                    catch (Exception exception) when (attemptException is not null)
+                    {
+                        _logger.LogDebug(exception, "Provider stream disposal failed after a stream error.");
+                    }
+                }
+
+                if (streamCompleted)
+                {
+                    ResetCircuit();
+                    yield break;
+                }
+            }
+
+            if (attemptException is OperationCanceledException && callerCancellationToken.IsCancellationRequested)
+            {
+                throw attemptException;
+            }
+
+            if (attemptException is null)
+            {
+                throw new InvalidOperationException("Provider execution failed without an exception.");
+            }
+
+            if (!IsTransient(attemptException))
+            {
+                RecordFailureAndOpenCircuitIfNeeded();
                 _logger.LogError(
-                    ex,
+                    attemptException,
                     "Non-transient failure from provider {Provider} on attempt {Attempt}. Not retrying.",
                     ProviderName,
                     attempt + 1);
-                RecordFailure();
-                throw;
+                throw attemptException;
             }
-            catch (Exception ex) when (IsTransient(ex))
+
+            lastException = attemptException;
+            RecordFailureAndOpenCircuitIfNeeded();
+            if (emittedEvent || attempt >= _options.MaxRetries || IsCircuitOpen())
             {
-                lastException = ex;
-                RecordFailure();
-
-                if (attempt >= _options.MaxRetries)
-                {
-                    // All retries exhausted
-                    break;
-                }
-
-                // Determine delay — respect Retry-After for 429 responses
-                var delay = ComputeDelay(attempt, ex);
-
-                _logger.LogWarning(
-                    ex,
-                    "Transient failure from provider {Provider} on attempt {Attempt}/{MaxAttempts}. Retrying in {Delay}ms.",
-                    ProviderName,
-                    attempt + 1,
-                    _options.MaxRetries + 1,
-                    delay.TotalMilliseconds);
-
-                await Task.Delay(delay, ct).ConfigureAwait(false);
+                break;
             }
-        }
 
-        // All retries exhausted — open circuit if threshold reached
-        OpenCircuitIfThresholdReached();
+            var delay = ComputeDelay(attempt, attemptException);
+            _logger.LogWarning(
+                attemptException,
+                "Transient failure from provider {Provider} on attempt {Attempt}/{MaxAttempts}. Retrying in {Delay}ms.",
+                ProviderName,
+                attempt + 1,
+                _options.MaxRetries + 1,
+                delay.TotalMilliseconds);
+            await Task.Delay(delay, callerCancellationToken).ConfigureAwait(false);
+        }
 
         throw new ProviderExecutionException(
             ProviderName,
             request.Model,
             ProviderFailureKind.StreamFailed,
-            $"Provider '{ProviderName}' failed after {_options.MaxRetries + 1} attempt(s).",
+            $"Provider '{ProviderName}' failed while streaming after {attemptsMade} attempt(s).",
             lastException);
     }
 
-    private static bool IsTransient(Exception ex)
+    private void ThrowIfCircuitOpen(ProviderRequest request)
     {
-        // Non-transient exceptions we should NOT retry
-        if (ex is ProviderExecutionException pee &&
-            (pee.Kind is ProviderFailureKind.AuthenticationUnavailable or ProviderFailureKind.MissingProvider))
+        lock (_lock)
         {
-            return false;
-        }
+            if (!_circuitOpen)
+            {
+                return;
+            }
 
-        if (ex is ArgumentException)
-        {
-            return false;
-        }
+            var elapsed = DateTimeOffset.UtcNow - _circuitOpenedAt;
+            if (elapsed >= _options.CircuitBreakerBreakDuration)
+            {
+                _circuitOpen = false;
+                _logger.LogInformation(
+                    "Circuit breaker entering half-open state for provider {Provider}. Allowing probe request.",
+                    ProviderName);
+                return;
+            }
 
-        // Transient: HTTP errors (5xx), timeouts, IO failures
-        return ex is HttpRequestException or TaskCanceledException or IOException;
+            var remaining = _options.CircuitBreakerBreakDuration - elapsed;
+            _logger.LogWarning(
+                "Circuit breaker is open for provider {Provider}. Rejecting request. Circuit resets in {Remaining}.",
+                ProviderName,
+                remaining);
+            throw new ProviderExecutionException(
+                ProviderName,
+                request.Model,
+                ProviderFailureKind.StreamFailed,
+                $"Circuit breaker is open for provider '{ProviderName}'. Try again in {remaining.TotalSeconds:F1}s.");
+        }
     }
 
-    private TimeSpan ComputeDelay(int attempt, Exception ex)
+    private static bool IsTransient(Exception exception)
     {
-        // Check for 429 with Retry-After
-        if (ex is HttpRequestException httpEx && httpEx.StatusCode == HttpStatusCode.TooManyRequests)
+        if (exception is ProviderExecutionException providerException
+            && providerException.Kind is ProviderFailureKind.AuthenticationUnavailable or ProviderFailureKind.MissingProvider)
         {
-            // Attempt to extract Retry-After from the inner exception message or data
-            // HttpRequestException does not carry headers directly; providers may embed seconds in Data
-            if (httpEx.Data.Contains("Retry-After") &&
-                httpEx.Data["Retry-After"] is int retryAfterSeconds and > 0)
-            {
-                var retryAfterDelay = TimeSpan.FromSeconds(retryAfterSeconds);
-                if (retryAfterDelay <= _options.MaxRetryDelay)
-                {
-                    return retryAfterDelay;
-                }
-            }
+            return false;
         }
 
-        // Exponential backoff: InitialDelay * 2^attempt + jitter
+        return exception is not ArgumentException
+            && exception is HttpRequestException or OperationCanceledException or TimeoutException or IOException;
+    }
+
+    private TimeSpan ComputeDelay(int attempt, Exception exception)
+    {
+        if (exception is HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } httpException
+            && httpException.Data.Contains("Retry-After")
+            && httpException.Data["Retry-After"] is int retryAfterSeconds and > 0)
+        {
+            var retryAfter = TimeSpan.FromSeconds(retryAfterSeconds);
+            return retryAfter <= _options.MaxRetryDelay ? retryAfter : _options.MaxRetryDelay;
+        }
+
         var exponential = _options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt);
-        var jitter = Random.Shared.Next(0, 100);
-        var total = exponential + jitter;
-        var capped = Math.Min(total, _options.MaxRetryDelay.TotalMilliseconds);
-        return TimeSpan.FromMilliseconds(capped);
+        var jitter = _options.InitialRetryDelay == TimeSpan.Zero ? 0 : Random.Shared.Next(0, 100);
+        return TimeSpan.FromMilliseconds(Math.Min(exponential + jitter, _options.MaxRetryDelay.TotalMilliseconds));
     }
 
     private void ResetCircuit()
@@ -197,27 +239,30 @@ internal sealed class ResilientProviderDecorator : IModelProvider
         }
     }
 
-    private void RecordFailure()
+    private bool IsCircuitOpen()
+    {
+        lock (_lock)
+        {
+            return _circuitOpen;
+        }
+    }
+
+    private void RecordFailureAndOpenCircuitIfNeeded()
     {
         lock (_lock)
         {
             _consecutiveFailures++;
-        }
-    }
-
-    private void OpenCircuitIfThresholdReached()
-    {
-        lock (_lock)
-        {
-            if (_consecutiveFailures >= _options.CircuitBreakerFailureThreshold)
+            if (_consecutiveFailures < _options.CircuitBreakerFailureThreshold)
             {
-                _circuitOpen = true;
-                _circuitOpenedAt = DateTimeOffset.UtcNow;
-                _logger.LogError(
-                    "Circuit breaker opened for provider {Provider} after {Failures} consecutive failures.",
-                    ProviderName,
-                    _consecutiveFailures);
+                return;
             }
+
+            _circuitOpen = true;
+            _circuitOpenedAt = DateTimeOffset.UtcNow;
+            _logger.LogError(
+                "Circuit breaker opened for provider {Provider} after {Failures} consecutive failures.",
+                ProviderName,
+                _consecutiveFailures);
         }
     }
 }

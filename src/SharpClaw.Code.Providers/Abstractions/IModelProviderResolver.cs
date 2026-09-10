@@ -11,4 +11,11 @@ public interface IModelProviderResolver
     /// <param name="providerName">The provider name.</param>
     /// <returns>The resolved provider.</returns>
     IModelProvider Resolve(string providerName);
+
+    /// <summary>
+    /// Resolves the requested provider followed by any configured fallback providers.
+    /// </summary>
+    /// <param name="providerName">The primary provider name.</param>
+    /// <returns>The ordered provider candidates.</returns>
+    IReadOnlyList<IModelProvider> ResolveCandidates(string providerName) => [Resolve(providerName)];
 }

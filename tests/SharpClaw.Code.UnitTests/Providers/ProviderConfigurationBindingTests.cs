@@ -24,6 +24,8 @@ public sealed class ProviderConfigurationBindingTests
             .AddInMemoryCollection(new Dictionary<string, string?>
             {
                 ["SharpClaw:Providers:Catalog:DefaultProvider"] = "anthropic",
+                ["SharpClaw:Providers:Catalog:FallbackProviders:0"] = "openai-compatible",
+                ["SharpClaw:Providers:Catalog:FallbackModels:openai-compatible"] = "gpt-4.1-mini",
                 ["SharpClaw:Providers:Catalog:ModelAliases:sonnet:ProviderName"] = "anthropic",
                 ["SharpClaw:Providers:Catalog:ModelAliases:sonnet:ModelId"] = "claude-3-7-sonnet-latest",
                 ["SharpClaw:Providers:Anthropic:ApiKey"] = "anthropic-key",
@@ -53,6 +55,8 @@ public sealed class ProviderConfigurationBindingTests
         var openAi = serviceProvider.GetRequiredService<IOptions<OpenAiCompatibleProviderOptions>>().Value;
 
         catalog.DefaultProvider.Should().Be("anthropic");
+        catalog.FallbackProviders.Should().Equal("openai-compatible");
+        catalog.FallbackModels["openai-compatible"].Should().Be("gpt-4.1-mini");
         catalog.ModelAliases["sonnet"].Should().Be(new ModelAliasDefinition("anthropic", "claude-3-7-sonnet-latest"));
         anthropic.ApiKey.Should().Be("anthropic-key");
         anthropic.BaseUrl.Should().Be("https://anthropic.example.com");

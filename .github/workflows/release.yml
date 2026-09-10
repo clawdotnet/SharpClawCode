@@ -5,25 +5,44 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: read
-  packages: write
+  contents: write
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    environment: nuget
     steps:
       - uses: actions/checkout@v4
+      - name: Validate semantic version tag
+        id: version
+        shell: pwsh
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          $version = $env:REF_NAME -replace '^v', ''
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Tag is not a supported semantic version." }
+          "value=$version" >> $env:GITHUB_OUTPUT
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
       - name: Restore
         run: dotnet restore SharpClawCode.sln
+      - name: Audit dependencies
+        shell: pwsh
+        run: ./.github/scripts/Test-VulnerablePackages.ps1 -Target SharpClawCode.sln
       - name: Build
-        run: dotnet build SharpClawCode.sln --no-restore --configuration Release
+        run: dotnet build SharpClawCode.sln --no-restore --configuration Release --warnaserror
       - name: Test
         run: dotnet test SharpClawCode.sln --no-build --configuration Release
-      - name: Pack
-        run: dotnet pack SharpClawCode.sln --no-build --configuration Release --output ./nupkg
+      - name: Pack production artifacts
+        run: dotnet pack SharpClawCode.Packages.slnf --no-build --configuration Release --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.value }}
+      - name: Verify package installability
+        shell: pwsh
+        run: ./.github/scripts/Test-Packages.ps1 -PackageVersion ${{ steps.version.outputs.value }}
       - name: Push to NuGet
-        run: dotnet nuget push ./nupkg/*.nupkg --api-key ${{ secrets.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push './nupkg/*.nupkg' --api-key '${{ secrets.NUGET_API_KEY }}' --source https://api.nuget.org/v3/index.json --skip-duplicate
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create '${{ github.ref_name }}' ./nupkg/*.nupkg ./nupkg/*.snupkg --verify-tag --generate-notes --title '${{ github.ref_name }}'

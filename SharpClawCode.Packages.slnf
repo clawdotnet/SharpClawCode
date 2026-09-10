@@ -1,0 +1,28 @@
+{
+  "solution": {
+    "path": "SharpClawCode.sln",
+    "projects": [
+      "src/SharpClaw.Code/SharpClaw.Code.csproj",
+      "src/SharpClaw.Code.Acp/SharpClaw.Code.Acp.csproj",
+      "src/SharpClaw.Code.Agents/SharpClaw.Code.Agents.csproj",
+      "src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj",
+      "src/SharpClaw.Code.Commands/SharpClaw.Code.Commands.csproj",
+      "src/SharpClaw.Code.ExternalAgents/SharpClaw.Code.ExternalAgents.csproj",
+      "src/SharpClaw.Code.Git/SharpClaw.Code.Git.csproj",
+      "src/SharpClaw.Code.Infrastructure/SharpClaw.Code.Infrastructure.csproj",
+      "src/SharpClaw.Code.Mcp/SharpClaw.Code.Mcp.csproj",
+      "src/SharpClaw.Code.Memory/SharpClaw.Code.Memory.csproj",
+      "src/SharpClaw.Code.Permissions/SharpClaw.Code.Permissions.csproj",
+      "src/SharpClaw.Code.Plugins/SharpClaw.Code.Plugins.csproj",
+      "src/SharpClaw.Code.Protocol/SharpClaw.Code.Protocol.csproj",
+      "src/SharpClaw.Code.Providers/SharpClaw.Code.Providers.csproj",
+      "src/SharpClaw.Code.Runtime/SharpClaw.Code.Runtime.csproj",
+      "src/SharpClaw.Code.Sessions/SharpClaw.Code.Sessions.csproj",
+      "src/SharpClaw.Code.Skills/SharpClaw.Code.Skills.csproj",
+      "src/SharpClaw.Code.Telemetry/SharpClaw.Code.Telemetry.csproj",
+      "src/SharpClaw.Code.Tools/SharpClaw.Code.Tools.csproj",
+      "src/SharpClaw.Code.Web/SharpClaw.Code.Web.csproj",
+      "src/SharpClaw.Code.WorkItems/SharpClaw.Code.WorkItems.csproj"
+    ]
+  }
+}

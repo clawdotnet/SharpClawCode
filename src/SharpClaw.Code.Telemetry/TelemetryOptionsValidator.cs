@@ -21,6 +21,11 @@ public sealed class TelemetryOptionsValidator : IValidateOptions<TelemetryOption
                 $"TelemetryOptions.RuntimeEventRingBufferCapacity must be at least {MinimumBufferCapacity} (was {options.RuntimeEventRingBufferCapacity}).");
         }
 
+        if (options.PromptPreviewMaxLength is < 16 or > 1_000)
+        {
+            return ValidateOptionsResult.Fail("TelemetryOptions.PromptPreviewMaxLength must be between 16 and 1000.");
+        }
+
         return ValidateOptionsResult.Success;
     }
 }

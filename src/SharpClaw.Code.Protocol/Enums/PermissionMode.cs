@@ -1,11 +1,12 @@
 using System.Text.Json.Serialization;
+using SharpClaw.Code.Protocol.Serialization;
 
 namespace SharpClaw.Code.Protocol.Enums;
 
 /// <summary>
 /// Describes how permission-sensitive operations should be handled.
 /// </summary>
-[JsonConverter(typeof(JsonStringEnumConverter<PermissionMode>))]
+[JsonConverter(typeof(PermissionModeJsonConverter))]
 public enum PermissionMode
 {
     /// <summary>

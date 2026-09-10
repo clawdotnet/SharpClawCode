@@ -3,6 +3,8 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <Description>Command-line interface and REPL for SharpClaw Code.</Description>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>sharpclaw</ToolCommandName>
   </PropertyGroup>
 
   <ItemGroup>

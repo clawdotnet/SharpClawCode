@@ -65,7 +65,7 @@ Scenarios are selected via request **`Metadata`** key **`parityScenario`** (**`P
 
 Stable scenario **ids** are listed in **`ParityScenarioIds`** (e.g. `streaming_text`, `read_file_roundtrip`, `write_file_allowed`, `write_file_denied`, `grep_chunk_assembly`, `bash_stdout_roundtrip`, `permission_prompt_approved`, `permission_prompt_denied`, `plugin_tool_roundtrip`, `mcp_partial_startup`, `recovery_after_timeout`).
 
-**Note:** Many scenarios exercise **`IToolExecutor`** directly rather than going through the LLM agent loop (which matches current **`AgentFrameworkBridge`** behavior).
+The parity suite covers both direct **`IToolExecutor`** boundaries and full provider-backed tool-loop behavior. Direct tests isolate permission and filesystem behavior; integration tests verify that provider tool requests traverse the same executor and return results to the model.
 
 ## Agent scenario harness
 
@@ -73,4 +73,4 @@ The scenario harness lives in **`SharpClaw.Testing.Abstractions`**, **`SharpClaw
 
 ## CI
 
-CI restores and builds the full solution, explicitly builds every example host project, runs `dotnet test`, then runs the explicit agent scenario harness through `sharpclaw test run` and `sharpclaw test gates`. Parity tests use temp directories under **`Path.GetTempPath()`** and avoid network.
+CI restores and builds the full solution with warnings treated as errors, explicitly builds every example host, runs `dotnet test`, then runs the scenario harness through `sharpclaw test run` and `sharpclaw test gates`. It also enforces the line-coverage floor, compiles the VS Code extension, audits dependencies, and smoke-installs production packages on Linux, Windows, and macOS. Parity tests use temp directories under **`Path.GetTempPath()`** and avoid network.

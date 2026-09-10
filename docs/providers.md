@@ -11,7 +11,7 @@ Registered implementations (see **`ProvidersServiceCollectionExtensions`**):
 - **`AnthropicProvider`** — HTTP client from **`AnthropicProviderOptions`**
 - **`OpenAiCompatibleProvider`** — HTTP client from **`OpenAiCompatibleProviderOptions`**
 
-Both are registered as **`IModelProvider`** singletons; **`ModelProviderResolver`** builds a case-insensitive dictionary by **`ProviderName`**.
+Both are registered as **`IModelProvider`** singletons; **`ModelProviderResolver`** builds a case-insensitive dictionary by **`ProviderName`** and returns an ordered primary/fallback candidate chain.
 
 The provider layer also exposes **`IProviderCatalogService`**, which powers the CLI `models` command and ACP `models/list`. It centralizes:
 
@@ -31,6 +31,10 @@ The provider layer also exposes **`IProviderCatalogService`**, which powers the 
 
 Default catalog (**`ProviderCatalogOptions`**) uses **`DefaultProvider = "openai-compatible"`** if not configured.
 
+Configure **`FallbackProviders`** as an ordered list of registered provider names. The runtime authenticates candidates before use, buffers each provider iteration until it completes, and advances to the next candidate on a failed stream. Buffering prevents partial primary output from leaking into the fallback response or executing a tool twice.
+
+Provider resilience is configured under **`SharpClaw:Providers:Resilience`**. Its timeout covers both request startup and async stream enumeration. Transient failures are retried only before the stream emits its first event; once output exists, the attempt fails without replay to avoid duplicate deltas. Repeated failures open the circuit breaker.
+
 ## Configuration sections
 
 When using **`AddSharpClawRuntime(IConfiguration)`** (CLI host):
@@ -40,6 +44,31 @@ When using **`AddSharpClawRuntime(IConfiguration)`** (CLI host):
 | `SharpClaw:Providers:Catalog` | **`ProviderCatalogOptions`** |
 | `SharpClaw:Providers:Anthropic` | **`AnthropicProviderOptions`** (`ProviderName` defaults to `"anthropic"`, `BaseUrl`, API key binding as in options class) |
 | `SharpClaw:Providers:OpenAiCompatible` | **`OpenAiCompatibleProviderOptions`** (`ProviderName` defaults to `"openai-compatible"`, supports auth mode, default embedding model, and named `LocalRuntimes`) |
+| `SharpClaw:Providers:Resilience` | **`ProviderResilienceOptions`** (retry, backoff, timeout, and circuit-breaker settings) |
+
+Example fallback and resilience configuration:
+
+```json
+{
+  "SharpClaw": {
+    "Providers": {
+      "Catalog": {
+        "DefaultProvider": "anthropic",
+        "FallbackProviders": ["openai-compatible"],
+        "FallbackModels": {
+          "openai-compatible": "gpt-4.1-mini"
+        }
+      },
+      "Resilience": {
+        "MaxRetries": 3,
+        "RequestTimeout": "00:05:00",
+        "CircuitBreakerFailureThreshold": 5,
+        "CircuitBreakerBreakDuration": "00:00:30"
+      }
+    }
+  }
+}
+```
 
 There is no checked-in **`appsettings.json`** in the repo; add one next to the CLI project or rely on environment variables / user secrets per standard .NET configuration.
 
@@ -60,7 +89,7 @@ At runtime the catalog service probes these profiles and surfaces health plus di
 
 ## Auth
 
-**`IAuthFlowService`** / **`AuthFlowService`** answer whether a provider name is authenticated (used by **`ProviderBackedAgentKernel`**). If not authenticated, the kernel may return a **placeholder** completion (see kernel logs) rather than calling the remote API.
+**`IAuthFlowService`** / **`AuthFlowService`** answer whether a provider name is authenticated (used by **`ProviderBackedAgentKernel`**). Unauthenticated or expired candidates are skipped when a fallback exists; if none is available, the turn fails with a classified exception instead of returning synthetic provider output.
 
 For the OpenAI-compatible provider, auth status now respects provider auth mode plus any configured auth-optional local runtimes.
 

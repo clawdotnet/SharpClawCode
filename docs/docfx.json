@@ -1,0 +1,45 @@
+{
+  "metadata": [
+    {
+      "src": [
+        {
+          "src": "..",
+          "files": [
+            "src/SharpClaw.Code*/SharpClaw.Code*.csproj"
+          ]
+        }
+      ],
+      "dest": "api"
+    }
+  ],
+  "build": {
+    "content": [
+      {
+        "files": [
+          "**/*.md",
+          "**/*.yml"
+        ],
+        "exclude": [
+          "_site/**",
+          "api/**"
+        ]
+      },
+      {
+        "files": [
+          "api/**.yml",
+          "api/index.md"
+        ]
+      }
+    ],
+    "dest": "_site",
+    "globalMetadata": {
+      "_appName": "SharpClaw Code",
+      "_appTitle": "SharpClaw Code API",
+      "_enableSearch": true
+    },
+    "template": [
+      "default",
+      "modern"
+    ]
+  }
+}
