@@ -25,7 +25,7 @@ public sealed class ParallelSearchExampleTests
         Assert.NotNull(result.Result.StructuredOutputJson);
         Assert.Contains(handler.Requests, request => request.Method == "initialize");
         Assert.Contains(handler.Requests, request => request.Method == "tools/list");
-        var call = Assert.Single(handler.Requests.Where(request => request.Method == "tools/call"));
+        var call = Assert.Single(handler.Requests, request => request.Method == "tools/call");
         using var payload = JsonDocument.Parse(call.Body);
         Assert.Equal(tool, payload.RootElement.GetProperty("params").GetProperty("name").GetString());
         Assert.Equal(JsonSerializer.Serialize(JsonDocument.Parse(arguments).RootElement),
