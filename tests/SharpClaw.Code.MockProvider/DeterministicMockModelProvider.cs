@@ -72,8 +72,8 @@ public sealed class DeterministicMockModelProvider : IModelProvider
             case ParityProviderScenario.StreamSlow:
                 await Task.Delay(500, cancellationToken).ConfigureAwait(false);
                 yield return CreateDelta(request, sequence: 1, "slow-start");
-                await Task.Delay(500, cancellationToken).ConfigureAwait(false);
-                yield return CreateTerminal(request, sequence: 2);
+                // Keep cancellation scenarios active even if a loaded runner observes the turn late.
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken).ConfigureAwait(false);
                 yield break;
             case ParityProviderScenario.ToolCallRoundtrip:
                 // Check if the request already contains tool-result content (second iteration)
