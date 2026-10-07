@@ -55,3 +55,35 @@ JSON **`DataJson`** for register/start/stop/restart uses **`ProtocolJsonContext`
 ## Diagnostics
 
 Runtime **doctor** includes **`McpRegistryHealthCheck`** (registry + optional host).
+
+## Runnable Parallel Search example
+
+`examples/McpToolAgent` includes an opt-in command for searching and fetching public
+web content with [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp).
+It connects to `https://search.parallel.ai/mcp` using the official SDK's
+Streamable HTTP transport. The anonymous endpoint needs no Parallel API key and
+is free for exploration and light use, subject to rate limits.
+
+From the repository root, with the .NET 10 SDK installed:
+
+```shell
+dotnet restore examples/McpToolAgent/McpToolAgent.csproj
+dotnet build examples/McpToolAgent/McpToolAgent.csproj --configuration Release
+dotnet run --project examples/McpToolAgent --configuration Release --no-build -- --parallel-search search "C# CancellationToken documentation"
+dotnet run --project examples/McpToolAgent --configuration Release --no-build -- --parallel-search fetch https://learn.microsoft.com/en-us/dotnet/standard/threading/cancellation-in-managed-threads
+```
+
+Each command discovers the remote tool schema, registers it as
+`parallel_web_search` or `parallel_web_fetch` in a SharpClaw `ToolRegistry`, and
+dispatches it through `ToolExecutor` with a read-only permission context and an
+explicit tool allowlist. Search prints source URLs and excerpts; fetch prints
+extracted page content. Remote tool errors produce a failing exit code.
+The example identifies its requests with the User-Agent
+`SharpClaw.Code-McpToolAgent/0.1.0`, passes cancellation through discovery and
+execution, and bounds each command to 60 seconds. Ctrl+C cancels the request.
+
+These commands execute tools directly, without a model or an agent reasoning
+loop. They do not load the sample's model-provider configuration or saved
+credentials. Running `McpToolAgent` without `--parallel-search` still runs the
+original provider-backed echo example. The built-in `web_search` and `web_fetch`
+tools and workspace MCP registrations are unaffected.
