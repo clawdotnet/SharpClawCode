@@ -47,7 +47,7 @@ Scenarios are selected via request **`Metadata`** key **`parityScenario`** (**`P
 
 - **`streaming_text`** — deterministic deltas → `"Hello world"`
 - **`stream_failure`** — throws (turn fails; session may become **`Failed`**)
-- **`stream_slow`** — delays (cancellation / timeout scenarios)
+- **`stream_slow`** — emits an initial delta, then waits for cancellation (timeout / recovery scenarios)
 
 **`AddDeterministicMockModelProvider`** registers the provider + **`PostConfigure<ProviderCatalogOptions>`** so **`default`** / **`deterministic`** aliases point at the mock.
 
