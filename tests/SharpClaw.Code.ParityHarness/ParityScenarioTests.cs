@@ -334,7 +334,8 @@ public sealed class ParityScenarioTests : IAsyncLifetime
 
     private async Task WaitForActiveTurnAsync(ISessionStore store, CancellationToken cancellationToken)
     {
-        for (var attempt = 0; attempt < 100; attempt++)
+        // Startup is separate from the cancellation deadline and can be slow on loaded Windows runners.
+        for (var attempt = 0; attempt < 600; attempt++)
         {
             var session = await store.GetLatestAsync(_workspace, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(session?.ActiveTurnId))

@@ -44,4 +44,24 @@ public sealed class DeterministicMockModelProviderTests
             new DateTimeOffset(2026, 4, 6, 0, 0, 0, TimeSpan.Zero).AddMilliseconds(2),
             new DateTimeOffset(2026, 4, 6, 0, 0, 0, TimeSpan.Zero).AddMilliseconds(3));
     }
+    [Fact]
+    public async Task Slow_stream_should_remain_active_until_canceled_after_delayed_observation()
+    {
+        var provider = new DeterministicMockModelProvider();
+        var request = new ProviderRequest(
+            "slow-request", "session", "turn", DeterministicMockModelProvider.ProviderNameConstant,
+            DeterministicMockModelProvider.DefaultModelId, "slow", null, OutputFormat.Text, null,
+            new Dictionary<string, string> { [ParityMetadataKeys.Scenario] = ParityProviderScenario.StreamSlow });
+        using var cancellation = new CancellationTokenSource();
+        var handle = await provider.StartStreamAsync(request, cancellation.Token);
+        await using var events = handle.Events.GetAsyncEnumerator(cancellation.Token);
+        Assert.True(await events.MoveNextAsync());
+
+        var nextEvent = events.MoveNextAsync().AsTask();
+        // Simulate observing the session after the original one-second fixture would have finished.
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+        Assert.False(nextEvent.IsCompleted);
+        await cancellation.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await nextEvent);
+    }
 }

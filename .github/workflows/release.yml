@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     environment: nuget
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate semantic version tag
         id: version
         shell: pwsh
@@ -23,7 +23,7 @@ jobs:
           if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Tag is not a supported semantic version." }
           "value=$version" >> $env:GITHUB_OUTPUT
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - name: Restore

@@ -16,7 +16,7 @@ public static class ParityProviderScenario
     public const string StreamFailure = "stream_failure";
 
     /// <summary>
-    /// Delays long enough to let timeout and recovery scenarios cancel the stream.
+    /// Emits an initial delta, then waits for timeout and recovery scenarios to cancel the stream.
     /// </summary>
     public const string StreamSlow = "stream_slow";
 
