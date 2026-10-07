@@ -50,50 +50,7 @@ public sealed class AnthropicProvider(
         var client = CreateClient(resolved.ApiKey);
         var modelId = Internal.ProviderHttpHelpers.ResolveModelOrDefault(request.Model, _options.DefaultModel);
 
-        var systemPrompt = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt;
-        float? temperature = request.Temperature.HasValue ? (float)request.Temperature.Value : null;
-
-        MessageCreateParams parameters;
-
-        if (request.Messages is not null)
-        {
-            var messages = Internal.AnthropicMessageBuilder.BuildMessages(request.Messages);
-            parameters = new MessageCreateParams
-            {
-                MaxTokens = request.MaxTokens ?? 1024,
-                Model = modelId,
-                Messages = messages,
-                Temperature = temperature,
-            };
-
-            if (request.Tools is { Count: > 0 } tools)
-            {
-                var anthropicTools = Internal.AnthropicMessageBuilder.BuildTools(tools);
-                parameters = parameters with { Tools = anthropicTools };
-            }
-        }
-        else
-        {
-            parameters = new MessageCreateParams
-            {
-                MaxTokens = request.MaxTokens ?? 1024,
-                Model = modelId,
-                Messages =
-                [
-                    new MessageParam
-                    {
-                        Role = Role.User,
-                        Content = request.Prompt,
-                    },
-                ],
-                Temperature = temperature,
-            };
-        }
-
-        if (systemPrompt is not null)
-        {
-            parameters = parameters with { System = systemPrompt };
-        }
+        var parameters = CreateMessageParameters(request, modelId);
 
         logger.LogInformation("Starting Anthropic SDK stream for request {RequestId}.", request.Id);
 
@@ -119,6 +76,56 @@ public sealed class AnthropicProvider(
         logger.LogInformation("Started Anthropic SDK stream for request {RequestId}.", request.Id);
 
         return new ProviderStreamHandle(request, AnthropicSdkStreamAdapter.AdaptAsync(stream, request.Id, systemClock, cancellationToken));
+    }
+
+    /// <summary>
+    /// Builds SDK parameters without the obsolete temperature field, which newer models reject.
+    /// </summary>
+    internal static MessageCreateParams CreateMessageParameters(ProviderRequest request, string modelId)
+    {
+        var systemPrompt = string.IsNullOrWhiteSpace(request.SystemPrompt) ? null : request.SystemPrompt;
+
+        MessageCreateParams parameters;
+
+        if (request.Messages is not null)
+        {
+            var messages = Internal.AnthropicMessageBuilder.BuildMessages(request.Messages);
+            parameters = new MessageCreateParams
+            {
+                MaxTokens = request.MaxTokens ?? 1024,
+                Model = modelId,
+                Messages = messages,
+            };
+
+            if (request.Tools is { Count: > 0 } tools)
+            {
+                var anthropicTools = Internal.AnthropicMessageBuilder.BuildTools(tools);
+                parameters = parameters with { Tools = anthropicTools };
+            }
+        }
+        else
+        {
+            parameters = new MessageCreateParams
+            {
+                MaxTokens = request.MaxTokens ?? 1024,
+                Model = modelId,
+                Messages =
+                [
+                    new MessageParam
+                    {
+                        Role = Role.User,
+                        Content = request.Prompt,
+                    },
+                ],
+            };
+        }
+
+        if (systemPrompt is not null)
+        {
+            parameters = parameters with { System = systemPrompt };
+        }
+
+        return parameters;
     }
 
     private AnthropicClient CreateClient(string? resolvedApiKey)

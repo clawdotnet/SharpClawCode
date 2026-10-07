@@ -103,3 +103,7 @@ Hard failures use **`ProviderExecutionException`** with **`ProviderFailureKind`*
 4. Extend **`ProviderCatalogOptions`** (defaults / aliases) via **`IConfiguration`** or **`Configure<ProviderCatalogOptions>`** / **`PostConfigure`**.
 
 **Test pattern:** **`SharpClaw.Code.MockProvider`** registers **`DeterministicMockModelProvider`** with **`PostConfigure<ProviderCatalogOptions>`** so **`default`** maps to provider name **`mock`** (`MockProviderServiceCollectionExtensions`).
+
+Anthropic requests omit the deprecated `temperature` field, including when the shared
+provider request specifies a value. This avoids rejection by newer Claude models;
+the shared request contract and other providers retain temperature support.
