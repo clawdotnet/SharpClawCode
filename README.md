@@ -170,6 +170,10 @@ The solution includes embeddable host samples under `examples/`:
 - `WorkerServiceHost` for lifecycle-managed background hosting
 - `McpToolAgent` for MCP-aware host composition
 
+`McpToolAgent` also offers a [runnable Parallel Search MCP example](docs/mcp.md#runnable-parallel-search-example)
+for anonymous web search and page extraction through the SharpClaw tool registry
+and permission executor, without a model provider key.
+
 ## Testing
 
 ```bash
