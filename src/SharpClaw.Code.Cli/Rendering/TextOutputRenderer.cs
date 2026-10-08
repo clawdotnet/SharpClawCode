@@ -48,6 +48,7 @@ public sealed class TextOutputRenderer : IOutputRenderer
             AnsiConsole.MarkupLine("[yellow]Prompt completed with no output.[/]");
         }
 
+        if (result.Verification is { } verification) AnsiConsole.WriteLine($"Verification: {verification.Status}. {verification.Summary}");
         return Task.CompletedTask;
     }
 }

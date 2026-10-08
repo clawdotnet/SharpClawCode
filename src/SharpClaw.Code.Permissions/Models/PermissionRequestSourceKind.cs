@@ -19,4 +19,7 @@ public enum PermissionRequestSourceKind
     /// An MCP server initiated the request.
     /// </summary>
     Mcp,
+
+    /// <summary>An external client invoked the inbound SharpClaw MCP server.</summary>
+    McpClient,
 }

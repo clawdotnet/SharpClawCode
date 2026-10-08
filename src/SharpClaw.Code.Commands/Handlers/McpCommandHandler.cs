@@ -16,7 +16,8 @@ public sealed class McpCommandHandler(
     IMcpRegistry mcpRegistry,
     IMcpServerHost mcpServerHost,
     IMcpDoctorService mcpDoctorService,
-    OutputRendererDispatcher outputRendererDispatcher) : ICommandHandler
+    OutputRendererDispatcher outputRendererDispatcher,
+    ISharpClawMcpServer? inboundServer = null) : ICommandHandler
 {
     /// <inheritdoc />
     public string Name => "mcp";
@@ -28,6 +29,7 @@ public sealed class McpCommandHandler(
     public Command BuildCommand(GlobalCliOptions globalOptions)
     {
         var command = new Command(Name, Description);
+        command.Subcommands.Add(BuildServeCommand(globalOptions));
         command.Subcommands.Add(BuildListCommand(globalOptions));
         command.Subcommands.Add(BuildStatusCommand(globalOptions));
         command.Subcommands.Add(BuildRegisterCommand(globalOptions));
@@ -35,6 +37,35 @@ public sealed class McpCommandHandler(
         command.Subcommands.Add(BuildStopCommand(globalOptions));
         command.Subcommands.Add(BuildRestartCommand(globalOptions));
         command.Subcommands.Add(BuildDoctorCommand(globalOptions));
+        return command;
+    }
+
+    private Command BuildServeCommand(GlobalCliOptions globalOptions)
+    {
+        var command = new Command("serve", "Serves SharpClaw tools over stdio; defaults to readOnly without mutations.");
+        var transport = new Option<string>("--transport") { DefaultValueFactory = _ => "stdio", Description = "stdio or http (Streamable HTTP)." };
+        transport.Validators.Add(result => { if (result.GetValueOrDefault<string>() is not ("stdio" or "http")) result.AddError("Transport must be stdio or http."); });
+        var host = new Option<string>("--host") { DefaultValueFactory = _ => "127.0.0.1" };
+        var port = new Option<int>("--port") { DefaultValueFactory = _ => 7346 };
+        var remote = new Option<bool>("--allow-remote") { Description = "Explicitly permit authenticated non-loopback HTTP." };
+        command.Options.Add(transport); command.Options.Add(host); command.Options.Add(port); command.Options.Add(remote);
+        var mutations = new Option<bool>("--allow-mutations") { Description = "Expose rename when the host permission mode permits writes." };
+        command.Options.Add(mutations);
+        command.SetAction(async (parseResult, cancellationToken) =>
+        {
+            var context = globalOptions.Resolve(parseResult);
+            var explicitMode = parseResult.GetResult(globalOptions.PermissionModeOption) is { Implicit: false }
+                || parseResult.GetValue(globalOptions.YoloOption);
+            if (inboundServer is null) throw new InvalidOperationException("Register AddSharpClawMcpServer to host inbound MCP.");
+            await inboundServer.RunAsync(new SharpClaw.Code.Mcp.Models.SharpClawMcpServerOptions(
+                context.WorkingDirectory,
+                explicitMode ? context.PermissionMode : PermissionMode.ReadOnly,
+                parseResult.GetValue(mutations), context.ApprovalSettings, context.HostContext,
+                parseResult.GetValue(transport) == "http" ? SharpClaw.Code.Mcp.Models.SharpClawMcpTransport.Http : SharpClaw.Code.Mcp.Models.SharpClawMcpTransport.Stdio,
+                parseResult.GetValue(host)!, parseResult.GetValue(port), parseResult.GetValue(remote),
+                Environment.GetEnvironmentVariable("SHARPCLAW_MCP_TOKEN"), context.PrimaryMode), cancellationToken).ConfigureAwait(false);
+            return 0;
+        });
         return command;
     }
 

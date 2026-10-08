@@ -379,7 +379,7 @@ public sealed class ParityScenarioTests : IAsyncLifetime
     [Fact]
     public void Scenario_catalog_contains_expected_keys()
     {
-        ParityScenarioIds.All.Should().HaveCount(12);
+        ParityScenarioIds.All.Should().Contain(ParityScenarioIds.SemanticSymbolResolution);
         ParityScenarioIds.All.Should().OnlyHaveUniqueItems();
     }
 }

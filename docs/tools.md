@@ -57,3 +57,7 @@ Use **Protocol** types for stable payloads where appropriate; tool JSON helpers 
 - End-to-end **LLM-driven tool use** in the default agent path is **not** wired through **`AgentFrameworkBridge`** today; **`AgentRunContext.ToolExecutor`** is available for future or alternate agent implementations.
 
 See [permissions.md](permissions.md) for gates on destructive and elevated tools.
+
+Compiler-backed .NET tools are described in [.NET intelligence](dotnet-intelligence.md). They share normal tool discovery, explicit schemas, and a separate execution decision before cold MSBuild evaluation.
+
+The permission-gated `verify_workspace` tool and CLI/REPL equivalents are documented in [Verification](verification.md).

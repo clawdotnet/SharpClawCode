@@ -12,6 +12,10 @@ namespace SharpClaw.Code.Protocol.Events;
 /// <param name="TurnId">The related turn identifier, if any.</param>
 /// <param name="OccurredAtUtc">The UTC timestamp when the event occurred.</param>
 [JsonPolymorphic(TypeDiscriminatorPropertyName = "$eventType")]
+[JsonDerivedType(typeof(VerificationStartedEvent), "verificationStarted")]
+[JsonDerivedType(typeof(VerificationCompletedEvent), "verificationCompleted")]
+[JsonDerivedType(typeof(VerificationRepairStartedEvent), "verificationRepairStarted")]
+[JsonDerivedType(typeof(VerificationRepairCompletedEvent), "verificationRepairCompleted")]
 [JsonDerivedType(typeof(SessionCreatedEvent), "sessionCreated")]
 [JsonDerivedType(typeof(SessionForkedEvent), "sessionForked")]
 [JsonDerivedType(typeof(SessionStateChangedEvent), "sessionStateChanged")]

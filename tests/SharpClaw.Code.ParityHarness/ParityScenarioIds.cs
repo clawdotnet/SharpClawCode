@@ -6,6 +6,11 @@ namespace SharpClaw.Code.ParityHarness;
 /// </summary>
 internal static class ParityScenarioIds
 {
+    public const string VerificationBuildSuccess = "verification_build_success";
+    public const string VerificationBuildFailure = "verification_build_failure";
+    public const string VerificationPermissionDenied = "verification_permission_denied";
+    public const string SemanticRenameMutationRecorded = "semantic_rename_mutation_recorded";
+    public const string SemanticSymbolResolution = "semantic_symbol_resolution";
     public const string StreamingText = "streaming_text";
     public const string ReadFileRoundtrip = "read_file_roundtrip";
     public const string WriteFileAllowed = "write_file_allowed";
@@ -24,6 +29,11 @@ internal static class ParityScenarioIds
     /// </summary>
     public static IReadOnlyList<string> All { get; } =
     [
+        VerificationBuildSuccess,
+        VerificationBuildFailure,
+        VerificationPermissionDenied,
+        SemanticSymbolResolution,
+        SemanticRenameMutationRecorded,
         StreamingText,
         ReadFileRoundtrip,
         WriteFileAllowed,

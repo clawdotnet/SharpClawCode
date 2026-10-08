@@ -69,6 +69,13 @@ public static class ToolsServiceCollectionExtensions
         services.AddSingleton<WebFetchTool>();
         services.AddSingleton<WorkspaceSearchTool>();
         services.AddSingleton<SymbolSearchTool>();
+        services.AddSingleton<ISharpClawTool, CSharpRenameSymbolTool>();
+        services.AddSingleton<ISharpClawTool, DotNetSolutionInspectTool>();
+        services.AddSingleton<ISharpClawTool, CSharpSymbolResolveTool>();
+        services.AddSingleton<ISharpClawTool, CSharpFindReferencesTool>();
+        services.AddSingleton<ISharpClawTool, CSharpTypeHierarchyTool>();
+        services.AddSingleton<ISharpClawTool, CSharpDiagnosticsTool>();
+
         services.AddSingleton<ToolSearchTool>(serviceProvider =>
             new ToolSearchTool(() => serviceProvider.GetRequiredService<IToolRegistry>()));
 

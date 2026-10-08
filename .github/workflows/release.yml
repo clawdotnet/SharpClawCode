@@ -5,12 +5,13 @@ on:
     tags: ['v*']
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  publish:
+  validate:
     runs-on: ubuntu-latest
-    environment: nuget
+    outputs:
+      version: ${{ steps.version.outputs.value }}
     steps:
       - uses: actions/checkout@v7
       - name: Validate semantic version tag
@@ -22,8 +23,7 @@ jobs:
           $version = $env:REF_NAME -replace '^v', ''
           if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') { throw "Tag is not a supported semantic version." }
           "value=$version" >> $env:GITHUB_OUTPUT
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@v6
         with:
           dotnet-version: '10.0.x'
       - name: Restore
@@ -32,17 +32,109 @@ jobs:
         shell: pwsh
         run: ./.github/scripts/Test-VulnerablePackages.ps1 -Target SharpClawCode.sln
       - name: Build
-        run: dotnet build SharpClawCode.sln --no-restore --configuration Release --warnaserror
+        run: dotnet build SharpClawCode.sln --no-restore --configuration Release --warnaserror -p:Version=${{ steps.version.outputs.value }}
       - name: Test
         run: dotnet test SharpClawCode.sln --no-build --configuration Release
+      - name: Agent scenario gates
+        run: |
+          dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- test run
+          dotnet run --project src/SharpClaw.Code.Cli/SharpClaw.Code.Cli.csproj --no-build --configuration Release -- test gates
+      - name: Documentation
+        run: |
+          dotnet tool restore
+          dotnet docfx docs/docfx.json --warningsAsErrors
       - name: Pack production artifacts
-        run: dotnet pack SharpClawCode.Packages.slnf --no-build --configuration Release --output ./nupkg -p:PackageVersion=${{ steps.version.outputs.value }}
+        run: dotnet pack SharpClawCode.Packages.slnf --no-build --configuration Release --output ./nupkg -p:Version=${{ steps.version.outputs.value }} -p:PackageVersion=${{ steps.version.outputs.value }}
       - name: Verify package installability
         shell: pwsh
         run: ./.github/scripts/Test-Packages.ps1 -PackageVersion ${{ steps.version.outputs.value }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-packages
+          path: nupkg/*
+          if-no-files-found: error
+
+  binaries:
+    needs: validate
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            runner: windows-2025
+          - rid: win-arm64
+            runner: windows-11-arm
+          - rid: linux-x64
+            runner: ubuntu-24.04
+          - rid: linux-arm64
+            runner: ubuntu-24.04-arm
+          - rid: osx-x64
+            runner: macos-15-intel
+          - rid: osx-arm64
+            runner: macos-15
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - name: Publish self-contained binary
+        shell: pwsh
+        run: ./.github/scripts/Publish-Binaries.ps1 -Runtime ${{ matrix.rid }} -Version ${{ needs.validate.outputs.version }}
+      - name: Unpack and smoke actual architecture
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_RID: ${{ matrix.rid }}
+        run: |
+          $extension = if ($env:RELEASE_RID.StartsWith('win-')) { 'zip' } else { 'tar.gz' }
+          ./.github/scripts/Test-Binary.ps1 -Archive "artifacts/binaries/sharpclaw-$env:RELEASE_VERSION-$env:RELEASE_RID.$extension" -Runtime $env:RELEASE_RID -Version $env:RELEASE_VERSION
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.rid }}
+          path: artifacts/binaries/*
+          if-no-files-found: error
+
+  publish:
+    needs: [validate, binaries]
+    runs-on: ubuntu-latest
+    environment: nuget
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v8
+        with:
+          name: release-packages
+          path: release
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          merge-multiple: true
+          path: release
+      - name: Validate complete release artifact set
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          $packages = @(Get-ChildItem release -Filter '*.nupkg')
+          $symbols = @(Get-ChildItem release -Filter '*.snupkg')
+          if ($packages.Count -ne 22 -or $symbols.Count -ne 22) { throw 'Release requires all 22 production packages and symbol packages.' }
+          foreach ($rid in @('win-x64','win-arm64','linux-x64','linux-arm64','osx-x64','osx-arm64')) {
+            $extension = if ($rid.StartsWith('win-')) { 'zip' } else { 'tar.gz' }
+            $archive = "release/sharpclaw-$env:RELEASE_VERSION-$rid.$extension"
+            if (!(Test-Path $archive) -or !(Test-Path "$archive.sha256")) { throw "Missing binary/checksum: $rid" }
+            $expected = (Get-Content "$archive.sha256" -Raw).Split(' ')[0]
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) { throw "Checksum mismatch: $rid" }
+          }
       - name: Push to NuGet
-        run: dotnet nuget push './nupkg/*.nupkg' --api-key '${{ secrets.NUGET_API_KEY }}' --source https://api.nuget.org/v3/index.json --skip-duplicate
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: dotnet nuget push 'release/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create '${{ github.ref_name }}' ./nupkg/*.nupkg ./nupkg/*.snupkg --verify-tag --generate-notes --title '${{ github.ref_name }}'
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "$RELEASE_TAG"

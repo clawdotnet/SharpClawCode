@@ -10,6 +10,7 @@
       "src/SharpClaw.Code.ExternalAgents/SharpClaw.Code.ExternalAgents.csproj",
       "src/SharpClaw.Code.Git/SharpClaw.Code.Git.csproj",
       "src/SharpClaw.Code.Infrastructure/SharpClaw.Code.Infrastructure.csproj",
+      "src/SharpClaw.Code.Mcp.Server/SharpClaw.Code.Mcp.Server.csproj",
       "src/SharpClaw.Code.Mcp/SharpClaw.Code.Mcp.csproj",
       "src/SharpClaw.Code.Memory/SharpClaw.Code.Memory.csproj",
       "src/SharpClaw.Code.Permissions/SharpClaw.Code.Permissions.csproj",

@@ -17,7 +17,7 @@ public sealed class MutationWorkspaceApplier(IFileSystem fileSystem, IPathServic
     public async Task ApplyInverseAsync(string workspaceRoot, FileMutationOperation operation, CancellationToken cancellationToken)
     {
         var resolver = new WorkspacePathResolver(pathService);
-        var root = pathService.GetFullPath(workspaceRoot);
+        var root = pathService.GetCanonicalFullPath(workspaceRoot);
         var context = CreateBypassContext(root);
         var fullPath = resolver.ResolvePath(context, operation.RelativePath);
         EnsureWithinWorkspace(root, fullPath, operation.RelativePath);
@@ -71,7 +71,7 @@ public sealed class MutationWorkspaceApplier(IFileSystem fileSystem, IPathServic
     public async Task ApplyForwardAsync(string workspaceRoot, FileMutationOperation operation, CancellationToken cancellationToken)
     {
         var resolver = new WorkspacePathResolver(pathService);
-        var root = pathService.GetFullPath(workspaceRoot);
+        var root = pathService.GetCanonicalFullPath(workspaceRoot);
         var context = CreateBypassContext(root);
         var fullPath = resolver.ResolvePath(context, operation.RelativePath);
         EnsureWithinWorkspace(root, fullPath, operation.RelativePath);

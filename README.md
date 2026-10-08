@@ -38,6 +38,16 @@ It is designed for:
 - [.NET SDK 10](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Optional: [GitHub CLI](https://cli.github.com/) for release and repo automation
 
+### Native binary or NuGet tool
+
+Version-tag releases are configured to include native binaries for Windows, Linux, and macOS on x64 and ARM64. Extract a matching archive and run `sharpclaw version`; basic commands need no installed .NET runtime. Semantic project loading and build/test verification still require the .NET SDK and restored assets. See [binary distribution](docs/binary-distribution.md) for packaging and smoke gates.
+
+```shell
+dotnet tool install --global SharpClaw.Code.Cli --prerelease
+```
+
+See [.NET intelligence](docs/dotnet-intelligence.md), [verification](docs/verification.md), and [MCP server](docs/mcp-server.md) for permissions, prerequisites, and examples.
+
 ### Build and test
 
 ```bash
@@ -67,6 +77,12 @@ dotnet run --project src/SharpClaw.Code.Cli -- --auto-approve shell --auto-appro
 # Inspect runtime health and status
 dotnet run --project src/SharpClaw.Code.Cli -- doctor
 dotnet run --project src/SharpClaw.Code.Cli -- status
+
+# Verify without provider credentials; project execution needs explicit authorization
+dotnet run --project src/SharpClaw.Code.Cli -- verify --scope all --permission-mode workspaceWrite --auto-approve shell
+
+# Serve MCP tools over stdio (read-only by default)
+dotnet run --project src/SharpClaw.Code.Cli -- mcp serve
 
 # Refresh and query the workspace knowledge index
 dotnet run --project src/SharpClaw.Code.Cli -- index refresh
@@ -123,8 +139,10 @@ Primary workflow modes:
 | Permission-aware tools | Route file, shell, and plugin-backed actions through explicit policy and approval decisions |
 | Provider abstraction | Run against Anthropic and OpenAI-compatible backends through a typed runtime surface |
 | Local runtime catalog | Surface Ollama, llama.cpp, and other OpenAI-compatible profiles with health, model discovery, and embedding defaults |
-| MCP support | Register, supervise, and integrate MCP servers with explicit lifecycle state |
+| MCP support | Register outbound servers and host permission-aware stdio or Streamable HTTP tools |
 | Plugins and skills | Extend the runtime with trusted plugin manifests and discoverable workspace skills |
+| .NET intelligence | Resolve exact Roslyn symbols, find references and hierarchy, inspect compiler diagnostics, and rename with undo |
+| Verification | Explicit build/test reports and opt-in bounded repair, with permission checks and durable recovery |
 | Workspace knowledge | Build a durable local index for lexical, symbol, and semantic workspace search |
 | Cross-session memory | Persist project and user memory so later sessions can recall repo-specific guidance and user preferences |
 | Structured telemetry | Emit runtime events and usage signals that support diagnostics, replay, and automation |

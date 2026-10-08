@@ -7,6 +7,7 @@ using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Runtime.Workflow;
+using SharpClaw.Code.Runtime.Verification;
 using SharpClaw.Code.Telemetry.Diagnostics;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Tools.Abstractions;
@@ -21,7 +22,10 @@ public sealed class DefaultTurnRunner(
     PrimaryCodingAgent primaryCodingAgentFallback,
     IToolExecutor toolExecutor,
     IPromptContextAssembler promptContextAssembler,
-    IOptions<TelemetryOptions> telemetryOptions) : ITurnRunner
+    IOptions<TelemetryOptions> telemetryOptions,
+    IVerificationPolicyResolver? verificationPolicy = null,
+    IVerificationLoopCoordinator? verificationLoop = null,
+    TurnMutationJournal? journal = null) : ITurnRunner
 {
     private readonly ISharpClawAgent[] agentList = agents.ToArray();
 
@@ -45,7 +49,8 @@ public sealed class DefaultTurnRunner(
 
         var agent = ResolveAgent(request);
         var primaryMode = PrimaryModeResolver.ResolveEffective(request, session);
-        var mutationAccumulator = new TurnMutationAccumulator();
+        var mutationAccumulator = journal?.Find(session.Id, turn.Id) ?? new TurnMutationAccumulator();
+        var policy = verificationPolicy is null ? new VerificationPolicy() : await verificationPolicy.ResolveAsync(workingDirectory, request.Metadata, cancellationToken).ConfigureAwait(false);
 
         var agentContext = new AgentRunContext(
             SessionId: session.Id,
@@ -86,6 +91,9 @@ public sealed class DefaultTurnRunner(
             throw;
         }
 
+        var loop = verificationLoop is null ? new VerificationLoopResult(agentResult, null, [], [])
+            : await verificationLoop.RunAsync(agent, agentContext, agentResult, mutationAccumulator, policy, cancellationToken).ConfigureAwait(false);
+        agentResult = loop.AgentResult;
         var mutations = mutationAccumulator.ToSnapshot();
         return new TurnRunResult(
             Output: agentResult.Output,
@@ -95,7 +103,8 @@ public sealed class DefaultTurnRunner(
             ProviderEvents: agentResult.ProviderEvents,
             ToolResults: agentResult.ToolResults,
             RuntimeEvents: agentResult.Events,
-            FileMutations: mutations.Count == 0 ? null : mutations);
+            FileMutations: mutations.Count == 0 ? null : mutations,
+            Verification: loop.Verification, ProviderInvocations: loop.ProviderInvocations, PersistedRuntimeEvents: loop.PersistedEvents);
     }
 
     private ISharpClawAgent ResolveAgent(RunPromptRequest request)
