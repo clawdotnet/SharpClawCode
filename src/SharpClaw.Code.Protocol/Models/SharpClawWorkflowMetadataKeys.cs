@@ -109,4 +109,12 @@ public static class SharpClawWorkflowMetadataKeys
         ArgumentException.ThrowIfNullOrWhiteSpace(ownerAgentId);
         return ManagedSessionTodoMapPrefix + ownerAgentId.Trim();
     }
+    /// <summary>Overrides automatic verification enablement.</summary>
+    public const string VerificationEnabled = "sharpclaw.verification.enabled";
+    /// <summary>Overrides automatic verification scope.</summary>
+    public const string VerificationScope = "sharpclaw.verification.scope";
+    /// <summary>Overrides the bounded repair budget.</summary>
+    public const string VerificationMaxRepairIterations = "sharpclaw.verification.maxRepairIterations";
+    /// <summary>Explicitly enables restore for automatic verification.</summary>
+    public const string VerificationAllowRestore = "sharpclaw.verification.allowRestore";
 }

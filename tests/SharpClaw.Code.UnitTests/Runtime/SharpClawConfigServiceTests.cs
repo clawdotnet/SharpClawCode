@@ -36,6 +36,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
             {
               // user defaults
               "shareMode": "Auto",
+              "verification": { "enabled": true, "scope": "all", "maxRepairIterations": 1 },
               "defaultAgentId": "user-agent",
               "agents": [
                 {
@@ -57,6 +58,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
             """
             {
               "shareMode": "Disabled",
+              "verification": { "maxRepairIterations": 2 },
               "defaultAgentId": "workspace-agent",
               "agents": [
                 {
@@ -81,6 +83,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
         var snapshot = await service.GetConfigAsync(workspace, CancellationToken.None);
 
         snapshot.Document.ShareMode.Should().Be(ShareMode.Disabled);
+        snapshot.Document.Verification.Should().BeEquivalentTo(new VerificationOptions(true, VerificationScope.All, true, 2, false));
         snapshot.Document.DefaultAgentId.Should().Be("workspace-agent");
         snapshot.Document.ConnectLinks.Should().ContainSingle(link => link.Target == "anthropic");
         snapshot.Document.Agents.Should().NotBeNull();

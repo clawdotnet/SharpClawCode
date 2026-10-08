@@ -107,7 +107,7 @@ public sealed class ToolExecutor(
 
         if (!permissionDecision.IsAllowed)
         {
-            var deniedResult = new ToolResult(
+            var deniedResult = tool is IToolPermissionDeniedResultFactory factory ? factory.CreateDeniedResult(context, request, permissionDecision) : new ToolResult(
                 RequestId: request.Id,
                 ToolName: request.ToolName,
                 Succeeded: false,

@@ -46,7 +46,7 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
     private static CommandResult CreateResult(OutputFormat outputFormat)
     {
         var version = Assembly.GetEntryAssembly()?.GetName().Version?.ToString() ?? "0.0.0";
-        var payload = JsonSerializer.Serialize(new VersionPayload(version));
+        var payload = JsonSerializer.Serialize(new VersionPayload(version, Assembly.GetEntryAssembly()?.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion));
 
         return new CommandResult(
             Succeeded: true,
@@ -56,5 +56,5 @@ public sealed class VersionCommandHandler(OutputRendererDispatcher outputRendere
             DataJson: payload);
     }
 
-    private sealed record VersionPayload(string Version);
+    private sealed record VersionPayload(string Version, string? InformationalVersion = null);
 }

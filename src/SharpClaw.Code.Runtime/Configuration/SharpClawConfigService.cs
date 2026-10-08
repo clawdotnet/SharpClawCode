@@ -95,7 +95,8 @@ public sealed class SharpClawConfigService(
             MergeByKey(user?.ConnectLinks, workspace?.ConnectLinks, static item => item.Target),
             MergeExternalAgents(user?.ExternalAgents, workspace?.ExternalAgents),
             workspace?.SkillPacks ?? user?.SkillPacks ?? new SkillPacksConfig(),
-            workspace?.WorkItems ?? user?.WorkItems ?? new WorkItemsConfig());
+            workspace?.WorkItems ?? user?.WorkItems ?? new WorkItemsConfig(),
+            MergeVerification(user?.Verification, workspace?.Verification));
     }
 
     private static List<T>? MergeByKey<T>(
@@ -129,7 +130,13 @@ public sealed class SharpClawConfigService(
             null,
             new ExternalAgentsConfig(),
             new SkillPacksConfig(),
-            new WorkItemsConfig());
+            new WorkItemsConfig(),
+            new VerificationOptions(false, VerificationScope.Affected, true, 2, false));
+
+    private static VerificationOptions MergeVerification(VerificationOptions? user, VerificationOptions? workspace)
+        => new(workspace?.Enabled ?? user?.Enabled ?? false, workspace?.Scope ?? user?.Scope ?? VerificationScope.Affected,
+            workspace?.RunAfterMutatingTurn ?? user?.RunAfterMutatingTurn ?? true, workspace?.MaxRepairIterations ?? user?.MaxRepairIterations ?? 2,
+            workspace?.AllowRestore ?? user?.AllowRestore ?? false);
 
     private static ExternalAgentsConfig MergeExternalAgents(ExternalAgentsConfig? user, ExternalAgentsConfig? workspace)
     {

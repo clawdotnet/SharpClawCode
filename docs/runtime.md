@@ -176,3 +176,5 @@ Webhook and SSE event delivery both use the same `RuntimeEventEnvelope` shape, w
 | `ShareSessionService` | `src/SharpClaw.Code.Runtime/Workflow/ShareSessionService.cs` |
 | `ConversationCompactionService` | `src/SharpClaw.Code.Runtime/Workflow/ConversationCompactionService.cs` |
 | `WorkspaceHttpServer` | `src/SharpClaw.Code.Runtime/Server/WorkspaceHttpServer.cs` |
+
+Workspace prompt diagnostics use cached authorized verification results. [Verification](verification.md) describes the shared worker and execution policy.
