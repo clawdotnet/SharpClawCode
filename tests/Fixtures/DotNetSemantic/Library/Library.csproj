@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+  </PropertyGroup>
+  <Target Name="EvaluationSentinel" BeforeTargets="ResolveReferences">
+    <WriteLinesToFile File="$(MSBuildProjectDirectory)/evaluation-sentinel.txt" Lines="Project evaluation executed" Overwrite="true" />
+  </Target>
+</Project>

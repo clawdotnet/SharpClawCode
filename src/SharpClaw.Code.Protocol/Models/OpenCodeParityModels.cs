@@ -181,6 +181,7 @@ public sealed record ConnectLinkDefinition(
 /// <param name="ConnectLinks">Optional auth/connect entry points.</param>
 /// <param name="ExternalAgents">External agent adapter configuration.</param>
 /// <param name="SkillPacks">Skill-pack ecosystem configuration.</param>
+/// <param name="Verification">Opt-in post-mutation verification and repair configuration.</param>
 /// <param name="WorkItems">Work-item integration configuration.</param>
 public sealed record SharpClawConfigDocument(
     ShareMode? ShareMode,
@@ -192,7 +193,8 @@ public sealed record SharpClawConfigDocument(
     List<ConnectLinkDefinition>? ConnectLinks,
     ExternalAgentsConfig? ExternalAgents = null,
     SkillPacksConfig? SkillPacks = null,
-    WorkItemsConfig? WorkItems = null);
+    WorkItemsConfig? WorkItems = null,
+    VerificationOptions? Verification = null);
 
 /// <summary>
 /// Materialized configuration snapshot after user/workspace precedence is applied.

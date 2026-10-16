@@ -21,6 +21,8 @@ public static class MemoryServiceCollectionExtensions
         services.AddSingleton<IWorkspaceKnowledgeStore, SqliteWorkspaceKnowledgeStore>();
         services.AddSingleton<IWorkspaceIndexService, WorkspaceIndexService>();
         services.AddSingleton<IWorkspaceSearchService, WorkspaceSearchService>();
+        services.AddSingleton<IDotNetWorkspaceTargetResolver, DotNetWorkspaceTargetResolver>();
+        services.AddSingleton<IDotNetWorkspaceSemanticService, DotNetWorkspaceSemanticService>();
         services.AddSingleton<IPersistentMemoryStore, PersistentMemoryStore>();
         services.AddSingleton<IMemoryRecallService, MemoryRecallService>();
         services.AddSingleton<IProjectMemoryService, ProjectMemoryService>();

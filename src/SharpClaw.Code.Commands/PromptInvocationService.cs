@@ -2,6 +2,7 @@ using SharpClaw.Code.Commands.Models;
 using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 
 namespace SharpClaw.Code.Commands;
@@ -54,7 +55,7 @@ public sealed class PromptInvocationService(
                 .ExecutePromptAsync(prompt, context.ToRuntimeCommandContext(isInteractive: isInteractive), cancellationToken)
                 .ConfigureAwait(false);
             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
-            return 0;
+            return result.Verification?.Status is VerificationStatus.Failed or VerificationStatus.Cancelled ? 1 : 0;
         }
         catch (ProviderExecutionException exception)
         {

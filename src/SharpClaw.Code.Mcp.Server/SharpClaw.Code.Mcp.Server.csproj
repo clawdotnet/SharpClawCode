@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><Description>Permission-aware SharpClaw MCP server transports.</Description></PropertyGroup>
+  <ItemGroup><PackageReference Include="ModelContextProtocol" /><PackageReference Include="ModelContextProtocol.AspNetCore" /></ItemGroup>
+  <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="../SharpClaw.Code.Mcp/SharpClaw.Code.Mcp.csproj" />
+    <ProjectReference Include="../SharpClaw.Code.Runtime/SharpClaw.Code.Runtime.csproj" />
+  </ItemGroup>
+</Project>

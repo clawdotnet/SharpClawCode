@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Data.Common;
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Memory.Abstractions;
@@ -14,8 +15,9 @@ namespace SharpClaw.Code.Memory.Services;
 public sealed class SqliteWorkspaceKnowledgeStore(
     IFileSystem fileSystem,
     IPathService pathService,
-    IRuntimeStoragePathResolver storagePathResolver) : IWorkspaceKnowledgeStore
+    IRuntimeStoragePathResolver storagePathResolver) : IWorkspaceKnowledgeStore, IDisposable
 {
+    private readonly ConcurrentDictionary<string, byte> connectionPools = new(StringComparer.Ordinal);
     private const string WorkspaceKnowledgeDirectoryName = "knowledge";
     private const string WorkspaceKnowledgeFileName = "knowledge.db";
     private const string UserMemoryFileName = "user-memory.db";
@@ -464,15 +466,32 @@ public sealed class SqliteWorkspaceKnowledgeStore(
             fileSystem.CreateDirectory(directory);
         }
 
-        var connection = new SqliteConnection(new SqliteConnectionStringBuilder
+        var connectionString = new SqliteConnectionStringBuilder
         {
             DataSource = dbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
             Cache = SqliteCacheMode.Shared,
-        }.ToString());
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
-        return connection;
+        }.ToString();
+        connectionPools.TryAdd(connectionString, 0);
+        var connection = new SqliteConnection(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
+            return connection;
+        }
+        catch { await connection.DisposeAsync().ConfigureAwait(false); throw; }
+    }
+
+    /// <summary>Releases this store's idle database handles when its host shuts down, including on Windows.</summary>
+    public void Dispose()
+    {
+        foreach (var connectionString in connectionPools.Keys)
+        {
+            using var connection = new SqliteConnection(connectionString);
+            SqliteConnection.ClearPool(connection);
+        }
+        connectionPools.Clear();
     }
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)

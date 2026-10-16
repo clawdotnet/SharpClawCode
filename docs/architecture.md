@@ -1,5 +1,7 @@
 # Architecture
 
+Compiler-backed workspace inspection and symbol resolution live in Memory alongside the fast persisted lexical index. Semantic workspaces load lazily through Roslyn's build host and require explicit host-side authorization for project evaluation. Protocol models never expose Roslyn/MSBuild types. See [the .NET intelligence guide](dotnet-intelligence.md).
+
 This document matches the **current** solution: `SharpClawCode.sln` with projects under `src/` and test projects under `tests/`.
 
 ## Solution structure

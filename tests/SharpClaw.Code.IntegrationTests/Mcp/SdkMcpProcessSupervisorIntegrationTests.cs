@@ -33,7 +33,7 @@ public sealed class SdkMcpProcessSupervisorIntegrationTests
 
         var result = await supervisor.StartAsync(def, cwd, CancellationToken.None);
 
-        result.Started.Should().BeTrue();
+        result.Started.Should().BeTrue($"fixture startup failed: {result.FailureReason}");
         result.HandshakeSucceeded.Should().BeTrue($"handshake failed: {result.FailureReason}");
         result.ToolCount.Should().BeGreaterThan(0);
         result.SessionHandle.Should().BeGreaterThan(0);

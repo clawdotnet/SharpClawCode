@@ -1,3 +1,5 @@
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Tools.Abstractions;
@@ -86,4 +88,16 @@ public abstract class SharpClawToolBase : ISharpClawTool
             ExitCode: exitCode,
             DurationMilliseconds: durationMilliseconds,
             StructuredOutputJson: null);
+
+    /// <summary>Reads arguments using generated protocol metadata.</summary>
+    protected static T DeserializeArguments<T>(ToolExecutionRequest request, JsonTypeInfo<T> metadata)
+        => JsonSerializer.Deserialize(request.ArgumentsJson, metadata) ?? throw new JsonException("Tool arguments cannot be null.");
+
+    /// <summary>Preserves a typed structured payload for successful and failed operations.</summary>
+    protected static ToolResult CreateTypedResult<T>(ToolExecutionContext context, ToolExecutionRequest request, T payload, JsonTypeInfo<T> metadata, bool succeeded, string text)
+    {
+        var json = JsonSerializer.Serialize(payload, metadata);
+        return new(request.Id, request.ToolName, succeeded, context.OutputFormat, context.OutputFormat == OutputFormat.Json ? json : text,
+            succeeded ? null : text, succeeded ? 0 : 1, null, json);
+    }
 }

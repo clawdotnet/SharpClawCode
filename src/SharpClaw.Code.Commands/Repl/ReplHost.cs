@@ -197,7 +197,7 @@ public sealed class ReplHost(
                 cancellationToken).ConfigureAwait(false);
 
             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
-            return 0;
+            return result.Verification?.Status is VerificationStatus.Failed or VerificationStatus.Cancelled ? 1 : 0;
         }
         catch (ProviderExecutionException exception)
         {

@@ -74,3 +74,5 @@ The scenario harness lives in **`SharpClaw.Testing.Abstractions`**, **`SharpClaw
 ## CI
 
 CI restores and builds the full solution with warnings treated as errors, explicitly builds every example host, runs `dotnet test`, then runs the scenario harness through `sharpclaw test run` and `sharpclaw test gates`. It also enforces the line-coverage floor, compiles the VS Code extension, audits dependencies, and smoke-installs production packages on Linux, Windows, and macOS. Parity tests use temp directories under **`Path.GetTempPath()`** and avoid network.
+
+Build/test verification and its offline SDK fixture acceptance are documented in [Verification](verification.md).

@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Acp;
 using SharpClaw.Code.Commands;
+using SharpClaw.Code.Mcp.Server;
 using SharpClaw.Code.Commands.Options;
 using SharpClaw.Testing.Cli;
 
@@ -19,6 +20,7 @@ public static class CliServiceCollectionExtensions
     public static IServiceCollection AddSharpClawCli(this IServiceCollection services)
     {
         services.AddSharpClawAcp();
+        services.AddSharpClawMcpServer();
         services.AddSharpClawTestingCli();
         services.AddSingleton<GlobalCliOptions>();
         services.AddSingleton<ReplInteractionState>();
@@ -56,6 +58,7 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ICommandHandler, StatsCommandHandler>();
         services.AddSingleton<ICommandHandler, ConnectCommandHandler>();
         services.AddSingleton<ICommandHandler, IndexCommandHandler>();
+        services.AddSingleton<ICommandHandler, VerifyCommandHandler>();
         services.AddSingleton<ICommandHandler, HooksCommandHandler>();
         services.AddSingleton<ICommandHandler, MemoryCommandHandler>();
         services.AddSingleton<ICommandHandler, SkillsCommandHandler>();
@@ -94,6 +97,7 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ISlashCommandHandler, StatsCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, ConnectCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, IndexCommandHandler>();
+        services.AddSingleton<ISlashCommandHandler, VerifyCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, HooksCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, MemoryCommandHandler>();
         services.AddSingleton<ISlashCommandHandler, SkillsCommandHandler>();

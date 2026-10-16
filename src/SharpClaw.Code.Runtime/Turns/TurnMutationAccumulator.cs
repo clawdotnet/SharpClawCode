@@ -9,16 +9,15 @@ namespace SharpClaw.Code.Runtime.Turns;
 /// </summary>
 public sealed class TurnMutationAccumulator : IToolMutationRecorder
 {
-    private readonly ConcurrentBag<FileMutationOperation> operations = new();
+    private readonly ConcurrentQueue<FileMutationOperation> operations = new();
 
     /// <inheritdoc />
     public void Record(FileMutationOperation operation)
-        => operations.Add(operation);
+        => operations.Enqueue(operation);
 
     /// <summary>
-    /// Returns captured operations in an arbitrary order; consumers should sort by <see cref="FileMutationOperation.OperationId"/> if deterministic ordering is required.
-    /// For current tools, operations are naturally sequential per turn execution thread.
+    /// Returns captured operations in their recording order, preserving repeated edits to the same file.
     /// </summary>
     public IReadOnlyList<FileMutationOperation> ToSnapshot()
-        => operations.OrderBy(o => o.OperationId, StringComparer.Ordinal).ToArray();
+        => operations.ToArray();
 }

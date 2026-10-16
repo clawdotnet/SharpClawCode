@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../SharpClaw.Code.Mcp.Server/SharpClaw.Code.Mcp.Server.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Acp\SharpClaw.Code.Acp.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Protocol\SharpClaw.Code.Protocol.csproj" />
     <ProjectReference Include="..\SharpClaw.Code.Runtime\SharpClaw.Code.Runtime.csproj" />

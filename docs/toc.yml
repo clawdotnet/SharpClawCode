@@ -4,6 +4,8 @@
   href: architecture.md
 - name: Runtime
   href: runtime.md
+- name: .NET intelligence
+  href: dotnet-intelligence.md
 - name: Providers
   href: providers.md
 - name: Tools and permissions
@@ -26,3 +28,12 @@
   href: testing.md
 - name: API reference
   href: api/toc.yml
+
+- name: Verification
+  href: verification.md
+
+- name: MCP server
+  href: mcp-server.md
+
+- name: Binary distribution
+  href: binary-distribution.md

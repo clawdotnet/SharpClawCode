@@ -57,7 +57,9 @@ public sealed class ConversationRuntime(
     IShareSessionService shareSessionService,
     IConversationCompactionService conversationCompactionService,
     IHookDispatcher hookDispatcher,
-    ILogger<ConversationRuntime> logger) : IConversationRuntime, IRuntimeCommandService
+    ILogger<ConversationRuntime> logger,
+    TurnMutationJournal? mutationJournal = null,
+    IMutationSetStore? mutationSets = null) : IConversationRuntime, IRuntimeCommandService
 {
     private const string LastTurnSequenceKey = "lastTurnSequence";
     private const string CanceledTurnReason = "The turn was canceled.";
@@ -245,6 +247,10 @@ public sealed class ConversationRuntime(
             runtimeEvents,
             cancellationToken).ConfigureAwait(false);
 
+        var capturedMutations = mutationJournal?.Begin(session.Id, turnId);
+        IReadOnlyList<FileMutationOperation>? completedMutations = null;
+        string? mutationCheckpointId = null;
+        var mutationsPersisted = false;
         try
         {
             var effectivePrimary = PrimaryModeResolver.ResolveEffective(request, session);
@@ -257,6 +263,8 @@ public sealed class ConversationRuntime(
             };
 
             var turnRunResult = await turnRunner.RunAsync(session, turn, runnerRequest, cancellationToken).ConfigureAwait(false);
+            completedMutations = turnRunResult.FileMutations;
+            var verificationFailed = turnRunResult.Verification?.Status is VerificationStatus.Failed or VerificationStatus.Cancelled;
             SpecArtifactSet? specArtifacts = null;
             PlanExecutionResult? planResult = null;
             if (effectivePrimary == PrimaryMode.Plan)
@@ -291,6 +299,7 @@ public sealed class ConversationRuntime(
                 Output = turnRunResult.Output,
                 CompletedAtUtc = completedAtUtc,
                 Usage = turnRunResult.Usage,
+                Verification = turnRunResult.Verification,
             };
             ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
 
@@ -301,6 +310,7 @@ public sealed class ConversationRuntime(
                 runtimeEvents,
                 cancellationToken).ConfigureAwait(false);
 
+            runtimeEvents.AddRange(turnRunResult.PersistedRuntimeEvents ?? []);
             await AppendProviderEventsAsync(
                 workspacePath,
                 session.Id,
@@ -322,6 +332,7 @@ public sealed class ConversationRuntime(
                 cancellationToken).ConfigureAwait(false);
 
             var checkpointId = CreateIdentifier("checkpoint");
+            mutationCheckpointId = checkpointId;
             var checkpoint = new RuntimeCheckpoint(
                 Id: checkpointId,
                 SessionId: session.Id,
@@ -347,7 +358,7 @@ public sealed class ConversationRuntime(
 
             session = session with
             {
-                State = activeState,
+                State = verificationFailed ? stateMachine.Transition(activeState, RuntimeLifecycleTransition.Fail) : activeState,
                 UpdatedAtUtc = completedAtUtc,
                 ActiveTurnId = null,
                 LastCheckpointId = checkpoint.Id,
@@ -365,6 +376,13 @@ public sealed class ConversationRuntime(
                         mutations,
                         cancellationToken)
                     .ConfigureAwait(false);
+                mutationsPersisted = true;
+            }
+            if (verificationFailed)
+            {
+                await AppendEventAsync(workspacePath, session.Id,
+                    new SessionStateChangedEvent(CreateIdentifier("event"), session.Id, turnId, completedAtUtc, activeState, session.State, turnRunResult.Verification!.Summary),
+                    runtimeEvents, cancellationToken).ConfigureAwait(false);
             }
 
             await AppendEventAsync(
@@ -376,7 +394,7 @@ public sealed class ConversationRuntime(
                     TurnId: turnId,
                     OccurredAtUtc: completedAtUtc,
                     Turn: completedTurn,
-                    Succeeded: true,
+                    Succeeded: !verificationFailed,
                     Summary: turnRunResult.Summary),
                 runtimeEvents,
                 cancellationToken).ConfigureAwait(false);
@@ -415,10 +433,12 @@ public sealed class ConversationRuntime(
                 Checkpoint: checkpoint,
                 Events: runtimeEvents.ToArray(),
                 SpecArtifacts: finalSpecArtifacts,
-                PlanResult: planResult);
+                PlanResult: planResult,
+                Verification: turnRunResult.Verification);
         }
         catch (OperationCanceledException exception)
         {
+            if (!mutationsPersisted) session = await PreserveInterruptedMutationsAsync(workspacePath, session, turnId, completedMutations ?? capturedMutations?.ToSnapshot() ?? [], mutationCheckpointId).ConfigureAwait(false);
             session = await PersistTurnFailureAsync(
                 workspacePath,
                 session,
@@ -435,6 +455,7 @@ public sealed class ConversationRuntime(
         }
         catch (ProviderExecutionException exception)
         {
+            if (!mutationsPersisted) session = await PreserveInterruptedMutationsAsync(workspacePath, session, turnId, completedMutations ?? capturedMutations?.ToSnapshot() ?? [], mutationCheckpointId).ConfigureAwait(false);
             session = await PersistTurnFailureAsync(
                 workspacePath,
                 session,
@@ -452,6 +473,7 @@ public sealed class ConversationRuntime(
         }
         catch (Exception exception)
         {
+            if (!mutationsPersisted) session = await PreserveInterruptedMutationsAsync(workspacePath, session, turnId, completedMutations ?? capturedMutations?.ToSnapshot() ?? [], mutationCheckpointId).ConfigureAwait(false);
             session = await PersistTurnFailureAsync(
                 workspacePath,
                 session,
@@ -465,6 +487,10 @@ public sealed class ConversationRuntime(
                 session.Id,
                 turnId);
             throw;
+        }
+        finally
+        {
+            mutationJournal?.End(session.Id, turnId);
         }
         }
         finally
@@ -1246,6 +1272,20 @@ public sealed class ConversationRuntime(
         }
     }
 
+    private async Task<ConversationSession> PreserveInterruptedMutationsAsync(string workspacePath, ConversationSession session, string turnId, IReadOnlyList<FileMutationOperation> operations, string? checkpointId)
+    {
+        if (operations.Count == 0) return session;
+        using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        var latest = await sessionStore.GetByIdAsync(workspacePath, session.Id, cleanup.Token).ConfigureAwait(false) ?? session;
+        var id = checkpointId ?? CreateIdentifier("checkpoint");
+        if (mutationSets is not null && await mutationSets.GetAsync(workspacePath, session.Id, id, cleanup.Token).ConfigureAwait(false) is not null) return latest;
+        var checkpoint = new RuntimeCheckpoint(id, session.Id, turnId, systemClock.UtcNow, "Recoverable edits from an interrupted turn.",
+            pathService.Combine(".sharpclaw", "sessions", session.Id, "checkpoints", id + ".json"), "Inspect or undo the recorded edits before continuing.", new Dictionary<string, string> { ["interrupted"] = "true" });
+        await checkpointStore.SaveAsync(workspacePath, checkpoint, cleanup.Token).ConfigureAwait(false);
+        latest = latest with { LastCheckpointId = id };
+        return await checkpointMutationCoordinator.ApplyRecordedMutationsAsync(workspacePath, latest, turnId, id, operations, cleanup.Token).ConfigureAwait(false);
+    }
+
     private async Task AppendProviderEventsAsync(
         string workspacePath,
         string sessionId,
@@ -1254,6 +1294,16 @@ public sealed class ConversationRuntime(
         List<RuntimeEvent> collectedEvents,
         CancellationToken cancellationToken)
     {
+        if (turnRunResult.ProviderInvocations is { Count: > 0 } invocations)
+        {
+            foreach (var invocation in invocations)
+            {
+                await AppendProviderEventsAsync(workspacePath, sessionId, turnId,
+                    turnRunResult with { ProviderRequest = invocation.Request, ProviderEvents = invocation.Events, ProviderInvocations = null },
+                    collectedEvents, cancellationToken).ConfigureAwait(false);
+            }
+            return;
+        }
         if (turnRunResult.ProviderRequest is null)
         {
             return;

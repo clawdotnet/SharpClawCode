@@ -51,7 +51,8 @@ public sealed class CheckpointMutationCoordinator(
             history.RemoveRange(state.AppliedPrefixLength, history.Count - state.AppliedPrefixLength);
         }
 
-        history.Add(checkpointId);
+        // Retry after cancellation between session metadata and mutation-set persistence must not append the same id twice.
+        if (!history.Contains(checkpointId, StringComparer.Ordinal)) history.Add(checkpointId);
         var nextState = new UndoRedoStateDocument(history, history.Count, []);
         UndoRedoStateHelper.Assign(md, nextState);
 

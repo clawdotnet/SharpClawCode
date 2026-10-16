@@ -14,6 +14,9 @@ namespace SharpClaw.Code.Runtime.Turns;
 /// <param name="ToolResults">The tool results produced during execution, if any.</param>
 /// <param name="RuntimeEvents">The runtime events emitted during agent execution, if any.</param>
 /// <param name="FileMutations">Reversible file mutations performed via tools during the turn, if any.</param>
+/// <param name="ProviderInvocations">Provider request/event pairs from every agent pass.</param>
+/// <param name="PersistedRuntimeEvents">Loop events already durably published during execution.</param>
+/// <param name="Verification">Final opt-in verification report, absent when verification did not run.</param>
 public sealed record TurnRunResult(
     string Output,
     UsageSnapshot Usage,
@@ -22,4 +25,7 @@ public sealed record TurnRunResult(
     IReadOnlyList<ProviderEvent>? ProviderEvents = null,
     IReadOnlyList<ToolResult>? ToolResults = null,
     IReadOnlyList<RuntimeEvent>? RuntimeEvents = null,
-    IReadOnlyList<FileMutationOperation>? FileMutations = null);
+    IReadOnlyList<FileMutationOperation>? FileMutations = null,
+    VerificationRunReport? Verification = null,
+    IReadOnlyList<ProviderInvocationRecord>? ProviderInvocations = null,
+    IReadOnlyList<RuntimeEvent>? PersistedRuntimeEvents = null);

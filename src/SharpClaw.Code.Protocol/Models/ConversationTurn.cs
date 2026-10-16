@@ -14,6 +14,7 @@ namespace SharpClaw.Code.Protocol.Models;
 /// <param name="SlashCommandName">The slash command invoked for the turn, if any.</param>
 /// <param name="Usage">The usage snapshot captured for the turn, if any.</param>
 /// <param name="Metadata">Additional machine-readable turn metadata.</param>
+/// <param name="Verification">Final opt-in verification report, absent when verification did not run.</param>
 public sealed record ConversationTurn(
     string Id,
     string SessionId,
@@ -25,4 +26,5 @@ public sealed record ConversationTurn(
     string? AgentId,
     string? SlashCommandName,
     UsageSnapshot? Usage,
-    Dictionary<string, string>? Metadata);
+    Dictionary<string, string>? Metadata,
+    VerificationRunReport? Verification = null);

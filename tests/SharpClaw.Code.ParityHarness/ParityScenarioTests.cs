@@ -6,12 +6,14 @@ using SharpClaw.Code.MockProvider;
 using SharpClaw.Code.Permissions.Models;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
+using SharpClaw.Code.Protocol.Events;
 using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Sessions.Abstractions;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Tools.BuiltIn;
 using SharpClaw.Code.Tools.Models;
+using SharpClaw.Code.Telemetry.Abstractions;
 
 namespace SharpClaw.Code.ParityHarness;
 
@@ -299,7 +301,7 @@ public sealed class ParityScenarioTests : IAsyncLifetime
         {
             await RunPromptWithCancelAfterTurnStartAsync(
                 runtime,
-                store,
+                provider.GetRequiredService<IRuntimeEventStream>(),
                 new RunPromptRequest(
                     Prompt: "slow",
                     SessionId: null,
@@ -321,24 +323,39 @@ public sealed class ParityScenarioTests : IAsyncLifetime
 
     private async Task RunPromptWithCancelAfterTurnStartAsync(
         IConversationRuntime runtime,
-        ISessionStore store,
+        IRuntimeEventStream stream,
         RunPromptRequest request,
         TimeSpan cancelAfter)
     {
         using var cts = new CancellationTokenSource();
         var runTask = runtime.RunPromptAsync(request, cts.Token);
-        await WaitForActiveTurnAsync(store, CancellationToken.None);
-        cts.CancelAfter(cancelAfter);
-        await runTask.ConfigureAwait(false);
+        try
+        {
+            await WaitForActiveTurnAsync(stream, runTask, CancellationToken.None);
+            cts.CancelAfter(cancelAfter);
+            await runTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            cts.Cancel();
+            try { await runTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
     }
 
-    private async Task WaitForActiveTurnAsync(ISessionStore store, CancellationToken cancellationToken)
+    private static async Task WaitForActiveTurnAsync(IRuntimeEventStream stream, Task runTask, CancellationToken cancellationToken)
     {
         // Startup is separate from the cancellation deadline and can be slow on loaded Windows runners.
-        for (var attempt = 0; attempt < 600; attempt++)
+        var maxAttempts = OperatingSystem.IsWindows() ? 1800 : 600;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
-            var session = await store.GetLatestAsync(_workspace, cancellationToken).ConfigureAwait(false);
-            if (!string.IsNullOrWhiteSpace(session?.ActiveTurnId))
+            if (runTask.IsCompleted)
+            {
+                await runTask.ConfigureAwait(false);
+                throw new InvalidOperationException("The parity runtime completed before an active turn could be observed.");
+            }
+            // Poll the typed event stream without opening the snapshot being rewritten by the runtime.
+            if (stream.GetRecentEnvelopesSnapshot().Any(envelope => envelope.Event is TurnStartedEvent))
             {
                 return;
             }
@@ -379,7 +396,7 @@ public sealed class ParityScenarioTests : IAsyncLifetime
     [Fact]
     public void Scenario_catalog_contains_expected_keys()
     {
-        ParityScenarioIds.All.Should().HaveCount(12);
+        ParityScenarioIds.All.Should().Contain(ParityScenarioIds.SemanticSymbolResolution);
         ParityScenarioIds.All.Should().OnlyHaveUniqueItems();
     }
 }

@@ -18,6 +18,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="../Fixtures/DotNetSemantic/**/*" Exclude="../Fixtures/DotNetSemantic/**/bin/**;../Fixtures/DotNetSemantic/**/obj/**">
+      <Link>DotNetFixture/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\src\SharpClaw.Code\SharpClaw.Code.csproj" />
     <ProjectReference Include="..\..\src\SharpClaw.Code.Cli\SharpClaw.Code.Cli.csproj" />
     <ProjectReference Include="..\..\src\SharpClaw.Code.Mcp\SharpClaw.Code.Mcp.csproj" />

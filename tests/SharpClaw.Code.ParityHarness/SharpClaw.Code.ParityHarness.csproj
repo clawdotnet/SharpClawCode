@@ -30,4 +30,11 @@
     <ProjectReference Include="..\SharpClaw.Code.MockProvider\SharpClaw.Code.MockProvider.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Include="../SharpClaw.Code.IntegrationTests/Fixtures/DotNetFixtureWorkspace.cs" Link="Fixtures/DotNetFixtureWorkspace.cs" />
+    <Content Include="../Fixtures/DotNetSemantic/**/*" Exclude="../Fixtures/DotNetSemantic/**/bin/**;../Fixtures/DotNetSemantic/**/obj/**">
+      <Link>DotNetFixture/%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
 </Project>

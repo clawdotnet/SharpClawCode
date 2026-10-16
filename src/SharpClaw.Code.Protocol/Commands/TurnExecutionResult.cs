@@ -15,6 +15,7 @@ namespace SharpClaw.Code.Protocol.Commands;
 /// <param name="Events">The runtime events emitted during execution.</param>
 /// <param name="SpecArtifacts">Generated spec artifact metadata, when the turn ran in spec mode.</param>
 /// <param name="PlanResult">Structured deep-planning output, when the turn ran in plan mode.</param>
+/// <param name="Verification">Final opt-in verification report, absent when verification did not run.</param>
 public sealed record TurnExecutionResult(
     ConversationSession Session,
     ConversationTurn Turn,
@@ -24,4 +25,5 @@ public sealed record TurnExecutionResult(
     RuntimeCheckpoint? Checkpoint,
     RuntimeEvent[] Events,
     SpecArtifactSet? SpecArtifacts = null,
-    PlanExecutionResult? PlanResult = null);
+    PlanExecutionResult? PlanResult = null,
+    VerificationRunReport? Verification = null);
