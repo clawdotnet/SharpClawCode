@@ -65,7 +65,7 @@ public sealed class VerificationLoopCoordinator(IToolExecutor tools, IEventStore
         async Task<VerificationRunReport> VerifyAsync(int attempt)
         {
             if (!prior.OfType<VerificationStartedEvent>().Any(item => item.Attempt == attempt)) await PublishAsync(new VerificationStartedEvent(Id(), context.SessionId, context.TurnId, DateTimeOffset.UtcNow, attempt, policy.Scope, limit), cancellationToken).ConfigureAwait(false);
-            var arguments = new VerifyWorkspaceArguments(policy.Scope, Restore: policy.AllowRestore, ChangedPaths: mutations.ToSnapshot().Select(operation => operation.RelativePath).Distinct(StringComparer.Ordinal).ToArray());
+            var arguments = new VerifyWorkspaceArguments(policy.Scope, Restore: policy.AllowRestore, ChangedPaths: mutations.ToSnapshot().Select(operation => operation.RelativePath).Distinct(StringComparer.Ordinal).ToArray(), TimeoutSeconds: policy.TimeoutSeconds);
             var toolContext = new ToolExecutionContext(context.SessionId, context.TurnId, context.WorkingDirectory, context.WorkingDirectory, EffectiveMode(context), OutputFormat.Json, null, context.Model, agent.AgentId, context.Metadata,
                 AllowedTools: Names(SharpClawWorkflowMetadataKeys.AgentAllowedToolsJson), IsInteractive: context.IsInteractive, SourceKind: PermissionRequestSourceKind.Runtime,
                 TrustedPluginNames: Names(SharpClawWorkflowMetadataKeys.TrustedPluginNamesJson), TrustedMcpServerNames: Names(SharpClawWorkflowMetadataKeys.TrustedMcpServerNamesJson), PrimaryMode: context.PrimaryMode, MutationRecorder: mutations, ApprovalSettings: context.ApprovalSettings);

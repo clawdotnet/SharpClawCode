@@ -2,6 +2,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Infrastructure.Models;
+using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.IntegrationTests.Fixtures;
 using SharpClaw.Code.Memory.Abstractions;
 using SharpClaw.Code.Protocol.Models;
@@ -78,6 +79,57 @@ public sealed class VerificationServiceTests
         var action = () => service.VerifyAsync(new(fixture.Root), cancellation.Token);
         await action.Should().ThrowAsync<OperationCanceledException>();
     }
+
+    /// <summary>Warnings and incidental paths cannot suppress compilation repair by impersonating missing prerequisites.</summary>
+    [Theory]
+    [InlineData("/dotnet/sdk/10.0.100/Microsoft.Common.targets: warning NU1603: Package was not found.\nFile.cs(1,1): error CS1002: ; expected", VerificationFailureReason.BuildFailed)]
+    [InlineData("warning NU1603: project.assets.json package was not found.\nFile.cs(1,1): error CS1002: ; expected", VerificationFailureReason.BuildFailed)]
+    [InlineData("error NETSDK1004: Assets file is missing.", VerificationFailureReason.RestoreRequired)]
+    [InlineData("error NETSDK1045: Current SDK does not support the target framework.", VerificationFailureReason.SdkUnavailable)]
+    [InlineData("MSBUILD : error MSB4236: The SDK specified could not be found.", VerificationFailureReason.SdkUnavailable)]
+    public async Task Failure_classification_uses_error_codes(string output, VerificationFailureReason expected)
+    {
+        using var fixture = await DotNetFixtureWorkspace.CreateAsync();
+        using var provider = Provider(fixture, new ControlledRunner { Fail = true, Output = output });
+        (await provider.GetRequiredService<IVerificationService>().VerifyAsync(new(fixture.Root, VerificationScope.Build), CancellationToken.None)).Reason.Should().Be(expected);
+    }
+
+    /// <summary>Multi-targeted projects are invoked once and all TRX files are counted exactly once.</summary>
+    [Fact]
+    public async Task Multi_targeted_test_project_runs_once_per_project_path()
+    {
+        using var fixture = await DotNetFixtureWorkspace.CreateAsync(includeTests: true);
+        var project = Path.Combine(fixture.Root, "Fixture.Tests", "Fixture.Tests.csproj");
+        await File.WriteAllTextAsync(project, (await File.ReadAllTextAsync(project)).Replace("<TargetFramework>net10.0</TargetFramework>", "<TargetFrameworks>net10.0;net10.0-windows</TargetFrameworks>"));
+        await fixture.RestoreAsync();
+        using var provider = Provider(fixture);
+        var result = await provider.GetRequiredService<IVerificationService>().VerifyAsync(new(fixture.Root, VerificationScope.All), CancellationToken.None);
+        result.Status.Should().Be(VerificationStatus.Passed, result.Summary);
+        result.Tests!.Steps.Should().ContainSingle();
+        result.Tests.Total.Should().Be(2);
+        result.AffectedProjects.Should().OnlyHaveUniqueItems();
+    }
+
+    /// <summary>Workspace builds lasting more than ten seconds serialize instead of failing with an IO exception.</summary>
+    [Fact]
+    public async Task Workspace_lock_waits_beyond_filesystem_retry_window_and_is_bounded_by_request_timeout()
+    {
+        using var fixture = await DotNetFixtureWorkspace.CreateAsync();
+        using var provider = Provider(fixture, new ControlledRunner());
+        var service = provider.GetRequiredService<IVerificationService>();
+        var handle = await new LocalFileSystem().AcquireExclusiveFileLockAsync(Path.Combine(fixture.Root, ".sharpclaw", "locks", "verification.lock"));
+        try
+        {
+            (await service.VerifyAsync(new(fixture.Root, VerificationScope.Build, TimeoutSeconds: 1), CancellationToken.None)).Reason.Should().Be(VerificationFailureReason.Timeout);
+            var waiting = service.VerifyAsync(new(fixture.Root, VerificationScope.Build, TimeoutSeconds: 30), CancellationToken.None);
+            await Task.Delay(TimeSpan.FromSeconds(11));
+            waiting.IsCompleted.Should().BeFalse();
+            await handle.DisposeAsync();
+            handle = null!;
+            (await waiting).Status.Should().Be(VerificationStatus.Passed);
+        }
+        finally { if (handle is not null) await handle.DisposeAsync(); }
+    }
     private static ServiceProvider Provider(DotNetFixtureWorkspace fixture, IProcessRunner? runner = null)
     {
         var services = new ServiceCollection();
@@ -91,11 +143,12 @@ public sealed class VerificationServiceTests
         internal List<ProcessRunRequest> Requests { get; } = [];
         internal bool Fail { get; set; }
         internal bool Wait { get; set; }
+        internal string Output { get; set; } = "";
         public async Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken cancellationToken)
         {
             Requests.Add(request);
             if (Wait) await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
-            return new(Fail ? 1 : 0, "", "", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
+            return new(Fail ? 1 : 0, Output, "", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow);
         }
     }
 }

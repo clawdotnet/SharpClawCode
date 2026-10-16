@@ -8,23 +8,23 @@ Embedded hosts resolve `IDotNetWorkspaceTargetResolver` for non-executing discov
 
 Loading through MSBuild can execute custom design-time targets. A host must provide `IDotNetWorkspaceEvaluationAuthorization` through its execution permission policy for a cold load or structural reload. A null authorization permits valid cached queries only. Authorization is a host-side interface, never an agent-controlled Boolean in a tool argument.
 
-Compiler queries exclude project-supplied analyzer and source-generator references. Generated-symbol support is therefore limited to source documents already materialized by approved builds. This service is not an execution sandbox.
+Compiler queries retain generators from the installed .NET SDK and reference packs, including System.Text.Json, GeneratedRegex, and LoggerMessage. Trust roots come from the installed `dotnet` SDK inventory rather than project-controlled properties. Project/package-supplied analyzers and generators are excluded; results explicitly report that limitation. This service is not an execution sandbox.
 
 ## Cache and SDK behavior
 
-The lifecycle-owned cache retains up to four compilation contexts and serializes use/load/eviction to prevent stale/disposed workspace access. Source content refresh does not reevaluate MSBuild. Changed compile-item paths, project/solution/props/targets/configuration, and restore assets invalidate loading and require fresh authorization. Literal imported build files are fingerprinted recursively, including those outside the root. Property-driven or wildcard imports require fresh evaluation authorization on each call. No filesystem watchers or hidden package restore are used.
+The lifecycle-owned cache retains up to four compilation contexts and serializes use/load/eviction to prevent stale/disposed workspace access. Interactive authorization occurs outside the cache gate, allowing unrelated cached calls and shutdown to proceed while approval is pending. Source content refresh does not reevaluate MSBuild. Changed compile-item paths, project/solution/props/targets/configuration, and restore assets invalidate loading and require fresh authorization. Assets use the evaluated `ProjectAssetsFile` path, including redirected intermediate or artifacts output. Literal imported build files are fingerprinted recursively, including those outside the root. Property-driven or wildcard imports require fresh evaluation authorization on each call. Inaccessible unrelated subdirectories are skipped. Failed loads always dispose their build host. No filesystem watchers or hidden package restore are used.
 
 Roslyn 5.9 uses its bundled out-of-process build host to discover installed SDK/build tools and select the workspace SDK. A second in-process MSBuild Locator registration is unnecessary. The machine needs an appropriate .NET SDK and restored framework/package assets even when SharpClaw itself is a self-contained executable.
 
 Results use dependency-light Protocol records and generated JSON metadata. They distinguish target ambiguity, no target, permission denial, missing prerequisites, load failure, and partial loading. Symbol queries return candidates when names, overloaded signatures, or project contexts are ambiguous; selectors include container, kind, project/path, signature, and declaration position. Locations are one-based and paths are workspace-relative.
 
-Solution inspection reports evaluated project references, available restored target frameworks/package versions, and test-project heuristics. Multi-targeted projects identify the evaluated framework; one compilation does not imply all-framework semantic coverage.
+Solution inspection reports evaluated project references, available restored target frameworks/package versions, and evaluated `IsTestProject`, honoring an explicit false value. Only when that value is absent does a Microsoft.NET.Test.Sdk reference serve as a fallback. Multi-targeted projects identify the evaluated framework; one compilation does not imply all-framework semantic coverage.
 
 ## Semantic tools
 
 The standard agent tool registry exposes `dotnet_solution_inspect`, `csharp_symbol_resolve`, `csharp_find_references`, `csharp_type_hierarchy`, and `csharp_diagnostics`. Each publishes an explicit JSON input schema and generated protocol output. `name` is exact; `container`, `kind`, `project`, `path`, declaration position, and `signature` can disambiguate it. References use compiler identity across project boundaries. Hierarchy includes base types, implemented interfaces, derived types and interface implementations. Diagnostics support project, path, severity and code filters.
 
-Use `target`, `configuration` and `targetFramework` to choose compilation context. References and diagnostics accept `offset` and `limit` (1–200); results include total/truncation metadata. Hierarchy bounds each relationship collection with `limit` and reports truncation. Source generators and project analyzers remain excluded.
+Use `target`, `configuration` and `targetFramework` to choose compilation context. References and diagnostics accept `offset` and `limit` (1–200); results include total/truncation metadata. Hierarchy bounds each relationship collection with `limit` and reports truncation. SDK generators participate in source refresh and compiler diagnostics.
 
 Tool execution first applies the normal caller permissions. A cold or structurally invalidated workspace additionally asks for `ShellExecution` permission under the original tool name and caller context, publishing permission events. No tool argument can grant that permission. Read-only cold queries return `PermissionDenied`; an already approved valid snapshot supports read-only queries without evaluation.
 
@@ -32,6 +32,8 @@ Tool execution first applies the normal caller permissions. A cold or structural
 ## Reversible rename
 
 `csharp_rename_symbol` selects an exact symbol and takes `newName`. Roslyn computes the complete solution edit; the tool rejects invalid identifiers, unresolved conflicts, new compiler errors, generated documents, paths outside the canonical workspace, and disagreeing linked-document edits. It does not rename files or change string/comment occurrences.
+
+Rename validation includes SDK-generated members. Existing errors are matched by diagnostic code and mapped source location, with occurrence counts, so a renamed symbol in an error message does not itself create a new error. When custom generators are excluded, rename returns an explicit unverified error without edits; use deliberate file edits followed by build verification instead.
 
 The tool requires `FileSystemWrite` permission and follows existing workspace-write behavior. Cold evaluation additionally requires `ShellExecution`. A workspace lock serializes semantic writes across processes. Content preconditions run before the first write and again before each write, so external edits are preserved when detected. The complete successful edit set is recorded in chronological order for normal session checkpoint undo/redo. Source-only cache refresh observes rename, undo, redo and editor changes.
 

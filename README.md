@@ -38,6 +38,8 @@ It is designed for:
 - [.NET SDK 10](https://dotnet.microsoft.com/download/dotnet/10.0)
 - Optional: [GitHub CLI](https://cli.github.com/) for release and repo automation
 
+The framework-dependent NuGet CLI tool and aggregate SDK package also require the ASP.NET Core 10 shared runtime, which is included with the .NET 10 SDK. Self-contained native archives include the required runtimes.
+
 ### Native binary or NuGet tool
 
 Version-tag releases are configured to include native binaries for Windows, Linux, and macOS on x64 and ARM64. Extract a matching archive and run `sharpclaw version`; basic commands need no installed .NET runtime. Semantic project loading and build/test verification still require the .NET SDK and restored assets. See [binary distribution](docs/binary-distribution.md) for packaging and smoke gates.

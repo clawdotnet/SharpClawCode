@@ -47,7 +47,9 @@ public sealed class McpCommandHandler(
         transport.Validators.Add(result => { if (result.GetValueOrDefault<string>() is not ("stdio" or "http")) result.AddError("Transport must be stdio or http."); });
         var host = new Option<string>("--host") { DefaultValueFactory = _ => "127.0.0.1" };
         var port = new Option<int>("--port") { DefaultValueFactory = _ => 7346 };
-        var remote = new Option<bool>("--allow-remote") { Description = "Explicitly permit authenticated non-loopback HTTP." };
+        var remote = new Option<bool>("--allow-remote") { Description = "Reserved; use loopback with a local TLS reverse proxy for remote access." };
+        var allowedHosts = new Option<string[]>("--allowed-host") { Description = "Repeatable HTTPS DNS authority forwarded by a local TLS reverse proxy; requires a token." };
+        command.Options.Add(allowedHosts);
         command.Options.Add(transport); command.Options.Add(host); command.Options.Add(port); command.Options.Add(remote);
         var mutations = new Option<bool>("--allow-mutations") { Description = "Expose rename when the host permission mode permits writes." };
         command.Options.Add(mutations);
@@ -63,7 +65,7 @@ public sealed class McpCommandHandler(
                 parseResult.GetValue(mutations), context.ApprovalSettings, context.HostContext,
                 parseResult.GetValue(transport) == "http" ? SharpClaw.Code.Mcp.Models.SharpClawMcpTransport.Http : SharpClaw.Code.Mcp.Models.SharpClawMcpTransport.Stdio,
                 parseResult.GetValue(host)!, parseResult.GetValue(port), parseResult.GetValue(remote),
-                Environment.GetEnvironmentVariable("SHARPCLAW_MCP_TOKEN"), context.PrimaryMode), cancellationToken).ConfigureAwait(false);
+                Environment.GetEnvironmentVariable("SHARPCLAW_MCP_TOKEN"), context.PrimaryMode, parseResult.GetValue(allowedHosts)), cancellationToken).ConfigureAwait(false);
             return 0;
         });
         return command;

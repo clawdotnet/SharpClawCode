@@ -117,4 +117,6 @@ public static class SharpClawWorkflowMetadataKeys
     public const string VerificationMaxRepairIterations = "sharpclaw.verification.maxRepairIterations";
     /// <summary>Explicitly enables restore for automatic verification.</summary>
     public const string VerificationAllowRestore = "sharpclaw.verification.allowRestore";
+    /// <summary>Overrides the automatic verification per-step and lock-wait timeout, in seconds.</summary>
+    public const string VerificationTimeoutSeconds = "sharpclaw.verification.timeoutSeconds";
 }

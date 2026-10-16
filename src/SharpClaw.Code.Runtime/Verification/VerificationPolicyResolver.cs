@@ -12,10 +12,12 @@ public sealed class VerificationPolicyResolver(ISharpClawConfigService configura
         var restore = Boolean(SharpClawWorkflowMetadataKeys.VerificationAllowRestore, options.AllowRestore ?? false);
         var scope = options.Scope ?? VerificationScope.Affected;
         var repairs = options.MaxRepairIterations ?? 2;
+        var timeout = options.TimeoutSeconds ?? 600;
         if (metadata?.TryGetValue(SharpClawWorkflowMetadataKeys.VerificationScope, out var scopeText) == true && !Enum.TryParse(scopeText, true, out scope)) throw new ArgumentException("Invalid verification scope.");
         if (metadata?.TryGetValue(SharpClawWorkflowMetadataKeys.VerificationMaxRepairIterations, out var repairText) == true && !int.TryParse(repairText, out repairs)) throw new ArgumentException("Invalid verification repair budget.");
-        if (!Enum.IsDefined(scope) || repairs is < 0 or > 5) throw new ArgumentException("Verification repair budget must be 0–5 and scope must be supported.");
-        return new(enabled, scope, options.RunAfterMutatingTurn ?? true, repairs, restore);
+        if (metadata?.TryGetValue(SharpClawWorkflowMetadataKeys.VerificationTimeoutSeconds, out var timeoutText) == true && !int.TryParse(timeoutText, out timeout)) throw new ArgumentException("Invalid verification timeout.");
+        if (!Enum.IsDefined(scope) || repairs is < 0 or > 5 || timeout is < 1 or > 3600) throw new ArgumentException("Verification repair budget must be 0–5, timeout 1–3600 seconds, and scope must be supported.");
+        return new(enabled, scope, options.RunAfterMutatingTurn ?? true, repairs, restore, timeout);
         bool Boolean(string key, bool fallback) => metadata?.TryGetValue(key, out var value) == true ? bool.TryParse(value, out var parsed) ? parsed : throw new ArgumentException("Invalid boolean metadata: " + key) : fallback;
     }
 }

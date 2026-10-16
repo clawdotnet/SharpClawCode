@@ -47,7 +47,7 @@ jobs:
         run: dotnet pack SharpClawCode.Packages.slnf --no-build --configuration Release --output ./nupkg -p:Version=${{ steps.version.outputs.value }} -p:PackageVersion=${{ steps.version.outputs.value }}
       - name: Verify package installability
         shell: pwsh
-        run: ./.github/scripts/Test-Packages.ps1 -PackageVersion ${{ steps.version.outputs.value }}
+        run: ./.github/scripts/Test-Packages.ps1 -PackageVersion ${{ steps.version.outputs.value }} -PackageSource ./nupkg
       - uses: actions/upload-artifact@v7
         with:
           name: release-packages

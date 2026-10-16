@@ -35,6 +35,7 @@ public sealed class AutomaticVerificationTests
         var result = await runtime.RunPromptAsync(Request(fixture.Root, budget), CancellationToken.None);
         agent.Calls.Should().Be(expectedCalls);
         verification.Calls.Should().Be(expectedCalls);
+        verification.Requests.Should().OnlyContain(request => request.TimeoutSeconds == 900);
         result.Verification!.Status.Should().Be(VerificationStatus.Failed);
         result.Verification.RepairAttempts.Should().Be(budget);
         result.Session.State.Should().Be(SessionLifecycleState.Failed);
@@ -139,7 +140,7 @@ public sealed class AutomaticVerificationTests
     }
 
     private static RunPromptRequest Request(string root, int budget) => new("make the change", null, root, PermissionMode.DangerFullAccess, OutputFormat.Json,
-        new() { [SharpClawWorkflowMetadataKeys.VerificationEnabled] = "true", [SharpClawWorkflowMetadataKeys.VerificationMaxRepairIterations] = budget.ToString() }, AgentId: "fixture-agent", IsInteractive: false);
+        new() { [SharpClawWorkflowMetadataKeys.VerificationEnabled] = "true", [SharpClawWorkflowMetadataKeys.VerificationMaxRepairIterations] = budget.ToString(), [SharpClawWorkflowMetadataKeys.VerificationTimeoutSeconds] = "900" }, AgentId: "fixture-agent", IsInteractive: false);
     private static ServiceProvider Provider(RecordingAgent agent, FixedVerification verification)
     {
         var services = new ServiceCollection();
@@ -181,9 +182,11 @@ public sealed class AutomaticVerificationTests
     {
         internal int Calls { get; private set; }
         internal int PassAt { get; set; } = int.MaxValue;
+        internal List<VerificationRequest> Requests { get; } = [];
         public Task<VerificationRunReport> VerifyAsync(VerificationRequest request, CancellationToken cancellationToken)
         {
             Calls++;
+            Requests.Add(request);
             var status = Calls >= PassAt ? VerificationStatus.Passed : VerificationStatus.Failed;
             var now = DateTimeOffset.UtcNow;
             return Task.FromResult(new VerificationRunReport(request.WorkspaceRoot, "Fixture.csproj", request.Scope, status, status == VerificationStatus.Passed ? VerificationFailureReason.None : VerificationFailureReason.BuildFailed, now, now, 0, ["Fixture.csproj"], new(status, [], [new("Source.cs", 1, 1, "CS1002", "error", "; expected", "Fixture.csproj")]), null, null, "fixture check"));

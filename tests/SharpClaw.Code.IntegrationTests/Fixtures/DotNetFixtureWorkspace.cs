@@ -37,14 +37,19 @@ internal sealed class DotNetFixtureWorkspace : IDisposable
                 var solution = Path.Combine(fixture.Root, "Fixture.slnx");
                 await File.WriteAllTextAsync(solution, (await File.ReadAllTextAsync(solution)).Replace("</Solution>", "  <Project Path=\"Fixture.Tests/Fixture.Tests.csproj\" />\n</Solution>", StringComparison.Ordinal));
             }
-            var feed = Path.Combine(fixture.Root, "empty-feed");
-            Directory.CreateDirectory(feed);
-            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
-            var result = await new ProcessRunner(new SystemClock()).RunAsync(new ProcessRunRequest("dotnet", ["restore", "Fixture.slnx", "--source", feed, "-p:NuGetAudit=false", "--disable-build-servers", "-m:1", "-nodeReuse:false"], fixture.Root, null), timeout.Token);
-            if (result.ExitCode != 0) throw new InvalidOperationException(result.StandardOutput + result.StandardError);
+            await fixture.RestoreAsync();
             return fixture;
         }
         catch { fixture.Dispose(); throw; }
+    }
+
+    internal async Task RestoreAsync()
+    {
+        var feed = Path.Combine(Root, "empty-feed");
+        Directory.CreateDirectory(feed);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+        var result = await new ProcessRunner(new SystemClock()).RunAsync(new ProcessRunRequest("dotnet", ["restore", "Fixture.slnx", "--source", feed, "-p:NuGetAudit=false", "--disable-build-servers", "-m:1", "-nodeReuse:false"], Root, null), timeout.Token);
+        if (result.ExitCode != 0) throw new InvalidOperationException(result.StandardOutput + result.StandardError);
     }
 
     public void Dispose()

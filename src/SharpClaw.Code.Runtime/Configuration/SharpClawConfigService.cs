@@ -131,12 +131,12 @@ public sealed class SharpClawConfigService(
             new ExternalAgentsConfig(),
             new SkillPacksConfig(),
             new WorkItemsConfig(),
-            new VerificationOptions(false, VerificationScope.Affected, true, 2, false));
+            new VerificationOptions(false, VerificationScope.Affected, true, 2, false, 600));
 
     private static VerificationOptions MergeVerification(VerificationOptions? user, VerificationOptions? workspace)
         => new(workspace?.Enabled ?? user?.Enabled ?? false, workspace?.Scope ?? user?.Scope ?? VerificationScope.Affected,
             workspace?.RunAfterMutatingTurn ?? user?.RunAfterMutatingTurn ?? true, workspace?.MaxRepairIterations ?? user?.MaxRepairIterations ?? 2,
-            workspace?.AllowRestore ?? user?.AllowRestore ?? false);
+            workspace?.AllowRestore ?? user?.AllowRestore ?? false, workspace?.TimeoutSeconds ?? user?.TimeoutSeconds ?? 600);
 
     private static ExternalAgentsConfig MergeExternalAgents(ExternalAgentsConfig? user, ExternalAgentsConfig? workspace)
     {

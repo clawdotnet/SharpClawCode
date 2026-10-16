@@ -23,8 +23,8 @@ public sealed class TrxTestResultParser : ITestResultParser
             if (skipped < 0 || results.Length < total) throw new XmlException("TRX results are incomplete.");
             var cases = results.OrderBy(element => string.Equals(element.Attribute("outcome")?.Value, "Failed", StringComparison.OrdinalIgnoreCase) ? 0 : 1).Take(500).Select(element => new VerificationTestCaseResult(projectPath, targetFramework, element.Attribute("testName")?.Value ?? "(unnamed)", element.Attribute("outcome")?.Value ?? "Unknown", Text(element, "Message"), Text(element, "StackTrace"))).ToArray();
             var nonPassing = results.Any(element => element.Attribute("outcome")?.Value is not ("Passed" or "NotExecuted" or "Inconclusive"));
-            var status = failed > 0 || nonPassing || total == 0 ? VerificationStatus.Failed : VerificationStatus.Passed;
-            return new(status, status == VerificationStatus.Passed ? VerificationFailureReason.None : VerificationFailureReason.TestFailed, total, passed, failed, skipped, cases, [], []);
+            var status = failed > 0 || nonPassing ? VerificationStatus.Failed : total == 0 ? VerificationStatus.Skipped : VerificationStatus.Passed;
+            return new(status, status == VerificationStatus.Failed ? VerificationFailureReason.TestFailed : total == 0 ? VerificationFailureReason.NoTestProjects : VerificationFailureReason.None, total, passed, failed, skipped, cases, [], []);
         }
         catch (Exception error) when (error is XmlException or InvalidOperationException)
         {

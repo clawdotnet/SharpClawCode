@@ -17,6 +17,7 @@ public sealed partial class DotNetWorkspaceSemanticService
         using var lease = await cache.AcquireAsync(request, authorization, cancellationToken).ConfigureAwait(false);
         var (resolution, candidates) = await ResolveAsync(lease, arguments.Query(), cancellationToken).ConfigureAwait(false);
         if (resolution.Symbol is null) return new(resolution, arguments.NewName, [], ["Rename requires one exact source symbol."]);
+        if (lease.Snapshot!.ExcludedAnalyzers) return new(resolution, arguments.NewName, [], ["Rename cannot be verified while project/package source generators are excluded. Use explicit edits followed by build verification."]);
         var original = lease.Snapshot!.Solution;
         var renamed = await Renamer.RenameSymbolAsync(original, candidates[0].Symbol, new SymbolRenameOptions(false, false, false, false), arguments.NewName, cancellationToken).ConfigureAwait(false);
         var changes = new Dictionary<string, CSharpRenameChange>(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
@@ -44,9 +45,38 @@ public sealed partial class DotNetWorkspaceSemanticService
         {
             var oldCompilation = await original.GetProject(project.Id)!.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
             var newCompilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
-            var existing = oldCompilation?.GetDiagnostics(cancellationToken).Where(item => item.Severity == DiagnosticSeverity.Error).Select(item => item.Id + ":" + item.GetMessage()).ToHashSet(StringComparer.Ordinal) ?? [];
-            if (newCompilation?.GetDiagnostics(cancellationToken).Any(item => item.Severity == DiagnosticSeverity.Error && !existing.Contains(item.Id + ":" + item.GetMessage())) == true) return new(resolution, arguments.NewName, [], ["Rename would introduce compiler errors; no changes were applied."]);
+            if (oldCompilation is null || newCompilation is null) return new(resolution, arguments.NewName, [], ["Rename could not be verified by the compiler; no changes were applied."]);
+            var existing = new Dictionary<(string Code, string Path, int Start), int>();
+            foreach (var diagnostic in oldCompilation.GetDiagnostics(cancellationToken).Where(item => item.Severity == DiagnosticSeverity.Error))
+            {
+                var position = diagnostic.Location.SourceSpan.Start;
+                if (diagnostic.Location.SourceTree is { } oldTree && newCompilation.SyntaxTrees.FirstOrDefault(tree => tree.FilePath == oldTree.FilePath) is { } newTree)
+                {
+                    var changesToText = newTree.GetChanges(oldTree);
+                    position = MapPosition(position, changesToText);
+                }
+                var key = (diagnostic.Id, diagnostic.Location.SourceTree?.FilePath ?? "", position);
+                existing[key] = existing.GetValueOrDefault(key) + 1;
+            }
+            foreach (var diagnostic in newCompilation.GetDiagnostics(cancellationToken).Where(item => item.Severity == DiagnosticSeverity.Error))
+            {
+                var key = (diagnostic.Id, diagnostic.Location.SourceTree?.FilePath ?? "", diagnostic.Location.SourceSpan.Start);
+                if (existing.GetValueOrDefault(key) == 0) return new(resolution, arguments.NewName, [], ["Rename would introduce compiler errors; no changes were applied."]);
+                existing[key]--;
+            }
         }
         return new(resolution, arguments.NewName, changes.Values.OrderBy(change => change.Path, StringComparer.Ordinal).ToArray(), []);
+    }
+
+    private static int MapPosition(int position, IEnumerable<Microsoft.CodeAnalysis.Text.TextChange> changes)
+    {
+        var delta = 0;
+        foreach (var change in changes.OrderBy(change => change.Span.Start))
+        {
+            if (position < change.Span.Start) break;
+            if (position < change.Span.End) return change.Span.Start + delta;
+            delta += (change.NewText?.Length ?? 0) - change.Span.Length;
+        }
+        return position + delta;
     }
 }

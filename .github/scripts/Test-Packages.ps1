@@ -1,26 +1,30 @@
 param(
     [string]$PackageVersion = "0.1.0-preview.1",
-    [string]$Configuration = "Release"
+    [string]$Configuration = "Release",
+    [string]$PackageSource
 )
 
 $ErrorActionPreference = "Stop"
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot "../..")).Path
 $scratchRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("sharpclaw-package-smoke-" + [Guid]::NewGuid().ToString("N"))
-$packageOutput = Join-Path $scratchRoot "packages"
+$packageOutput = if ($PackageSource) { (Resolve-Path $PackageSource).Path } else { Join-Path $scratchRoot "packages" }
 $toolPath = Join-Path $scratchRoot "tool"
 $consumerPath = Join-Path $scratchRoot "consumer"
 $previousNugetPackages = $env:NUGET_PACKAGES
 $nugetConfigPath = Join-Path $scratchRoot "NuGet.Config"
 
 try {
-    New-Item -ItemType Directory -Path $packageOutput -Force | Out-Null
-    & dotnet pack (Join-Path $repositoryRoot "SharpClawCode.Packages.slnf") --configuration $Configuration --output $packageOutput -p:PackageVersion=$PackageVersion
-    if ($LASTEXITCODE -ne 0) { throw "Package creation failed." }
+    if (!$PackageSource) {
+        New-Item -ItemType Directory -Path $packageOutput -Force | Out-Null
+        & dotnet pack (Join-Path $repositoryRoot "SharpClawCode.Packages.slnf") --configuration $Configuration --output $packageOutput -p:Version=$PackageVersion -p:PackageVersion=$PackageVersion
+        if ($LASTEXITCODE -ne 0) { throw "Package creation failed." }
+    }
 
     $packages = @(Get-ChildItem $packageOutput -Filter "*.nupkg" | Where-Object { $_.Name -notlike "*.symbols.nupkg" })
     $unexpected = @($packages | Where-Object { $_.BaseName -notlike "SharpClaw.Code*" })
     if ($packages.Count -ne 22) { throw "Expected 22 production packages, found $($packages.Count)." }
     if ($unexpected.Count -gt 0) { throw "Unexpected packages: $($unexpected.Name -join ', ')." }
+    if (@($packages | Where-Object { $_.Name -notlike "*.$PackageVersion.nupkg" }).Count -gt 0) { throw "Package source contains an unexpected version." }
 
     & dotnet new console --framework net10.0 --output $consumerPath --no-restore
     if ($LASTEXITCODE -ne 0) { throw "Could not create package smoke consumer." }

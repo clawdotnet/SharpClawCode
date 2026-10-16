@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Xml;
 using System.Xml.Linq;
 using System.Text;
+using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.MSBuild;
 using Microsoft.CodeAnalysis.Text;
@@ -14,43 +15,70 @@ namespace SharpClaw.Code.Memory.Services;
 
 /// <summary>
 /// Owns a bounded semantic cache. One async gate protects loading, queries, refresh, and eviction,
-/// so a workspace can never be disposed while in use. Cached source-only refresh does not run generators.
+/// so a workspace can never be disposed while in use. Human authorization never holds this gate.
+/// Only installed SDK generators are retained; project/package-supplied analyzers are excluded.
 /// </summary>
-internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPathService pathService, IDotNetWorkspaceTargetResolver targetResolver) : IDisposable
+internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPathService pathService, IDotNetWorkspaceTargetResolver targetResolver, IProcessRunner processes) : IDisposable
 {
     private const int Capacity = 4;
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly Dictionary<string, Snapshot> entries = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, TaskCompletionSource> pendingLoads = new(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private bool disposed;
 
     internal async Task<Lease> AcquireAsync(DotNetWorkspaceRequest request, IDotNetWorkspaceEvaluationAuthorization? authorization, CancellationToken cancellationToken)
     {
+        var target = await targetResolver.ResolveAsync(request, cancellationToken).ConfigureAwait(false);
+        var key = string.Join('\0', target.WorkspaceRoot, target.TargetPath, request.Configuration, request.TargetFramework);
+        var authorized = false;
+        TaskCompletionSource? ownedLoad = null;
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             ObjectDisposedException.ThrowIf(disposed, this);
-            var target = await targetResolver.ResolveAsync(request, cancellationToken).ConfigureAwait(false);
             if (target.Status != DotNetWorkspaceStatus.Ready)
             {
                 return new Lease(target, null, gate);
             }
 
-            var key = string.Join('\0', target.WorkspaceRoot, target.TargetPath, request.Configuration, request.TargetFramework);
-            entries.TryGetValue(key, out var snapshot);
-            var fingerprint = await FingerprintAsync(target, snapshot, cancellationToken).ConfigureAwait(false);
-            if (snapshot is not null && (!snapshot.Reusable || !string.Equals(snapshot.Fingerprint, fingerprint, StringComparison.Ordinal)))
+            Snapshot? snapshot;
+            string fingerprint;
+            while (true)
             {
-                entries.Remove(key);
-                snapshot.Workspace.Dispose();
-                snapshot = null;
+                ObjectDisposedException.ThrowIf(disposed, this);
+                entries.TryGetValue(key, out snapshot);
+                fingerprint = await FingerprintAsync(target, snapshot, cancellationToken).ConfigureAwait(false);
+                if (snapshot is not null && (!snapshot.Reusable || !string.Equals(snapshot.Fingerprint, fingerprint, StringComparison.Ordinal)))
+                {
+                    entries.Remove(key);
+                    snapshot.Workspace.Dispose();
+                    snapshot = null;
+                }
+                if (snapshot is not null || authorized || authorization is null) break;
+                if (pendingLoads.TryGetValue(key, out var pending))
+                {
+                    gate.Release();
+                    try { await pending.Task.WaitAsync(cancellationToken).ConfigureAwait(false); }
+                    finally { await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false); }
+                    cancellationToken.ThrowIfCancellationRequested();
+                    continue;
+                }
+                ownedLoad = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                pendingLoads[key] = ownedLoad;
+                gate.Release();
+                try { authorized = await authorization.AuthorizeAsync(request with { WorkspaceRoot = target.WorkspaceRoot, Target = target.TargetPath }, cancellationToken).ConfigureAwait(false); }
+                finally { await gate.WaitAsync(CancellationToken.None).ConfigureAwait(false); }
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!authorized)
+                {
+                    return new Lease(target with { Status = DotNetWorkspaceStatus.PermissionDenied, Message = "MSBuild project evaluation requires execution authorization; no valid approved snapshot is cached." }, null, gate);
+                }
+                // Recheck after approval: another session may have loaded or disposed this cache.
             }
 
             if (snapshot is null)
             {
-                if (authorization is null || !await authorization.AuthorizeAsync(request with { WorkspaceRoot = target.WorkspaceRoot, Target = target.TargetPath }, cancellationToken).ConfigureAwait(false))
-                {
-                    return new Lease(target with { Status = DotNetWorkspaceStatus.PermissionDenied, Message = "MSBuild project evaluation requires execution authorization; no valid approved snapshot is cached." }, null, gate);
-                }
+                if (!authorized) return new Lease(target with { Status = DotNetWorkspaceStatus.PermissionDenied, Message = "MSBuild project evaluation requires execution authorization; no valid approved snapshot is cached." }, null, gate);
 
                 if (entries.Count == Capacity)
                 {
@@ -63,6 +91,7 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
                 if (!string.IsNullOrWhiteSpace(request.TargetFramework)) properties["TargetFramework"] = request.TargetFramework;
                 var workspace = MSBuildWorkspace.Create(properties);
                 var messages = new ConcurrentQueue<string>();
+                var stored = false;
                 using var failedHandler = workspace.RegisterWorkspaceFailedHandler(args => messages.Enqueue(args.Diagnostic.ToString()));
                 try
                 {
@@ -70,50 +99,54 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
                     var solution = target.TargetPath!.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
                         ? (await workspace.OpenProjectAsync(target.TargetPath, cancellationToken: cancellationToken).ConfigureAwait(false)).Solution
                         : await workspace.OpenSolutionAsync(target.TargetPath, cancellationToken: cancellationToken).ConfigureAwait(false);
+                    var trustedRoots = await DotNetProjectEvaluation.TrustedAnalyzerRootsAsync(processes, cancellationToken).ConfigureAwait(false);
+                    var evaluations = new Dictionary<ProjectId, DotNetProjectEvaluation>();
+                    var excludedAnalyzers = false;
                     foreach (var project in solution.Projects.ToArray())
                     {
                         if (project.FilePath is null || !DotNetWorkspaceTargetResolver.IsWithin(target.WorkspaceRoot, pathService.GetCanonicalFullPath(project.FilePath)))
                         {
                             throw new InvalidOperationException("A referenced project is outside the workspace boundary.");
                         }
-                        using var reader = XmlReader.Create(new StringReader(await fileSystem.ReadAllTextIfExistsAsync(project.FilePath, cancellationToken).ConfigureAwait(false) ?? ""), new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null });
-                        var projectXml = XDocument.Load(reader);
-                        if (projectXml.Root?.Attribute("Sdk") is not null && !fileSystem.FileExists(Path.Combine(Path.GetDirectoryName(project.FilePath)!, "obj", "project.assets.json")))
+                        var evaluation = await DotNetProjectEvaluation.ReadAsync(processes, project.FilePath, request.Configuration, request.TargetFramework, cancellationToken).ConfigureAwait(false);
+                        evaluations.Add(project.Id, evaluation);
+                        if (evaluation.AssetsPath.Length != 0 && !fileSystem.FileExists(evaluation.AssetsPath))
                         {
                             messages.Enqueue("Restore required: project.assets.json is missing for " + project.FilePath);
                         }
-                        // Compiler queries never execute project-supplied analyzers or source generators.
-                        solution = solution.WithProjectAnalyzerReferences(project.Id, []);
+                        var trusted = project.AnalyzerReferences.Where(reference => DotNetProjectEvaluation.IsTrustedAnalyzer(reference.FullPath, trustedRoots, pathService)).ToArray();
+                        excludedAnalyzers |= trusted.Length != project.AnalyzerReferences.Count;
+                        solution = solution.WithProjectAnalyzerReferences(project.Id, trusted);
                     }
 
                     var status = messages.Count == 0 ? DotNetWorkspaceStatus.Ready : ClassifyFailure(string.Join('\n', messages), partial: true);
                     if (!solution.Projects.Any() || status is DotNetWorkspaceStatus.RestoreRequired or DotNetWorkspaceStatus.SdkUnavailable)
                     {
-                        workspace.Dispose();
                         return new Lease(target with { Status = status == DotNetWorkspaceStatus.Ready ? DotNetWorkspaceStatus.LoadFailed : status, Message = string.Join('\n', messages) }, null, gate);
                     }
 
-                    snapshot = new Snapshot(workspace, solution, status, messages.ToArray(), fingerprint);
+                    if (excludedAnalyzers) messages.Enqueue("Project/package-supplied analyzers and source generators are excluded; diagnostics may be incomplete and semantic rename is disabled. Installed SDK generators are enabled.");
+                    snapshot = new Snapshot(workspace, solution, status, messages.ToArray(), fingerprint, evaluations, excludedAnalyzers);
                     snapshot.Fingerprint = await FingerprintAsync(target, snapshot, cancellationToken).ConfigureAwait(false);
                     entries.Add(key, snapshot);
+                    stored = true;
                 }
                 catch (OperationCanceledException)
                 {
-                    workspace.Dispose();
                     throw;
                 }
-                catch (Exception exception) when (exception is IOException or InvalidOperationException or ArgumentException or XmlException || exception.GetType().Name == "RemoteInvocationException")
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException or XmlException or JsonException || exception.GetType().Name is "RemoteInvocationException" or "ConnectionLostException")
                 {
-                    workspace.Dispose();
                     return new Lease(target with { Status = ClassifyFailure(exception.Message), Message = exception.Message }, null, gate);
                 }
+                finally { if (!stored) workspace.Dispose(); }
             }
 
             try
             {
                 await RefreshSourcesAsync(target.WorkspaceRoot, snapshot, cancellationToken).ConfigureAwait(false);
             }
-            catch (Exception exception) when (exception is IOException or InvalidOperationException)
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or InvalidOperationException)
             {
                 entries.Remove(key);
                 snapshot.Workspace.Dispose();
@@ -126,6 +159,14 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
         {
             gate.Release();
             throw;
+        }
+        finally
+        {
+            if (ownedLoad is not null)
+            {
+                pendingLoads.TryRemove(key, out _);
+                ownedLoad.TrySetResult();
+            }
         }
     }
 
@@ -162,16 +203,16 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
         }
         if (snapshot is not null)
         {
-            foreach (var project in snapshot.Solution.Projects)
+            foreach (var evaluation in snapshot.Evaluations.Values)
             {
-                var assets = Path.Combine(Path.GetDirectoryName(project.FilePath!)!, "obj", "project.assets.json");
-                if (fileSystem.FileExists(assets)) inputs.Add(assets);
+                if (evaluation.AssetsPath.Length != 0) inputs.Add(evaluation.AssetsPath);
             }
         }
         if (snapshot is not null)
         {
             var externalInputs = snapshot.Solution.Projects.SelectMany(project => project.Documents.Select(document => document.FilePath)
-                .Concat(project.MetadataReferences.OfType<PortableExecutableReference>().Select(reference => reference.FilePath)))
+                .Concat(project.MetadataReferences.OfType<PortableExecutableReference>().Select(reference => reference.FilePath))
+                .Concat(project.AnalyzerReferences.Select(reference => reference.FullPath)))
                 .OfType<string>().Where(path => !DotNetWorkspaceTargetResolver.IsWithin(target.WorkspaceRoot, pathService.GetCanonicalFullPath(path))).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal);
             foreach (var path in externalInputs)
             {
@@ -226,11 +267,15 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
         {
             current = pathService.GetCanonicalFullPath(current);
             if (!DotNetWorkspaceTargetResolver.IsWithin(root, current) || !visited.Add(current)) continue;
-            foreach (var directory in fileSystem.EnumerateDirectories(current))
+            string[] directories;
+            string[] files;
+            try { directories = fileSystem.EnumerateDirectories(current).ToArray(); files = fileSystem.EnumerateFiles(current, "*").ToArray(); }
+            catch (Exception error) when (error is UnauthorizedAccessException or IOException) { continue; }
+            foreach (var directory in directories)
             {
                 if (Path.GetFileName(directory).ToLowerInvariant() is not ("bin" or "obj" or ".git" or ".sharpclaw" or "node_modules")) pending.Push(directory);
             }
-            foreach (var file in fileSystem.EnumerateFiles(current, "*"))
+            foreach (var file in files)
             {
                 if (Path.GetExtension(file).ToLowerInvariant() is ".cs" or ".csproj" or ".sln" or ".slnx" or ".props" or ".targets" or ".editorconfig"
                     || Path.GetFileName(file).ToLowerInvariant() is "global.json" or "packages.lock.json" or "nuget.config") yield return file;
@@ -254,16 +299,19 @@ internal sealed class DotNetSemanticWorkspaceCache(IFileSystem fileSystem, IPath
             disposed = true;
             foreach (var snapshot in entries.Values) snapshot.Workspace.Dispose();
             entries.Clear();
+            foreach (var pending in pendingLoads.Values) pending.TrySetResult();
         }
         finally { gate.Release(); }
     }
 
-    internal sealed class Snapshot(MSBuildWorkspace workspace, Solution solution, DotNetWorkspaceStatus status, string[] messages, string fingerprint)
+    internal sealed class Snapshot(MSBuildWorkspace workspace, Solution solution, DotNetWorkspaceStatus status, string[] messages, string fingerprint, Dictionary<ProjectId, DotNetProjectEvaluation> evaluations, bool excludedAnalyzers)
     {
         internal MSBuildWorkspace Workspace { get; } = workspace;
         internal Solution Solution { get; set; } = solution;
         internal DotNetWorkspaceStatus Status { get; } = status;
         internal string[] Messages { get; } = messages;
+        internal Dictionary<ProjectId, DotNetProjectEvaluation> Evaluations { get; } = evaluations;
+        internal bool ExcludedAnalyzers { get; } = excludedAnalyzers;
         internal string Fingerprint { get; set; } = fingerprint;
         internal bool Reusable { get; set; } = true;
         internal DateTimeOffset LastUsedAtUtc { get; set; } = DateTimeOffset.UtcNow;

@@ -21,7 +21,7 @@ Extract the archive and run it directly:
 ./sharpclaw mcp serve --cwd ./workspace
 ```
 
-Basic commands run without an installed .NET runtime. Roslyn/MSBuild semantic loading and build/test verification require a compatible installed .NET SDK and restored project assets. Restore remains explicit. Provider-dependent prompts also need provider configuration. The NuGet CLI tool retains its normal framework-dependent installation behavior.
+Basic commands run without an installed .NET runtime. Roslyn/MSBuild semantic loading and build/test verification require a compatible installed .NET SDK and restored project assets. Restore remains explicit. Provider-dependent prompts also need provider configuration. The NuGet CLI tool and aggregate SDK package are framework-dependent and require both .NET 10 and ASP.NET Core 10 shared runtimes; the .NET 10 SDK includes both. Native archives include both runtimes.
 
 The single-file bundle includes native libraries and all Roslyn helper content, extracted by the .NET host as required. Publishing is self-contained with trimming and AOT disabled. Release-only `PackAsTool=false` resolves the SDK's single-file/tool packaging conflict without changing ordinary tool packages. Assembly and informational versions receive the tag identity.
 

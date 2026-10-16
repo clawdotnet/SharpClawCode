@@ -24,10 +24,10 @@ Prompt assembly never builds a workspace. It retains configured LSP metadata and
 Automatic verification is disabled by default. Add this to workspace/user JSONC to enable it:
 
 ```json
-{"verification":{"enabled":true,"scope":"affected","runAfterMutatingTurn":true,"maxRepairIterations":2,"allowRestore":false}}
+{"verification":{"enabled":true,"scope":"affected","runAfterMutatingTurn":true,"maxRepairIterations":2,"allowRestore":false,"timeoutSeconds":600}}
 ```
 
-Workspace fields override user fields. Request metadata overrides those defaults with `sharpclaw.verification.enabled`, `sharpclaw.verification.scope`, `sharpclaw.verification.maxRepairIterations`, and `sharpclaw.verification.allowRestore`. Invalid booleans, scopes and budgets fail validation. Budgets are 0–5; default 2 means one initial verification plus at most two agent repairs and their checks.
+Workspace fields override user fields. Request metadata overrides those defaults with `sharpclaw.verification.enabled`, `sharpclaw.verification.scope`, `sharpclaw.verification.maxRepairIterations`, `sharpclaw.verification.allowRestore`, and `sharpclaw.verification.timeoutSeconds`. Invalid values fail validation. Budgets are 0–5; default 2 means one initial verification plus at most two agent repairs and their checks. Automatic checks default to 600 seconds per step and for lock acquisition, configurable from 1 to 3600 seconds. Explicit verify calls retain their 120-second default unless overridden. Lock contention waits until acquisition, request timeout, or caller cancellation. Test project classification honors evaluated `IsTestProject=false`; a valid empty TRX is reported as skipped. Each multi-targeted project is invoked once and all its TRX files are counted once. Prompt diagnostics retain the latest actual build result across test-only and prerequisite failures.
 
 The loop runs after recorded source/project/build-input mutations in build mode. Plan, spec and research modes do not trigger it. Shell, plugin and external-agent writes without mutation records are outside initial automatic detection. No recorded mutation means no automatic check. Permission denial, missing prerequisites and skipped checks do not trigger agent repair; only build/test failures do.
 

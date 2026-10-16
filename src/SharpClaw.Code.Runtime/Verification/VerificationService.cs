@@ -35,7 +35,22 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
         if (target.Status != DotNetWorkspaceStatus.Ready) return Finish(target.Status == DotNetWorkspaceStatus.NoTarget ? VerificationStatus.Skipped : VerificationStatus.Failed, Map(target.Status), target.Message ?? target.Status.ToString());
         var context = new ToolExecutionContext("", "", root, root, PermissionMode.DangerFullAccess, OutputFormat.Json, null);
         var resolver = new WorkspacePathResolver(paths);
-        await using var workspaceLock = await files.AcquireExclusiveFileLockAsync(resolver.ResolvePath(context, ".sharpclaw/locks/verification.lock"), cancellationToken).ConfigureAwait(false);
+        IAsyncDisposable workspaceLock;
+        using (var lockTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken))
+        {
+            lockTimeout.CancelAfter(TimeSpan.FromSeconds(request.TimeoutSeconds));
+            try
+            {
+                while (true)
+                {
+                    try { workspaceLock = await files.AcquireExclusiveFileLockAsync(resolver.ResolvePath(context, ".sharpclaw/locks/verification.lock"), lockTimeout.Token).ConfigureAwait(false); break; }
+                    catch (IOException) { await Task.Delay(50, lockTimeout.Token).ConfigureAwait(false); }
+                }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+            { return Finish(VerificationStatus.Failed, VerificationFailureReason.Timeout, "Timed out waiting for another workspace verification to finish."); }
+        }
+        await using var lockHandle = workspaceLock;
         if (request.Restore)
         {
             restore = await RunAsync("restore", targetName!, ["restore", targetName!, "--nologo", "--disable-build-servers"], root, request.TimeoutSeconds, cancellationToken).ConfigureAwait(false);
@@ -64,7 +79,8 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
             }
             catch (Exception error) when (error is IOException or InvalidOperationException or Win32Exception) { changed = null; }
         }
-        var selection = request.Scope == VerificationScope.Affected ? affected.Resolve(workspace, changed) : new AffectedProjectSelection(workspace.Projects.Select(project => project.Path).ToArray(), true);
+        var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
+        var selection = request.Scope == VerificationScope.Affected ? affected.Resolve(workspace, changed) : new AffectedProjectSelection(workspace.Projects.Select(project => project.Path).Distinct(comparer).ToArray(), true);
         selected = selection.Projects;
         if (request.Scope != VerificationScope.Tests)
         {
@@ -87,7 +103,7 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
             build = new(VerificationStatus.Passed, steps.ToArray(), allDiagnostics.Distinct().ToArray());
         }
         if (request.Scope == VerificationScope.Build) return Finish(VerificationStatus.Passed, VerificationFailureReason.None, "Build passed.");
-        var testProjects = workspace.Projects.Where(project => project.IsTestProject && selected.Contains(project.Path, OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal)).ToArray();
+        var testProjects = workspace.Projects.Where(project => project.IsTestProject && selected.Contains(project.Path, comparer)).DistinctBy(project => project.Path, comparer).ToArray();
         if (testProjects.Length == 0)
         {
             tests = new(VerificationStatus.Skipped, VerificationFailureReason.NoTestProjects, 0, 0, 0, 0, [], [], ["No test projects were selected."]);
@@ -100,7 +116,8 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
         {
             foreach (var project in testProjects)
             {
-                if (request.Scope == VerificationScope.Tests && (project.OutputPath is null || !files.FileExists(resolver.ResolvePath(context, project.OutputPath))))
+                if (request.Scope == VerificationScope.Tests && workspace.Projects.Where(item => comparer.Equals(item.Path, project.Path))
+                    .Any(item => item.OutputPath is null || !files.FileExists(resolver.ResolvePath(context, item.OutputPath))))
                 {
                     tests = Merge(reports, testSteps, VerificationStatus.Failed, VerificationFailureReason.TestOutputUnavailable, ["Build the selected test project/configuration before using tests scope: " + project.Path]);
                     return Finish(VerificationStatus.Failed, VerificationFailureReason.TestOutputUnavailable, "Test output is unavailable; tests scope does not build.");
@@ -117,13 +134,18 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
                     var report = await files.ReadAllTextIfExistsAsync(reportPath, cancellationToken).ConfigureAwait(false);
                     reports.Add(trx.Parse(report ?? "", project.Path, request.TargetFramework ?? (project.TargetFrameworks.Length == 1 ? project.EvaluatedTargetFramework : null)));
                 }
-                if (reportPaths.Length == 0 || step.Status != VerificationStatus.Passed || reports.Any(report => report.Status != VerificationStatus.Passed))
+                if (reportPaths.Length == 0 || step.Status != VerificationStatus.Passed || reports.Any(report => report.Status == VerificationStatus.Failed))
                 {
                     var reason = step.Status != VerificationStatus.Passed ? step.Reason : VerificationFailureReason.TestResultsMissing;
                     if (reports.Any(report => report.Failed > 0)) reason = VerificationFailureReason.TestFailed;
                     tests = Merge(reports, testSteps, VerificationStatus.Failed, reason, reportPaths.Length == 0 ? ["Expected TRX test results are missing: " + project.Path] : []);
                     return Finish(VerificationStatus.Failed, reason, "Test verification failed or was incomplete.");
                 }
+            }
+            if (reports.All(report => report.Total == 0))
+            {
+                tests = Merge(reports, testSteps, VerificationStatus.Skipped, VerificationFailureReason.NoTestProjects, ["The selected test projects contain no tests."]);
+                return Finish(build is null ? VerificationStatus.Skipped : VerificationStatus.Passed, VerificationFailureReason.NoTestProjects, "Test execution discovered no tests.");
             }
             tests = Merge(reports, testSteps, VerificationStatus.Passed, VerificationFailureReason.None, []);
             return Finish(VerificationStatus.Passed, VerificationFailureReason.None, "Build/test verification passed.");
@@ -143,8 +165,9 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
         try
         {
             var result = await processes.RunAsync(new ProcessRunRequest("dotnet", arguments.ToArray(), root, new Dictionary<string, string?> { ["DOTNET_NOLOGO"] = "1", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1" }), timeout.Token).ConfigureAwait(false);
-            var reason = result.ExitCode == 0 ? VerificationFailureReason.None : Classify(result.StandardOutput + result.StandardError, kind);
-            return new(kind, target, result.ExitCode == 0 ? VerificationStatus.Passed : VerificationStatus.Failed, reason, result.ExitCode, started, clock.UtcNow, (long)(clock.UtcNow - started).TotalMilliseconds, DotNetDiagnosticParser.Bound(result.StandardOutput, 16000), DotNetDiagnosticParser.Bound(result.StandardError, 16000), diagnostics.Parse(result.StandardOutput, result.StandardError, root));
+            var parsed = diagnostics.Parse(result.StandardOutput, result.StandardError, root);
+            var reason = result.ExitCode == 0 ? VerificationFailureReason.None : Classify(parsed, result.StandardOutput + "\n" + result.StandardError, kind);
+            return new(kind, target, result.ExitCode == 0 ? VerificationStatus.Passed : VerificationStatus.Failed, reason, result.ExitCode, started, clock.UtcNow, (long)(clock.UtcNow - started).TotalMilliseconds, DotNetDiagnosticParser.Bound(result.StandardOutput, 16000), DotNetDiagnosticParser.Bound(result.StandardError, 16000), parsed);
         }
         catch (OperationCanceledException) when (!caller.IsCancellationRequested)
         {
@@ -156,10 +179,12 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
         }
         VerificationStepReport Failure(VerificationFailureReason reason, string error) => new(kind, target, VerificationStatus.Failed, reason, null, started, clock.UtcNow, (long)(clock.UtcNow - started).TotalMilliseconds, "", error);
     }
-    private static VerificationFailureReason Classify(string text, string kind)
+    private static VerificationFailureReason Classify(VerificationDiagnostic[] diagnostics, string text, string kind)
     {
-        if (text.Contains("NETSDK1004", StringComparison.Ordinal) || text.Contains("project.assets.json", StringComparison.OrdinalIgnoreCase)) return VerificationFailureReason.RestoreRequired;
-        if (text.Contains("SDK", StringComparison.OrdinalIgnoreCase) && text.Contains("not found", StringComparison.OrdinalIgnoreCase)) return VerificationFailureReason.SdkUnavailable;
+        var errors = diagnostics.Where(item => item.Severity == "error").ToArray();
+        if (errors.Any(item => item.Code == "NETSDK1004")) return VerificationFailureReason.RestoreRequired;
+        if (errors.Any(item => item.Code is "NETSDK1045" or "NETSDK1141" or "MSB4236" or "MSB4276")
+            || text.Split('\n').Any(line => line.Trim() is "A compatible .NET SDK was not found." or "No .NET SDKs were found.")) return VerificationFailureReason.SdkUnavailable;
         return kind == "test" ? VerificationFailureReason.TestFailed : kind == "build" ? VerificationFailureReason.BuildFailed : VerificationFailureReason.ProcessFailed;
     }
     private static VerificationFailureReason Map(DotNetWorkspaceStatus status) => status switch

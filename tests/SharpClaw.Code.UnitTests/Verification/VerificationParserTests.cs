@@ -29,6 +29,9 @@ public sealed class VerificationParserTests
         result.Cases.Should().ContainSingle().Which.Message.Should().Be("wrong value");
         parser.Parse("<!DOCTYPE TestRun [<!ENTITY x SYSTEM 'file:///secret'>]><TestRun>&x;</TestRun>", "Tests", null).Reason.Should().Be(VerificationFailureReason.TestResultsMissing);
         parser.Parse("<TestRun><Counters total=\"1\" passed=\"1\" failed=\"0\"/></TestRun>", "Tests", null).Reason.Should().Be(VerificationFailureReason.TestResultsMissing);
+        var empty = parser.Parse("<TestRun><Counters total=\"0\" passed=\"0\" failed=\"0\"/></TestRun>", "Tests", null);
+        empty.Status.Should().Be(VerificationStatus.Skipped);
+        empty.Reason.Should().Be(VerificationFailureReason.NoTestProjects);
     }
 
     [Fact]

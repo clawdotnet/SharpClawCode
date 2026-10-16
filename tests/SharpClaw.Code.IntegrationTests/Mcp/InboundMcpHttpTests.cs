@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Diagnostics;
 using System.Text;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -70,15 +71,88 @@ public sealed class InboundMcpHttpTests
         (await first.ListToolsAsync()).Should().HaveCount(9);
     }
 
+    /// <summary>Only explicit listeners bind, even with hostile workspace and environment endpoint configuration.</summary>
+    [Fact]
+    public async Task Workspace_and_environment_cannot_override_validated_listener()
+    {
+        using var fixture = await DotNetFixtureWorkspace.CreateAsync();
+        var expectedPort = FreePort();
+        var hostilePort = FreePort();
+        await File.WriteAllTextAsync(Path.Combine(fixture.Root, "appsettings.json"), """{"Kestrel":{"Endpoints":{"Hostile":{"Url":"http://0.0.0.0:PORT"}}}}""".Replace("PORT", hostilePort.ToString(), StringComparison.Ordinal));
+        var start = new ProcessStartInfo("dotnet") { WorkingDirectory = fixture.Root, UseShellExecute = false, RedirectStandardError = true, RedirectStandardOutput = true };
+        foreach (var argument in new[] { "exec", typeof(CliHostBuilder).Assembly.Location, "mcp", "serve", "--transport", "http", "--port", expectedPort.ToString(), "--cwd", fixture.Root }) start.ArgumentList.Add(argument);
+        start.Environment["Kestrel__Endpoints__Hostile__Url"] = $"http://0.0.0.0:{hostilePort}";
+        start.Environment["ASPNETCORE_URLS"] = $"http://0.0.0.0:{hostilePort}";
+        using var process = Process.Start(start)!;
+        var output = process.StandardOutput.ReadToEndAsync();
+        var errors = process.StandardError.ReadToEndAsync();
+        try
+        {
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+            using var http = new HttpClient();
+            while (true)
+            {
+                process.HasExited.Should().BeFalse("server must bind the explicit loopback listener");
+                try { using var response = await http.GetAsync($"http://127.0.0.1:{expectedPort}/mcp", timeout.Token); break; }
+                catch (HttpRequestException) { await Task.Delay(50, timeout.Token); }
+            }
+            using var socket = new TcpClient();
+            Func<Task> connect = () => socket.ConnectAsync(IPAddress.Loopback, hostilePort);
+            await connect.Should().ThrowAsync<SocketException>();
+        }
+        finally
+        {
+            if (!process.HasExited) process.Kill(entireProcessTree: true);
+            await process.WaitForExitAsync();
+            await Task.WhenAll(output, errors);
+        }
+    }
+
+    /// <summary>Proxy hostnames require authentication and only their configured HTTPS origin is accepted.</summary>
+    [Fact]
+    public async Task Local_tls_proxy_accepts_explicit_dns_authority_and_default_https_port()
+    {
+        using var fixture = await DotNetFixtureWorkspace.CreateAsync();
+        const string token = "test-only-proxy-token-123456";
+        await using var server = await HttpHost.StartAsync(new(fixture.Root, Transport: SharpClawMcpTransport.Http, Port: FreePort(), BearerToken: token, AllowedHosts: ["mcp.example.com"]));
+        using var http = new HttpClient();
+        using var request = new HttpRequestMessage(HttpMethod.Get, server.Endpoint);
+        request.Headers.Host = "mcp.example.com";
+        request.Headers.Add("Origin", "https://mcp.example.com");
+        (await http.SendAsync(request)).StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        using var authenticated = new HttpRequestMessage(HttpMethod.Get, server.Endpoint);
+        authenticated.Headers.Host = "mcp.example.com:443";
+        authenticated.Headers.Add("Origin", "https://mcp.example.com");
+        authenticated.Headers.Authorization = new("Bearer", token);
+        var response = await http.SendAsync(authenticated);
+        response.StatusCode.Should().NotBe(HttpStatusCode.BadRequest).And.NotBe(HttpStatusCode.Forbidden).And.NotBe(HttpStatusCode.Unauthorized);
+        using var plaintext = new HttpRequestMessage(HttpMethod.Get, server.Endpoint);
+        plaintext.Headers.Host = "mcp.example.com";
+        plaintext.Headers.Add("Origin", "http://mcp.example.com");
+        plaintext.Headers.Authorization = new("Bearer", token);
+        (await http.SendAsync(plaintext)).StatusCode.Should().Be(HttpStatusCode.Forbidden);
+    }
+
     /// <summary>Rejects unsafe or unauthenticated HTTP exposure.</summary>
     [Theory]
     [InlineData("0.0.0.0", false, null)]
     [InlineData("::", true, "test-only-token-123456")]
     [InlineData("192.0.2.1", false, "test-only-token-123456")]
     [InlineData("192.0.2.1", true, null)]
+    [InlineData("192.0.2.1", true, "test-only-token-123456")]
     [InlineData("localhost", false, "short")]
     public void Invalid_exposure_is_rejected_before_listening(string address, bool remote, string? token)
         => FluentActions.Invoking(() => SharpClawMcpServer.ValidateHttpOptions(new(".", Host: address, AllowRemote: remote, BearerToken: token)))
+            .Should().Throw<ArgumentException>();
+
+    /// <summary>Proxied names cannot enable unauthenticated or wildcard access.</summary>
+    [Theory]
+    [InlineData("mcp.example.com", null)]
+    [InlineData("*.example.com", "test-only-token-123456")]
+    [InlineData("mcp.example.com/path", "test-only-token-123456")]
+    [InlineData("mcp.example.com@evil.example", "test-only-token-123456")]
+    public void Invalid_proxy_configuration_is_rejected(string host, string? token)
+        => FluentActions.Invoking(() => SharpClawMcpServer.ValidateHttpOptions(new(".", BearerToken: token, AllowedHosts: [host])))
             .Should().Throw<ArgumentException>();
 
     private static Task<McpClient> ClientAsync(Uri endpoint, string? token = null)

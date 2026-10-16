@@ -12,9 +12,10 @@ namespace SharpClaw.Code.Mcp.Models;
 /// <param name="Transport">Stdio or Streamable HTTP.</param>
 /// <param name="Host">Explicit IP address or localhost; wildcard binding is rejected.</param>
 /// <param name="Port">HTTP listen port.</param>
-/// <param name="AllowRemote">Explicit authorization for non-loopback exposure.</param>
+/// <param name="AllowRemote">Reserved for compatibility; non-loopback plaintext listeners are rejected.</param>
 /// <param name="BearerToken">Authentication secret for remote or elevated HTTP, supplied by the host.</param>
 /// <param name="PrimaryMode">Host-selected workflow restrictions forwarded to the permission policy.</param>
+/// <param name="AllowedHosts">HTTPS DNS authorities forwarded by a local TLS reverse proxy; requires authentication.</param>
 public sealed record SharpClawMcpServerOptions(
     string WorkspaceRoot,
     PermissionMode PermissionMode = PermissionMode.ReadOnly,
@@ -26,7 +27,8 @@ public sealed record SharpClawMcpServerOptions(
     int Port = 7346,
     bool AllowRemote = false,
     string? BearerToken = null,
-    PrimaryMode PrimaryMode = PrimaryMode.Build);
+    PrimaryMode PrimaryMode = PrimaryMode.Build,
+    string[]? AllowedHosts = null);
 
 /// <summary>The supported inbound transport choices.</summary>
 public enum SharpClawMcpTransport

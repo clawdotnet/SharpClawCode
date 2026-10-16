@@ -7,7 +7,7 @@ public sealed class AffectedProjectResolver : IAffectedProjectResolver
     public AffectedProjectSelection Resolve(DotNetSolutionSummary solution, IReadOnlyList<string>? changedPaths)
     {
         var comparer = OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal;
-        AffectedProjectSelection All() => new(solution.Projects.Select(project => project.Path).Order(comparer).ToArray(), true);
+        AffectedProjectSelection All() => new(solution.Projects.Select(project => project.Path).Distinct(comparer).Order(comparer).ToArray(), true);
         if (changedPaths is null || changedPaths.Count == 0 || solution.Status != DotNetWorkspaceStatus.Ready) return All();
         var selected = new HashSet<string>(comparer);
         foreach (var changed in changedPaths)

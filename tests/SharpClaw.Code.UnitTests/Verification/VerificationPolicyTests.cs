@@ -22,11 +22,21 @@ public sealed class VerificationPolicyTests
     [InlineData("sharpclaw.verification.maxRepairIterations", "6")]
     [InlineData("sharpclaw.verification.scope", "unknown")]
     [InlineData("sharpclaw.verification.enabled", "yes")]
+    [InlineData("sharpclaw.verification.timeoutSeconds", "0")]
+    [InlineData("sharpclaw.verification.timeoutSeconds", "3601")]
+    [InlineData("sharpclaw.verification.timeoutSeconds", "slow")]
     public async Task Invalid_metadata_is_rejected_before_agent_execution(string key, string value)
     {
         var resolver = new VerificationPolicyResolver(new Configuration(null));
         var action = () => resolver.ResolveAsync("workspace", new Dictionary<string, string> { [key] = value }, CancellationToken.None);
         await action.Should().ThrowAsync<ArgumentException>();
+    }
+    [Fact]
+    public async Task Automatic_timeout_is_configurable_and_metadata_takes_precedence()
+    {
+        var resolver = new VerificationPolicyResolver(new Configuration(new(TimeoutSeconds: 900)));
+        (await resolver.ResolveAsync("workspace", null, CancellationToken.None)).TimeoutSeconds.Should().Be(900);
+        (await resolver.ResolveAsync("workspace", new Dictionary<string, string> { [SharpClawWorkflowMetadataKeys.VerificationTimeoutSeconds] = "1800" }, CancellationToken.None)).TimeoutSeconds.Should().Be(1800);
     }
     private sealed class Configuration(VerificationOptions? options) : ISharpClawConfigService
     {

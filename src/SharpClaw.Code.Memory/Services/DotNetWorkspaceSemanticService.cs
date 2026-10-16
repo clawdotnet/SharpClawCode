@@ -4,6 +4,7 @@ using System.Xml.Linq;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using SharpClaw.Code.Infrastructure.Abstractions;
+using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Memory.Abstractions;
 using SharpClaw.Code.Protocol.Models;
 
@@ -18,10 +19,14 @@ public sealed partial class DotNetWorkspaceSemanticService : IDotNetWorkspaceSem
 
     /// <summary>Creates a semantic service with a bounded, lifecycle-owned cache.</summary>
     public DotNetWorkspaceSemanticService(IFileSystem fileSystem, IPathService pathService, IDotNetWorkspaceTargetResolver targetResolver)
+        : this(fileSystem, pathService, targetResolver, new ProcessRunner(new SystemClock())) { }
+
+    /// <summary>Creates a semantic service with an explicit approved project-evaluation process seam.</summary>
+    public DotNetWorkspaceSemanticService(IFileSystem fileSystem, IPathService pathService, IDotNetWorkspaceTargetResolver targetResolver, IProcessRunner processes)
     {
         this.fileSystem = fileSystem;
         this.pathService = pathService;
-        cache = new DotNetSemanticWorkspaceCache(fileSystem, pathService, targetResolver);
+        cache = new DotNetSemanticWorkspaceCache(fileSystem, pathService, targetResolver, processes);
     }
 
     /// <inheritdoc />
@@ -42,9 +47,9 @@ public sealed partial class DotNetWorkspaceSemanticService : IDotNetWorkspaceSem
             var packages = xml.Descendants().Where(element => element.Name.LocalName == "PackageReference")
                 .Where(element => element.Attribute("Include") is not null)
                 .Select(element => new DotNetPackageReference(element.Attribute("Include")!.Value, element.Attribute("Version")?.Value ?? element.Elements().FirstOrDefault(child => child.Name.LocalName == "Version")?.Value)).ToArray();
-            var frameworks = xml.Descendants().Where(element => element.Name.LocalName is "TargetFramework" or "TargetFrameworks")
-                .SelectMany(element => element.Value.Split(';', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries)).Distinct().ToArray();
-            var assetsPath = Path.Combine(Path.GetDirectoryName(project.FilePath!)!, "obj", "project.assets.json");
+            var evaluated = snapshot.Evaluations[project.Id];
+            var frameworks = evaluated.TargetFrameworks;
+            var assetsPath = evaluated.AssetsPath;
             if (await fileSystem.ReadAllTextIfExistsAsync(assetsPath, cancellationToken).ConfigureAwait(false) is { } assetsText)
             {
                 using var assets = JsonDocument.Parse(assetsText);
@@ -61,15 +66,13 @@ public sealed partial class DotNetWorkspaceSemanticService : IDotNetWorkspaceSem
             var references = project.ProjectReferences.Select(reference => snapshot.Solution.GetProject(reference.ProjectId)?.FilePath)
                 .OfType<string>().Select(path => Relative(target.WorkspaceRoot, path)).Distinct().Order(StringComparer.Ordinal).ToArray();
             var evaluatedFramework = project.OutputFilePath is null ? request.TargetFramework : Path.GetFileName(Path.GetDirectoryName(project.OutputFilePath));
-            var isTestProject = xml.Descendants().Any(element => element.Name.LocalName == "IsTestProject" && string.Equals(element.Value, "true", StringComparison.OrdinalIgnoreCase))
-                || packages.Any(package => package.Name is "Microsoft.NET.Test.Sdk" or "xunit" or "NUnit" or "MSTest.TestFramework")
-                || project.Name.EndsWith(".Tests", StringComparison.OrdinalIgnoreCase);
+            var isTestProject = evaluated.IsTestProject ?? packages.Any(package => package.Name == "Microsoft.NET.Test.Sdk");
             projects.Add(new DotNetProjectSummary(project.Name, projectPath, project.Language, frameworks, evaluatedFramework, isTestProject, project.DocumentIds.Count, references, packages, project.Documents.Where(document => document.FilePath is not null).Select(document => Relative(target.WorkspaceRoot, document.FilePath!)).Distinct().ToArray(), project.OutputFilePath is null ? null : Relative(target.WorkspaceRoot, project.OutputFilePath)));
         }
 
         return new DotNetSolutionSummary(snapshot.Status, target.WorkspaceRoot, Relative(target.WorkspaceRoot, target.TargetPath!), projects.ToArray(),
             projects.SelectMany(project => project.ProjectReferences.Select(reference => new DotNetProjectReference(project.Path, reference))).ToArray(),
-            [.. snapshot.Messages, "Project-supplied analyzers and source generators are excluded from compiler queries."]);
+            snapshot.Messages);
     }
 
     /// <inheritdoc />

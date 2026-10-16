@@ -83,7 +83,7 @@ public sealed class SharpClawConfigServiceTests : IDisposable
         var snapshot = await service.GetConfigAsync(workspace, CancellationToken.None);
 
         snapshot.Document.ShareMode.Should().Be(ShareMode.Disabled);
-        snapshot.Document.Verification.Should().BeEquivalentTo(new VerificationOptions(true, VerificationScope.All, true, 2, false));
+        snapshot.Document.Verification.Should().BeEquivalentTo(new VerificationOptions(true, VerificationScope.All, true, 2, false, 600));
         snapshot.Document.DefaultAgentId.Should().Be("workspace-agent");
         snapshot.Document.ConnectLinks.Should().ContainSingle(link => link.Target == "anthropic");
         snapshot.Document.Agents.Should().NotBeNull();
