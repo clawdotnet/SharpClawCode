@@ -132,9 +132,21 @@ jobs:
       - name: Push to NuGet
         env:
           NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
-        run: dotnet nuget push 'release/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: |
+          if [ -z "$NUGET_API_KEY" ]; then
+            echo '::error::Configure the NUGET_API_KEY Actions secret before publishing.'
+            exit 1
+          fi
+          dotnet nuget push 'release/*.nupkg' --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "$RELEASE_TAG"
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            flags+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" release/* --verify-tag --generate-notes --title "$RELEASE_TAG" "${flags[@]}"
