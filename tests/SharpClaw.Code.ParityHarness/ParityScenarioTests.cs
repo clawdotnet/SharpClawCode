@@ -327,16 +327,31 @@ public sealed class ParityScenarioTests : IAsyncLifetime
     {
         using var cts = new CancellationTokenSource();
         var runTask = runtime.RunPromptAsync(request, cts.Token);
-        await WaitForActiveTurnAsync(store, CancellationToken.None);
-        cts.CancelAfter(cancelAfter);
-        await runTask.ConfigureAwait(false);
+        try
+        {
+            await WaitForActiveTurnAsync(store, runTask, CancellationToken.None);
+            cts.CancelAfter(cancelAfter);
+            await runTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            cts.Cancel();
+            try { await runTask.ConfigureAwait(false); }
+            catch (OperationCanceledException) { }
+        }
     }
 
-    private async Task WaitForActiveTurnAsync(ISessionStore store, CancellationToken cancellationToken)
+    private async Task WaitForActiveTurnAsync(ISessionStore store, Task runTask, CancellationToken cancellationToken)
     {
         // Startup is separate from the cancellation deadline and can be slow on loaded Windows runners.
-        for (var attempt = 0; attempt < 600; attempt++)
+        var maxAttempts = OperatingSystem.IsWindows() ? 1800 : 600;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
         {
+            if (runTask.IsCompleted)
+            {
+                await runTask.ConfigureAwait(false);
+                throw new InvalidOperationException("The parity runtime completed before an active turn could be observed.");
+            }
             var session = await store.GetLatestAsync(_workspace, cancellationToken).ConfigureAwait(false);
             if (!string.IsNullOrWhiteSpace(session?.ActiveTurnId))
             {

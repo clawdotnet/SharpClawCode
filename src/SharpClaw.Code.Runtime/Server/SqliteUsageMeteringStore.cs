@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Collections.Concurrent;
 using Microsoft.Data.Sqlite;
 using SharpClaw.Code.Infrastructure.Abstractions;
 using SharpClaw.Code.Protocol.Models;
@@ -12,8 +13,9 @@ namespace SharpClaw.Code.Runtime.Server;
 public sealed class SqliteUsageMeteringStore(
     IFileSystem fileSystem,
     IPathService pathService,
-    IRuntimeStoragePathResolver storagePathResolver) : IUsageMeteringStore
+    IRuntimeStoragePathResolver storagePathResolver) : IUsageMeteringStore, IDisposable
 {
+    private readonly ConcurrentDictionary<string, byte> connectionPools = new(StringComparer.Ordinal);
     /// <inheritdoc />
     public async Task AppendAsync(string workspaceRoot, UsageMeteringRecord record, CancellationToken cancellationToken)
     {
@@ -138,10 +140,27 @@ public sealed class SqliteUsageMeteringStore(
             ?? storagePathResolver.GetTelemetryRoot(normalizedWorkspace);
         fileSystem.CreateDirectory(telemetryRoot);
 
-        var connection = new SqliteConnection($"Data Source={dbPath}");
-        await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
-        await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
-        return connection;
+        var connectionString = new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString();
+        connectionPools.TryAdd(connectionString, 0);
+        var connection = new SqliteConnection(connectionString);
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
+            return connection;
+        }
+        catch { await connection.DisposeAsync().ConfigureAwait(false); throw; }
+    }
+
+    /// <summary>Releases this host's idle metering database handles without clearing unrelated workspace pools.</summary>
+    public void Dispose()
+    {
+        foreach (var connectionString in connectionPools.Keys)
+        {
+            using var connection = new SqliteConnection(connectionString);
+            SqliteConnection.ClearPool(connection);
+        }
+        connectionPools.Clear();
     }
 
     private static async Task EnsureSchemaAsync(SqliteConnection connection, CancellationToken cancellationToken)
