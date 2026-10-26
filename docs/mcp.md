@@ -87,3 +87,31 @@ loop. They do not load the sample's model-provider configuration or saved
 credentials. Running `McpToolAgent` without `--parallel-search` still runs the
 original provider-backed echo example. The built-in `web_search` and `web_fetch`
 tools and workspace MCP registrations are unaffected.
+
+## Runnable deed.page publishing example
+
+`examples/McpToolAgent` also includes an opt-in command that publishes a local
+folder as a static website through [deed.page](https://deed.page)'s keyless MCP
+server at `https://deed.page/mcp` ([docs](https://deed.page/docs)). No account or
+API key is needed. Unlike the search example, this tool writes to the network:
+**the published site is public**, so anyone with its URL can view it.
+
+From the repository root, with the .NET 10 SDK installed:
+
+```shell
+dotnet build examples/McpToolAgent/McpToolAgent.csproj --configuration Release
+dotnet run --project examples/McpToolAgent --configuration Release --no-build -- --deed-page ./site 3600
+```
+
+The folder must contain an `index.html`. Hidden files and folders such as `.git`
+or `.env` are skipped, UTF-8 text is sent as text and other files as base64, and
+folders over 10 MB are rejected before any request is made. The optional second
+argument is an expiry in seconds; omit it for a permanent site.
+
+The command discovers the remote `publish_site` schema and registers it as
+`deed_page_publish_site` with the `NetworkAccess` approval scope. It runs in
+`WorkspaceWrite` mode with an explicit allowlist, so the console approval prompt
+must be answered `y` before anything is uploaded; any other answer exits with a
+failing code and no publish request. `ReadOnly` mode blocks the tool. The tool
+result includes the site URL and a one-time management token; keep the token if
+you want to update or delete the site later (`delete_site` on the same server).
