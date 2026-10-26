@@ -104,9 +104,11 @@ dotnet run --project examples/McpToolAgent --configuration Release --no-build --
 ```
 
 The folder must contain an `index.html`. Hidden files and folders such as `.git`
-or `.env` are skipped, UTF-8 text is sent as text and other files as base64, and
-folders over 10 MB are rejected before any request is made. The optional second
-argument is an expiry in seconds; omit it for a permanent site.
+or `.env` and symbolic links are skipped, and UTF-8 text is sent as text and other
+files as base64. deed.page caps each request body at 4 MB, so a folder whose
+encoded request would be larger is rejected before any request is made; use
+deed.page's manifest upload for larger sites. The optional second argument is an
+expiry in seconds; omit it for a permanent site.
 
 The command discovers the remote `publish_site` schema and registers it as
 `deed_page_publish_site` with the `NetworkAccess` approval scope. It runs in

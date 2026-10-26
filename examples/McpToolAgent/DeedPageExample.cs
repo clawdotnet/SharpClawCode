@@ -30,12 +30,20 @@ public static class DeedPageExample
     /// <summary>The local tool name registered in the SharpClaw tool registry.</summary>
     public const string ToolName = "deed_page_publish_site";
 
-    /// <summary>The largest folder this example uploads, in bytes.</summary>
-    public const long MaxTotalBytes = 10 * 1024 * 1024;
+    /// <summary>deed.page's per-request body cap (4 MB), in bytes.</summary>
+    public const long MaxRequestBytes = 4 * 1024 * 1024;
+
+    /// <summary>Room left in each request for the MCP JSON-RPC envelope around the arguments.</summary>
+    public const long RequestEnvelopeReserveBytes = 16 * 1024;
+
+    /// <summary>The largest serialized publish_site arguments this example sends, in bytes.</summary>
+    public const long MaxArgumentsBytes = MaxRequestBytes - RequestEnvelopeReserveBytes;
 
     /// <summary>
     /// Builds publish_site arguments from the files under <paramref name="directory"/>.
-    /// Hidden files and folders are skipped; UTF-8 text is sent as-is and other files as base64.
+    /// Hidden files and folders and symbolic links are skipped; UTF-8 text is sent as-is and
+    /// other files as base64. Folders whose encoded arguments would not fit in one deed.page
+    /// request are rejected before any request is made.
     /// </summary>
     /// <param name="directory">The folder to publish. It should contain an index.html.</param>
     /// <param name="ttlSeconds">Optional expiry in seconds; null publishes a permanent site.</param>
@@ -46,16 +54,25 @@ public static class DeedPageExample
         int? ttlSeconds,
         CancellationToken cancellationToken)
     {
-        var root = Path.GetFullPath(directory);
+        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory));
         if (!Directory.Exists(root))
         {
             throw new DirectoryNotFoundException($"Folder '{directory}' was not found.");
         }
 
+        var tooLarge = $"Folder '{directory}' does not fit in one deed.page publish request "
+            + $"({MaxRequestBytes} bytes, including base64 and JSON encoding). Publish a smaller folder, "
+            + "or use deed.page's manifest upload (plan_upload and finalize_upload) for larger sites.";
+        var enumeration = new EnumerationOptions
+        {
+            RecurseSubdirectories = true,
+            AttributesToSkip = FileAttributes.ReparsePoint,
+            IgnoreInaccessible = false,
+        };
         var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
         var files = new SortedDictionary<string, object>(StringComparer.Ordinal);
         long totalBytes = 0;
-        foreach (var path in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
+        foreach (var path in Directory.EnumerateFiles(root, "*", enumeration))
         {
             var relative = Path.GetRelativePath(root, path).Replace(Path.DirectorySeparatorChar, '/');
             if (relative.Split('/').Any(segment => segment.StartsWith('.')))
@@ -63,13 +80,20 @@ public static class DeedPageExample
                 continue;
             }
 
-            var bytes = await File.ReadAllBytesAsync(path, cancellationToken);
-            totalBytes += bytes.LongLength;
-            if (totalBytes > MaxTotalBytes)
+            // Raw bytes never shrink when encoded, so this rejects oversized files before reading them.
+            var remaining = MaxArgumentsBytes - totalBytes;
+            if (new FileInfo(path).Length > remaining)
             {
-                throw new InvalidOperationException($"Folder '{directory}' is larger than {MaxTotalBytes / (1024 * 1024)} MB.");
+                throw new InvalidOperationException(tooLarge);
             }
 
+            if (!IsInsideRootWithoutLinks(root, Path.GetFullPath(path)))
+            {
+                throw new InvalidOperationException($"'{relative}' is not a regular file inside '{directory}'.");
+            }
+
+            var bytes = await ReadBoundedAsync(path, remaining, tooLarge, cancellationToken);
+            totalBytes += bytes.LongLength;
             try
             {
                 files[relative] = strictUtf8.GetString(bytes);
@@ -91,7 +115,64 @@ public static class DeedPageExample
             arguments["ttl_seconds"] = ttlSeconds.Value;
         }
 
-        return JsonSerializer.Serialize(arguments);
+        var json = JsonSerializer.SerializeToUtf8Bytes(arguments);
+        if (json.LongLength > MaxArgumentsBytes)
+        {
+            throw new InvalidOperationException(tooLarge);
+        }
+
+        return Encoding.UTF8.GetString(json);
+    }
+
+    private static bool IsInsideRootWithoutLinks(string root, string fullPath)
+    {
+        var comparison = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS()
+            ? StringComparison.OrdinalIgnoreCase
+            : StringComparison.Ordinal;
+        if (!fullPath.StartsWith(root + Path.DirectorySeparatorChar, comparison))
+        {
+            return false;
+        }
+
+        // Re-check the file and every folder below the root just before opening, so a link
+        // swapped in after enumeration is not followed out of the selected folder.
+        for (var current = fullPath; !string.Equals(current, root, comparison); current = Path.GetDirectoryName(current))
+        {
+            if (current is null || File.GetAttributes(current).HasFlag(FileAttributes.ReparsePoint))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static async Task<byte[]> ReadBoundedAsync(
+        string path,
+        long maxBytes,
+        string tooLargeMessage,
+        CancellationToken cancellationToken)
+    {
+        await using var stream = new FileStream(path, new FileStreamOptions
+        {
+            Mode = FileMode.Open,
+            Access = FileAccess.Read,
+            Share = FileShare.Read,
+            Options = FileOptions.Asynchronous,
+        });
+        if (stream.Length > maxBytes)
+        {
+            throw new InvalidOperationException(tooLargeMessage);
+        }
+
+        var buffer = new byte[stream.Length];
+        await stream.ReadExactlyAsync(buffer, cancellationToken);
+        if (await stream.ReadAsync(new byte[1], cancellationToken) != 0)
+        {
+            throw new InvalidOperationException(tooLargeMessage);
+        }
+
+        return buffer;
     }
 
     /// <summary>

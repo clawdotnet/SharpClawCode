@@ -45,6 +45,67 @@ public sealed class DeedPageExampleTests : IDisposable
     }
 
     [Fact]
+    public async Task SkipsSymbolicLinksThatLeadOutsideTheFolder()
+    {
+        var outside = Directory.CreateTempSubdirectory("deed-page-outside").FullName;
+        try
+        {
+            var secret = Path.Combine(outside, "secret.txt");
+            await File.WriteAllTextAsync(secret, "do-not-publish");
+            await File.WriteAllTextAsync(Path.Combine(folder, "index.html"), "home");
+            try
+            {
+                File.CreateSymbolicLink(Path.Combine(folder, "notes.txt"), secret);
+                Directory.CreateSymbolicLink(Path.Combine(folder, "assets"), outside);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                return; // Creating links needs extra rights on some Windows machines.
+            }
+
+            var arguments = await DeedPageExample.CreatePublishArgumentsAsync(folder, null, CancellationToken.None);
+            using var json = JsonDocument.Parse(arguments);
+            var names = json.RootElement.GetProperty("files").EnumerateObject().Select(file => file.Name);
+            Assert.Equal(["index.html"], names);
+            Assert.DoesNotContain("do-not-publish", arguments);
+        }
+        finally
+        {
+            Directory.Delete(outside, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RejectsOversizedFileBeforeReadingIt()
+    {
+        await File.WriteAllTextAsync(Path.Combine(folder, "index.html"), "home");
+        // A sparse 3 GB file: reading it whole would fail with an IOException instead.
+        using (var stream = File.Create(Path.Combine(folder, "video.mp4")))
+        {
+            stream.SetLength(3L * 1024 * 1024 * 1024);
+        }
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DeedPageExample.CreatePublishArgumentsAsync(folder, null, CancellationToken.None));
+        Assert.Contains("does not fit in one deed.page publish request", error.Message);
+    }
+
+    [Fact]
+    public async Task LimitsTheEncodedRequestNotRawFileSizes()
+    {
+        await File.WriteAllTextAsync(Path.Combine(folder, "index.html"), "home");
+        var binary = Path.Combine(folder, "photo.jpg");
+        // 3.5 MB of raw bytes fits under the cap, but base64 grows it to about 4.7 MB.
+        await File.WriteAllBytesAsync(binary, Enumerable.Repeat((byte)0xff, 3_500_000).ToArray());
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => DeedPageExample.CreatePublishArgumentsAsync(folder, null, CancellationToken.None));
+
+        await File.WriteAllBytesAsync(binary, Enumerable.Repeat((byte)0xff, 2_500_000).ToArray());
+        var arguments = await DeedPageExample.CreatePublishArgumentsAsync(folder, null, CancellationToken.None);
+        Assert.InRange(Encoding.UTF8.GetByteCount(arguments), 3_000_000, DeedPageExample.MaxArgumentsBytes);
+    }
+
+    [Fact]
     public async Task ApprovedPublishCallsRemoteToolWithoutCredentials()
     {
         using var handler = new McpHandler();
