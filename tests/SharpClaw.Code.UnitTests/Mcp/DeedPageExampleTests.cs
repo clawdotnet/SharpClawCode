@@ -45,6 +45,31 @@ public sealed class DeedPageExampleTests : IDisposable
     }
 
     [Fact]
+    public async Task SkipsHiddenFilesAndDotfiles()
+    {
+        await File.WriteAllTextAsync(Path.Combine(folder, "index.html"), "home");
+        await File.WriteAllTextAsync(Path.Combine(folder, ".npmrc"), "dotfile-secret");
+        Directory.CreateDirectory(Path.Combine(folder, ".aws"));
+        await File.WriteAllTextAsync(Path.Combine(folder, ".aws", "credentials"), "dotdir-secret");
+        var hidden = Path.Combine(folder, "credentials.txt");
+        await File.WriteAllTextAsync(hidden, "hidden-secret");
+        File.SetAttributes(hidden, File.GetAttributes(hidden) | FileAttributes.Hidden);
+        var hiddenAttributeSupported = File.GetAttributes(hidden).HasFlag(FileAttributes.Hidden);
+
+        var arguments = await DeedPageExample.CreatePublishArgumentsAsync(folder, null, CancellationToken.None);
+        using var json = JsonDocument.Parse(arguments);
+        var names = json.RootElement.GetProperty("files").EnumerateObject().Select(file => file.Name).ToList();
+        Assert.DoesNotContain(".npmrc", names);
+        Assert.DoesNotContain(".aws/credentials", names);
+        if (hiddenAttributeSupported)
+        {
+            // Windows and macOS: a Hidden file with an ordinary name is still skipped.
+            Assert.Equal(["index.html"], names);
+            Assert.DoesNotContain("hidden-secret", arguments);
+        }
+    }
+
+    [Fact]
     public async Task SkipsSymbolicLinksThatLeadOutsideTheFolder()
     {
         var outside = Directory.CreateTempSubdirectory("deed-page-outside").FullName;

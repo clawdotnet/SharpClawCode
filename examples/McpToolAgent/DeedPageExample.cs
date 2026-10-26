@@ -63,10 +63,12 @@ public static class DeedPageExample
         var tooLarge = $"Folder '{directory}' does not fit in one deed.page publish request "
             + $"({MaxRequestBytes} bytes, including base64 and JSON encoding). Publish a smaller folder, "
             + "or use deed.page's manifest upload (plan_upload and finalize_upload) for larger sites.";
+        // Skip links plus .NET's default Hidden | System filter (Windows and macOS hidden flags).
+        // Unix dotfiles are not marked Hidden, so dot-prefixed names are skipped below as well.
         var enumeration = new EnumerationOptions
         {
             RecurseSubdirectories = true,
-            AttributesToSkip = FileAttributes.ReparsePoint,
+            AttributesToSkip = FileAttributes.ReparsePoint | FileAttributes.Hidden | FileAttributes.System,
             IgnoreInaccessible = false,
         };
         var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
