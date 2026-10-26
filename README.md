@@ -192,7 +192,9 @@ The solution includes embeddable host samples under `examples/`:
 
 `McpToolAgent` also offers a [runnable Parallel Search MCP example](docs/mcp.md#runnable-parallel-search-example)
 for anonymous web search and page extraction through the SharpClaw tool registry
-and permission executor, without a model provider key.
+and permission executor, without a model provider key. A second opt-in command
+[publishes a local folder to deed.page](docs/mcp.md#runnable-deedpage-publishing-example)
+as a public static site, behind the console network-access approval prompt.
 
 ## Testing
 
