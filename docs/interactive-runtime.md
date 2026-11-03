@@ -51,6 +51,7 @@ Configure the standard .NET configuration stack under `SharpClaw:Compaction` (or
       "TriggerRatio": 0.8,
       "SummaryMaxTokens": 4096,
       "RetainedMessageCount": 6,
+      "MaxSummaryCalls": 32,
       "ModelContextWindows": {
         "provider/model": 128000
       }
@@ -61,7 +62,23 @@ Configure the standard .NET configuration stack under `SharpClaw:Compaction` (or
 
 Replace `provider/model` with the exact resolved provider/model key. The output reserve is increased when a request's maximum output is higher. Budgeting uses estimates (approximately characters divided by four, with an image allowance), not a provider tokenizer; configure conservative windows for your models.
 
-Invalid summaries, persistence failures, or oversized irreducible requests fail visibly instead of silently dropping context. The original history remains intact. A single oversized request/exchange or an archive larger than the summarizer's window requires smaller tool outputs or a larger configured model window. This first implementation does not recursively summarize oversized archives. Automatic maintenance does not change the existing manual `/compact` command.
+Invalid summaries, persistence failures, or oversized irreducible requests fail visibly instead of silently dropping context. The original history remains intact. Archives larger than the summarizer window are processed as bounded text fragments. Each call carries the prior validated working state forward; a single replacement event is published only after every fragment succeeds. `MaxSummaryCalls` bounds the work per compaction. Recent requests or tool exchanges that cannot fit even after retaining the minimum safe context still fail clearly. Automatic maintenance does not change the existing manual `/compact` command.
+
+## Bounded tool output and overflow recovery
+
+The Runtime registers `IToolResultContextFormatter` at the agent dispatcher boundary. Provider-facing tool text larger than `SharpClaw:ToolOutput:MaxCharacters` (default 32,000; minimum 2,048) becomes a bounded head/tail preview with an opaque artifact ID. The full text is durably saved before the preview is used. Original `ToolResult` objects, structured output, permission decisions, and tool-completion events stay unchanged. This bounds model input; it does not cap the original process output, event log size, or artifact disk usage.
+
+`read_tool_output` retrieves the complete text in windows:
+
+```json
+{"artifactId":"artifact-<id>","offset":0,"limit":4096}
+```
+
+The requested limit is capped further when needed to fit the configured output-preview budget, including JSON escaping, so retrieval does not recursively create oversized artifacts. The returned JSON includes `artifactId`, `offset`, `content`, `totalCharacters`, and `nextOffset` (null at EOF). Offsets count UTF-16 code units. Windows avoid splitting surrogate pairs; a one-character request can return a two-unit character, and an offset inside a pair moves back to its start. Follow `nextOffset` to page without overlap. The tool accepts only opaque IDs and only reads the active session's tenant-aware storage partition. It uses the normal tool executor, including allow-list and permission checks. A restricted tool list must include `read_tool_output` to permit model-driven retrieval.
+
+Artifacts are immutable files in the session's `artifacts` directory, including when core session records use SQLite. They survive host restart. They follow the session storage lifetime; no independent automatic artifact deletion is performed. Storage failures stop context preparation instead of dropping the full output. These files are runtime session state, like event logs, rather than workspace edits or undoable mutations.
+
+When a provider explicitly rejects an input as exceeding its context window, the kernel permits **one recovery attempt per agent invocation**. It forces durable compaction even below the normal estimate threshold, retains the latest complete exchange and pinned context, then retries the same provider with fresh stream buffers. Already executed tools are not replayed; partial tool calls emitted by a failed stream are discarded. Repeated overflows and unavailable recovery follow existing provider failure/fallback handling. Irreducible context or failed compaction stops with an explicit error. Authentication, rate limits, and generic server failures do not trigger this recovery. The failure enum adds `ContextWindowExceeded`; existing numeric values and event shapes remain unchanged.
 
 ## Live turn control
 

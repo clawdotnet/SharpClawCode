@@ -128,6 +128,48 @@ public sealed class AutomaticContextManagerTests
         replay[0].Content[0].Text.Should().Be("original");
     }
 
+    [Fact]
+    public async Task Oversized_archive_is_summarized_in_bounded_chunks_before_one_durable_replacement()
+    {
+        settings.ContextWindowTokens = 3000;
+        settings.SummaryMaxTokens = 256;
+        var result = await Manager().PrepareAsync(Context(), provider, Request(), CancellationToken.None);
+        provider.Requests.Should().HaveCountGreaterThan(1);
+        provider.Requests.Should().OnlyContain(request => (request.Prompt.Length + 3) / 4 + (request.SystemPrompt!.Length + 3) / 4 + request.MaxTokens <= settings.ContextWindowTokens);
+        provider.Requests.Skip(1).Should().OnlyContain(request => request.Prompt.Contains("Keep public API stable"));
+        result.CompactionUsage!.TotalTokens.Should().Be(120 * provider.Requests.Count);
+        store.Events.Should().ContainSingle();
+        store.Events.OfType<ContextCompactedEvent>().Single().ArchivedMessages[1].Content[0].Text.Should().HaveLength(32_000);
+    }
+
+    [Fact]
+    public async Task Chunk_limit_or_later_chunk_failure_never_publishes_partial_state()
+    {
+        settings.ContextWindowTokens = 3000;
+        settings.SummaryMaxTokens = 256;
+        settings.MaxSummaryCalls = 1;
+        await Assert.ThrowsAsync<InvalidOperationException>(() => Manager().PrepareAsync(Context(), provider, Request(), CancellationToken.None));
+        provider.Requests.Should().ContainSingle();
+        store.Events.Should().BeEmpty();
+        settings.MaxSummaryCalls = 32;
+        provider.DuringStream = () => provider.Response = "invalid JSON";
+        await Assert.ThrowsAnyAsync<Exception>(() => Manager().PrepareAsync(Context(), provider, Request(), CancellationToken.None));
+        store.Events.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Explicit_overflow_forces_compaction_below_automatic_threshold()
+    {
+        settings.TriggerRatio = 0.99;
+        var request = Request();
+        (await Manager().PrepareAsync(Context(), provider, request, CancellationToken.None)).Request.Should().BeSameAs(request);
+        var recovered = await Manager().RecoverAsync(Context(), provider, request, CancellationToken.None);
+        recovered.Should().NotBeNull();
+        store.Events.Should().ContainSingle();
+        settings.Enabled = false;
+        (await Manager().RecoverAsync(Context(), provider, request, CancellationToken.None)).Should().BeNull();
+    }
+
     private AutomaticContextManager Manager() => new(Options.Create(settings), store, new RuntimeEventPublisher(Options.Create(new TelemetryOptions()), new UsageTracker()));
     private static AgentRunContext Context() => new("session", "turn", "Current request: preserve behavior.", Path.GetTempPath(), "model", PermissionMode.ReadOnly, OutputFormat.Text, null!, null);
     private static ProviderRequest Request() => new("request", "session", "turn", "test", "model", "Current request: preserve behavior.", "system", OutputFormat.Text, 0, null,
@@ -153,11 +195,13 @@ public sealed class AutomaticContextManagerTests
         public string ProviderName => "test";
         public string Response { get; set; } = JsonSerializer.Serialize(State, ProtocolJsonContext.Default.CompactionWorkingState);
         public ProviderRequest? Request { get; private set; }
+        public List<ProviderRequest> Requests { get; } = [];
         public Action? DuringStream { get; set; }
         public Task<AuthStatus> GetAuthStatusAsync(CancellationToken token) => throw new NotSupportedException();
         public Task<ProviderStreamHandle> StartStreamAsync(ProviderRequest request, CancellationToken token)
         {
             Request = request;
+            Requests.Add(request);
             return Task.FromResult(new ProviderStreamHandle(request, Stream(request, token)));
         }
         private async IAsyncEnumerable<ProviderEvent> Stream(ProviderRequest request, [EnumeratorCancellation] CancellationToken token)

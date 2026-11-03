@@ -185,6 +185,7 @@ public sealed class ProviderBackedAgentKernel(
             var compactionUsage = new UsageSnapshot(0, 0, 0, 0, 0);
             ProviderRequest? lastProviderRequest = null;
 
+            var contextRecoveryAttempted = false;
             var iteration = 0;
             for (; iteration < options.MaxToolIterations; iteration++)
             {
@@ -223,6 +224,7 @@ public sealed class ProviderBackedAgentKernel(
                     var candidateToolUseEvents = new List<ProviderEvent>();
                     UsageSnapshot? candidateUsage = null;
 
+                    var providerStarted = false;
                     using var providerScope = new ProviderActivityScope(provider.ProviderName, candidateModel, providerRequest.Id);
                     try
                     {
@@ -234,6 +236,7 @@ public sealed class ProviderBackedAgentKernel(
                             if (prepared.CompactionUsage is { } used)
                                 compactionUsage = AddUsage(compactionUsage, used);
                         }
+                        providerStarted = true;
                         var stream = await provider.StartStreamAsync(providerRequest, cancellationToken).ConfigureAwait(false);
                         await foreach (var providerEvent in stream.Events.WithCancellation(cancellationToken))
                         {
@@ -276,6 +279,18 @@ public sealed class ProviderBackedAgentKernel(
                     {
                         providerScope.SetError(exception.Message);
                         lastStreamFailure = exception;
+                        if (providerStarted && !contextRecoveryAttempted && contextManager is not null && ProviderStreamFailureClassifier.IsContextOverflow(exception))
+                        {
+                            contextRecoveryAttempted = true;
+                            var recovered = await contextManager.RecoverAsync(request.Context, provider, providerRequest, cancellationToken).ConfigureAwait(false);
+                            if (recovered is not null)
+                            {
+                                messages = recovered.Request.Messages?.ToList() ?? messages;
+                                if (recovered.CompactionUsage is { } recoveredUsage) compactionUsage = AddUsage(compactionUsage, recoveredUsage);
+                                candidateIndex--; // Retry this provider with a new request ID and fresh buffers.
+                                continue;
+                            }
+                        }
                         if (candidateIndex == providerCandidates.Count - 1)
                         {
                             break;

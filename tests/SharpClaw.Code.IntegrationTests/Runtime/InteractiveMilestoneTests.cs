@@ -186,6 +186,54 @@ public sealed class InteractiveMilestoneTests : IDisposable
         provider.Requests.Single().Messages.Should().ContainSingle().Which.Role.Should().Be("user");
     }
 
+    /// <summary>Overflow recovery retries only the buffered request and never dispatches partial failed tool calls.</summary>
+    [Fact]
+    public async Task Context_overflow_compacts_once_and_does_not_replay_tools()
+    {
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "large.txt"), new string('x', 30_000));
+        var provider = new ScenarioProvider { ToolCalls = 4, OverflowOnRequest = 3 };
+        using var services = Services(provider);
+        var result = await services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Inspect files."), CancellationToken.None);
+        result.FinalOutput.Should().Be("Completed.");
+        result.ToolResults.Should().HaveCount(3).And.OnlyContain(item => item.ToolName == "read_file");
+        provider.Requests.Where(item => !item.Id.StartsWith("compaction-")).Should().HaveCount(5);
+        var events = await services.GetRequiredService<IEventStore>().ReadAllAsync(workspace, result.Session.Id, CancellationToken.None);
+        events.OfType<ContextCompactedEvent>().Should().ContainSingle();
+    }
+
+    /// <summary>Repeated provider rejection terminates without an unbounded maintenance/retry loop.</summary>
+    [Fact]
+    public async Task Repeated_context_overflow_stops_after_one_recovery()
+    {
+        Directory.CreateDirectory(workspace);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "large.txt"), new string('x', 30_000));
+        var provider = new ScenarioProvider { ToolCalls = 4, OverflowOnRequest = 3, RepeatOverflow = true };
+        using var services = Services(provider);
+        var action = () => services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Inspect files."), CancellationToken.None);
+        (await action.Should().ThrowAsync<ProviderExecutionException>()).Which.Kind.Should().Be(ProviderFailureKind.ContextWindowExceeded);
+        provider.Requests.Where(item => !item.Id.StartsWith("compaction-")).Should().HaveCount(4);
+        provider.Requests.Where(item => item.Id.StartsWith("compaction-")).Should().ContainSingle();
+    }
+
+    /// <summary>Only provider context is shortened; tool result contracts and durable events keep complete text.</summary>
+    [Fact]
+    public async Task Large_tool_output_is_bounded_without_changing_results_or_durable_events()
+    {
+        Directory.CreateDirectory(workspace);
+        var full = new string('x', 100_000);
+        await File.WriteAllTextAsync(Path.Combine(workspace, "large.txt"), full);
+        var provider = new ScenarioProvider { ToolCalls = 1 };
+        using var services = Services(provider);
+        var result = await services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Inspect files."), CancellationToken.None);
+        result.ToolResults.Should().ContainSingle().Which.Output.Should().Be("1|" + full);
+        var preview = provider.Requests.Last().Messages!.SelectMany(message => message.Content).Single(block => block.Kind == ContentBlockKind.ToolResult).Text!;
+        preview.Length.Should().BeLessThanOrEqualTo(32_000);
+        preview.Should().Contain("read_tool_output");
+        var events = await services.GetRequiredService<IEventStore>().ReadAllAsync(workspace, result.Session.Id, CancellationToken.None);
+        events.OfType<ToolCompletedEvent>().Should().ContainSingle().Which.Result.Output.Should().Be("1|" + full);
+    }
+
     private ServiceProvider Services(ScenarioProvider provider, int maxIterations = 25, bool withoutContextManager = false)
     {
         var services = new ServiceCollection();
@@ -217,6 +265,8 @@ public sealed class InteractiveMilestoneTests : IDisposable
     {
         private int requests;
         public int ToolCalls { get; init; }
+        public int OverflowOnRequest { get; init; }
+        public bool RepeatOverflow { get; init; }
         public bool BlockFirstResponse { get; init; }
         public bool SnapshotEdit { get; init; }
         public ConcurrentQueue<ProviderRequest> Requests { get; } = new();
@@ -237,6 +287,12 @@ public sealed class InteractiveMilestoneTests : IDisposable
             {
                 Started.TrySetResult();
                 await Release.Task.WaitAsync(token);
+            }
+            if (!summary && OverflowOnRequest > 0 && (index == OverflowOnRequest || RepeatOverflow && index >= OverflowOnRequest))
+            {
+                yield return new("partial-tool", request.Id, "tool_use", DateTimeOffset.UtcNow, null, false, null, "tool_use", "never-execute", "write_file", "{}" );
+                yield return new("overflow", request.Id, "failed", DateTimeOffset.UtcNow, "context_length_exceeded: maximum context length", true, null);
+                yield break;
             }
             if (summary)
             {

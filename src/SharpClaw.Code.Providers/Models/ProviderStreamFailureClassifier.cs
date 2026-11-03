@@ -2,6 +2,7 @@ using System.ClientModel;
 using System.Globalization;
 using System.Net;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using SharpClaw.Code.Protocol.Models;
 
 namespace SharpClaw.Code.Providers.Models;
@@ -39,13 +40,14 @@ public static class ProviderStreamFailureClassifier
     public static ProviderFailureKind ClassifyFailedEvent(ProviderEvent providerEvent)
         => LooksLikeAuthenticationFailure(providerEvent.Content)
             ? ProviderFailureKind.AuthenticationUnavailable
-            : ProviderFailureKind.StreamFailed;
+            : LooksLikeContextOverflow(providerEvent.Content) ? ProviderFailureKind.ContextWindowExceeded : ProviderFailureKind.StreamFailed;
 
     /// <summary>
     /// Returns whether an exception represents provider authentication or authorization failure.
     /// </summary>
     public static bool IsAuthenticationFailure(Exception exception)
     {
+        if (exception is ProviderExecutionException { Kind: ProviderFailureKind.AuthenticationUnavailable }) return true;
         var statusCode = TryGetStatusCode(exception);
         if (statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
         {
@@ -60,6 +62,16 @@ public static class ProviderStreamFailureClassifier
             || (exception.InnerException is not null && IsAuthenticationFailure(exception.InnerException));
     }
 
+    /// <summary>Recognizes explicit context-window rejections without treating rate limits or authentication failures as overflow.</summary>
+    public static bool IsContextOverflow(Exception exception)
+        => exception is ProviderExecutionException { Kind: ProviderFailureKind.ContextWindowExceeded }
+            || (!IsAuthenticationFailure(exception) && (LooksLikeContextOverflow(exception.Message)
+                || exception.InnerException is not null && IsContextOverflow(exception.InnerException)));
+
+    private static bool LooksLikeContextOverflow(string? message)
+        => message is not null && new[] { "context_length_exceeded", "maximum context length", "prompt is too long", "context window exceeded", "exceeds the context window", "input token count exceeds" }
+            .Any(pattern => message.Contains(pattern, StringComparison.OrdinalIgnoreCase));
+
     private static bool LooksLikeAuthenticationFailure(string? message)
     {
         if (string.IsNullOrWhiteSpace(message))
@@ -68,7 +80,7 @@ public static class ProviderStreamFailureClassifier
         }
 
         var value = message.ToLowerInvariant();
-        if (value.Contains("401", StringComparison.Ordinal)
+        if (Regex.IsMatch(value, @"(?:^|\W)401(?:\W|$)", RegexOptions.CultureInvariant)
             || value.Contains("unauthorized", StringComparison.Ordinal)
             || value.Contains("forbidden", StringComparison.Ordinal))
         {
