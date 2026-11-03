@@ -1,5 +1,8 @@
 using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.IO.Pipelines;
+using System.Text.Json.Nodes;
+using SharpClaw.Code.Acp;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
@@ -234,10 +237,67 @@ public sealed class InteractiveMilestoneTests : IDisposable
         events.OfType<ToolCompletedEvent>().Should().ContainSingle().Which.Result.Output.Should().Be("1|" + full);
     }
 
-    private ServiceProvider Services(ScenarioProvider provider, int maxIterations = 25, bool withoutContextManager = false)
+    /// <summary>An editor correction crosses stdio, enters the next provider request, and survives in session history.</summary>
+    [Fact]
+    public async Task Acp_steering_reaches_the_running_provider_and_is_persisted()
+    {
+        Directory.CreateDirectory(workspace);
+        var provider = new ScenarioProvider { BlockFirstResponse = true };
+        using var services = Services(provider, enableAcp: true);
+        var session = await services.GetRequiredService<IConversationRuntime>().CreateSessionAsync(workspace, PermissionMode.ReadOnly, OutputFormat.Json, CancellationToken.None);
+        var input = new Pipe();
+        var output = new Pipe();
+        using var client = new StreamWriter(input.Writer.AsStream()) { AutoFlush = true };
+        using var serverInput = new StreamReader(input.Reader.AsStream());
+        using var serverOutput = new StreamWriter(output.Writer.AsStream());
+        using var reader = new StreamReader(output.Reader.AsStream());
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+        var run = services.GetRequiredService<AcpStdioHost>().RunAsync(serverInput, serverOutput, timeout.Token);
+        var notifications = new List<JsonNode>();
+        try
+        {
+            await SendAsync("p", "session/prompt", new { cwd = workspace, sessionId = session.Id, prompt = "Inspect.", liveTurnControl = true });
+            await provider.Started.Task.WaitAsync(timeout.Token);
+            await SendAsync("s", "session/steer", new { cwd = workspace, sessionId = session.Id, promptRequestId = "p", text = "Keep the contract." });
+            (await ResponseAsync("s"))["accepted"]!.GetValue<bool>().Should().BeTrue();
+            provider.Release.TrySetResult();
+            (await ResponseAsync("p"))["stopReason"]!.GetValue<string>().Should().Be("endTurn");
+            notifications.Should().Contain(message => message["params"]!["update"]!["kind"] != null && message["params"]!["update"]!["kind"]!.GetValue<string>() == "steeringAccepted");
+            notifications.Should().OnlyContain(message => message["params"]!["promptRequestId"]!.GetValue<string>() == "p");
+            provider.Requests.Last().Messages!.SelectMany(message => message.Content).Should().Contain(block => block.Text == "Keep the contract.");
+            var events = await services.GetRequiredService<IEventStore>().ReadAllAsync(workspace, session.Id, timeout.Token);
+            events.OfType<TurnSteeredEvent>().Should().ContainSingle().Which.Message.Should().Be("Keep the contract.");
+            await SendAsync("late", "session/cancel", new { cwd = workspace, sessionId = session.Id, promptRequestId = "p" });
+            (await ResponseAsync("late"))["accepted"]!.GetValue<bool>().Should().BeFalse();
+        }
+        finally
+        {
+            provider.Release.TrySetResult();
+            client.Close();
+            await run.WaitAsync(timeout.Token);
+        }
+
+        Task SendAsync(string id, string method, object parameters)
+            => client.WriteLineAsync(JsonSerializer.Serialize(new { jsonrpc = "2.0", id, method, @params = parameters }));
+
+        async Task<JsonNode> ResponseAsync(string id)
+        {
+            while (await reader.ReadLineAsync(timeout.Token) is { } line)
+            {
+                var message = JsonNode.Parse(line)!;
+                if (message["id"]?.GetValue<string>() == id)
+                    return message["result"] ?? throw new InvalidOperationException(message.ToJsonString());
+                notifications.Add(message);
+            }
+            throw new EndOfStreamException();
+        }
+    }
+
+    private ServiceProvider Services(ScenarioProvider provider, int maxIterations = 25, bool withoutContextManager = false, bool enableAcp = false)
     {
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        if (enableAcp) services.AddSharpClawAcp();
         if (withoutContextManager) services.RemoveAll<IAgentContextManager>();
         services.Configure<AutomaticCompactionOptions>(options => { options.TriggerRatio = 0.3; options.RetainedMessageCount = 4; });
         services.Configure<AgentLoopOptions>(options => { options.MaxTokensPerRequest = 1024; options.MaxToolIterations = maxIterations; });

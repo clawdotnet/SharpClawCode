@@ -12,6 +12,7 @@ public sealed class AcpApprovalCoordinator
 {
     private readonly ConcurrentDictionary<string, PendingApproval> pending = new(StringComparer.Ordinal);
     private Func<JsonObject, Task>? notificationSink;
+    private int inputClosed;
 
     /// <summary>
     /// Gets a value indicating whether the connected ACP client advertised approval round-trips.
@@ -25,8 +26,16 @@ public sealed class AcpApprovalCoordinator
     /// <param name="notificationWriter">Notification writer used for approval requests.</param>
     public void Configure(bool supportsApprovals, Func<JsonObject, Task> notificationWriter)
     {
+        Volatile.Write(ref inputClosed, 0);
         SupportsApprovals = supportsApprovals;
         notificationSink = notificationWriter;
+    }
+
+    /// <summary>Denies pending and future approvals once the transport can no longer receive replies.</summary>
+    internal void CloseInput()
+    {
+        Volatile.Write(ref inputClosed, 1);
+        foreach (var item in pending.Values) item.Completion.TrySetResult((false, false));
     }
 
     /// <summary>
@@ -41,14 +50,14 @@ public sealed class AcpApprovalCoordinator
         PermissionEvaluationContext context,
         CancellationToken cancellationToken)
     {
-        if (!SupportsApprovals || notificationSink is null)
+        if (!SupportsApprovals || notificationSink is null || Volatile.Read(ref inputClosed) != 0)
         {
             return new ApprovalDecision(
                 request.Scope,
                 Approved: false,
                 RequestedBy: request.RequestedBy,
                 ResolvedBy: "acp",
-                Reason: "ACP client does not support approval round-trips.",
+                Reason: "ACP approval input is unavailable.",
                 ResolvedAtUtc: DateTimeOffset.UtcNow,
                 ExpiresAtUtc: null,
                 RememberForSession: false);
@@ -58,6 +67,7 @@ public sealed class AcpApprovalCoordinator
         var tcs = new TaskCompletionSource<(bool Approved, bool Remember)>(TaskCreationOptions.RunContinuationsAsynchronously);
         pending[requestId] = new PendingApproval(context.SessionId, request, tcs);
 
+        if (Volatile.Read(ref inputClosed) != 0) tcs.TrySetResult((false, false));
         using var registration = cancellationToken.Register(() =>
         {
             if (pending.TryRemove(requestId, out var removed))
@@ -66,38 +76,42 @@ public sealed class AcpApprovalCoordinator
             }
         });
 
-        await notificationSink(new JsonObject
+        try
         {
-            ["jsonrpc"] = "2.0",
-            ["method"] = "session/notification",
-            ["params"] = new JsonObject
+            await notificationSink(new JsonObject
             {
-                ["sessionId"] = context.SessionId,
-                ["update"] = new JsonObject
+                ["jsonrpc"] = "2.0",
+                ["method"] = "session/notification",
+                ["params"] = new JsonObject
                 {
-                    ["sessionUpdate"] = "approvalRequest",
-                    ["approval"] = new JsonObject
+                    ["sessionId"] = context.SessionId,
+                    ["update"] = new JsonObject
                     {
-                        ["requestId"] = requestId,
-                        ["scope"] = request.Scope.ToString(),
-                        ["toolName"] = request.ToolName,
-                        ["prompt"] = request.Prompt,
-                        ["canRememberDecision"] = request.CanRememberDecision,
+                        ["sessionUpdate"] = "approvalRequest",
+                        ["approval"] = new JsonObject
+                        {
+                            ["requestId"] = requestId,
+                            ["scope"] = request.Scope.ToString(),
+                            ["toolName"] = request.ToolName,
+                            ["prompt"] = request.Prompt,
+                            ["canRememberDecision"] = request.CanRememberDecision,
+                        },
                     },
                 },
-            },
-        }).ConfigureAwait(false);
+            }).ConfigureAwait(false);
 
-        var response = await tcs.Task.ConfigureAwait(false);
-        return new ApprovalDecision(
-            request.Scope,
-            Approved: response.Approved,
-            RequestedBy: request.RequestedBy,
-            ResolvedBy: "acp",
-            Reason: response.Approved ? "Approved via ACP client." : "Denied via ACP client.",
-            ResolvedAtUtc: DateTimeOffset.UtcNow,
-            ExpiresAtUtc: null,
-            RememberForSession: response.Remember);
+            var response = await tcs.Task.ConfigureAwait(false);
+            return new ApprovalDecision(
+                request.Scope,
+                Approved: response.Approved,
+                RequestedBy: request.RequestedBy,
+                ResolvedBy: "acp",
+                Reason: response.Approved ? "Approved via ACP client." : "Denied via ACP client.",
+                ResolvedAtUtc: DateTimeOffset.UtcNow,
+                ExpiresAtUtc: null,
+                RememberForSession: response.Remember);
+        }
+        finally { pending.TryRemove(requestId, out _); }
     }
 
     /// <summary>
@@ -114,8 +128,7 @@ public sealed class AcpApprovalCoordinator
             return false;
         }
 
-        pendingApproval.Completion.TrySetResult((approved, remember));
-        return true;
+        return pendingApproval.Completion.TrySetResult((approved, remember));
     }
 
     private sealed record PendingApproval(

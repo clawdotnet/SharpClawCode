@@ -5,6 +5,8 @@ This extension launches the SharpClaw ACP host as a subprocess and uses it as th
 Available commands:
 
 - `SharpClaw: Prompt`
+- `SharpClaw: Steer Active Turn`
+- `SharpClaw: Cancel Active Turn`
 - `SharpClaw: Refresh Index`
 - `SharpClaw: Search Workspace`
 - `SharpClaw: Save Memory`
@@ -14,7 +16,7 @@ Available commands:
 What it currently does:
 
 - sends the active editor file and selection as `editorContext` on prompt requests
-- streams assistant output into the SharpClaw output channel
+- shows turn progress and the final assistant response in the SharpClaw output channel
 - surfaces approval prompts from the ACP host and routes the response back over `approval/respond`
 - refreshes and queries the workspace knowledge index
 - saves and lists structured project/user memory
@@ -27,3 +29,5 @@ dotnet run --project src/SharpClaw.Code.Cli -- acp
 ```
 
 Override that command through the `sharpClaw.cliCommand` and `sharpClaw.cliArgs` settings if you want to point the extension at an installed CLI or a different workspace layout.
+
+While a prompt runs, use **Steer Active Turn** to queue a correction or **Cancel Active Turn** to stop it. Commands target the active editor’s workspace folder. The output channel displays corrections that still need to be resubmitted when execution ends. Live controls require a host advertising `liveTurnControl`. Older hosts continue to support ordinary prompts.
