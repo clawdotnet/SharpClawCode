@@ -7,8 +7,10 @@ namespace SharpClaw.Code.Tools.Utilities;
 internal sealed class FileTextSnapshot(string text)
 {
     internal string Text { get; } = text;
-    internal string Id { get; } = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
+    internal string Id { get; } = ComputeId(text);
     internal int[] Starts { get; } = FindStarts(text);
+
+    internal static string ComputeId(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text)));
 
     internal int Offset(int line) => line == Starts.Length + 1 ? Text.Length : Starts[line - 1];
 

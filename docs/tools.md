@@ -32,6 +32,7 @@ From **`ToolsServiceCollectionExtensions`**:
 | Write file | **`WriteFileTool.ToolName`** |
 | Edit file | **`EditFileTool.ToolName`** |
 | Read snapshot | **`ReadFileSnapshotTool.ToolName`** (`read_file_snapshot`) |
+| Preview snapshot edit | **`PreviewFileSnapshotTool.ToolName`** (`preview_file_snapshot`) |
 | Edit snapshot | **`EditFileSnapshotTool.ToolName`** (`edit_file_snapshot`) |
 | Glob search | **`GlobSearchTool.ToolName`** |
 | Grep search | **`GrepSearchTool.ToolName`** |
@@ -64,6 +65,6 @@ Compiler-backed .NET tools are described in [.NET intelligence](dotnet-intellige
 
 The permission-gated `verify_workspace` tool and CLI/REPL equivalents are documented in [Verification](verification.md).
 
-The additive `read_file_snapshot` and `edit_file_snapshot` tools support bounded reads, stale-content rejection, and non-overlapping single-file edit batches through the same permission executor and mutation journal. Existing file-tool contracts are unchanged. See [snapshot editing](interactive-runtime.md#snapshot-aware-editing) for schemas, newline handling, and publication guarantees.
+Use `read_file_snapshot` to read bounded line windows, `preview_file_snapshot` to review exact before/after fragments, and `edit_file_snapshot` to apply a batch. Passing the preview ID to the write tool binds the apply request to the reviewed file and result. Successful writes participate in the mutation journal. Existing file-tool contracts are unchanged. See [snapshot editing](interactive-runtime.md#snapshot-aware-editing) for schemas, newline handling, and publication guarantees.
 
 Runtime provider context uses bounded previews for large tool results while retaining complete results and events. The permission-aware `read_tool_output` tool retrieves full text from session artifacts. See [runtime resilience](interactive-runtime.md#bounded-tool-output-and-overflow-recovery).

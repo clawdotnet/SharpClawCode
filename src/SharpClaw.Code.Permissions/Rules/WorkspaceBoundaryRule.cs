@@ -18,7 +18,7 @@ public sealed class WorkspaceBoundaryRule(IPathService pathService) : IPermissio
     {
         var pathsToCheck = request.ToolName switch
         {
-            "read_file" or "write_file" or "edit_file" or "read_file_snapshot" or "edit_file_snapshot"
+            "read_file" or "write_file" or "edit_file" or "read_file_snapshot" or "preview_file_snapshot" or "edit_file_snapshot"
                 => new[] { PermissionRuleHelpers.TryReadJsonString(request, "path") },
             "bash"
                 => new[] { PermissionRuleHelpers.TryReadJsonString(request, "workingDirectory") ?? request.WorkingDirectory ?? context.WorkingDirectory },

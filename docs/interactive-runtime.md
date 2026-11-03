@@ -25,6 +25,24 @@ Pass that identifier to `edit_file_snapshot`:
 
 Every line number addresses the original snapshot, even when earlier edits insert or remove lines. An edit replaces complete lines, including their terminators. `newText` supplies the exact replacement and any needed LF or CRLF terminators. Zero deleted lines inserts before `startLine`; `totalLineCount + 1` inserts at EOF. An empty file accepts insertion at line 1. Edits must not overlap or share an insertion point. A request accepts 1–100 edits to one file.
 
+To review an edit before applying it, send the same `path`, `snapshotId`, and `edits` to **`preview_file_snapshot`**. It works in read-only and plan modes. Each entry in `changes` gives the original line number, the number of lines to delete, and the exact `before` and `after` fragments, including line endings. The entries appear in original line order. The response contains `resultSnapshotId` for the proposed text and `previewId` for the canonical file path, original snapshot, and proposed result. A batch that leaves the text identical returns `unchanged`.
+
+To apply the reviewed result, include its `previewId` with the original arguments to `edit_file_snapshot`:
+
+```json
+{
+  "path": "src/Example.cs",
+  "snapshotId": "<original snapshotId>",
+  "previewId": "<previewId returned by preview_file_snapshot>",
+  "edits": [
+    {"startLine": 3, "deleteLineCount": 1, "newText": "    return result;\n"},
+    {"startLine": 8, "deleteLineCount": 0, "newText": "// Additional explanation\n"}
+  ]
+}
+```
+
+Application checks the source snapshot again, then compares the proposed result and file path to the preview. A changed source returns `staleSnapshot`. A different target or result returns `previewMismatch`. The preview ID is a consistency check. Applying any edit still requires the usual write permissions. Clients may continue to apply edits directly using only the original snapshot ID. Large previews use the same bounded tool output and artifact retrieval as other tool responses.
+
 The entire batch is validated before writing. The tool stages a complete replacement in the same directory, checks the original content again immediately before publication, and records one mutation with before/after text for existing checkpoint undo/redo. Failures return a structured status such as `staleSnapshot`, `invalidEdits`, or `notFound`. A stale snapshot requires a fresh read. Unchanged batches produce no mutation.
 
 Execution uses the normal `FileSystemWrite` policy and workspace resolver. Read-only and plan modes still block mutation. Snapshot writes share the semantic-write workspace lock with Roslyn rename. The final file replacement avoids partially written targets on cancellation; temporary files are cleaned up. Cancellation cannot interrupt the synchronous publication-to-journal-recording interval.
