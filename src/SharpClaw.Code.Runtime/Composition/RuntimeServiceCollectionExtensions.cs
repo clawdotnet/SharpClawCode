@@ -101,6 +101,16 @@ public static class RuntimeServiceCollectionExtensions
         }
 
         services.AddSharpClawAgents();
+        var compactionOptions = services.AddOptions<AutomaticCompactionOptions>();
+        if (configuration is not null) compactionOptions.Bind(configuration.GetSection("SharpClaw:Compaction"));
+        compactionOptions.Validate(options => options.ContextWindowTokens > 0 && options.ReservedOutputTokens >= 0
+            && options.SummaryMaxTokens > 0 && options.RetainedMessageCount >= 2 && options.TriggerRatio is > 0 and < 1
+            && options.ModelContextWindows.Values.All(value => value > 0), "Invalid automatic compaction budgets.").ValidateOnStart();
+        services.AddSingleton<SharpClaw.Code.Agents.Abstractions.IAgentContextManager, AutomaticContextManager>();
+        services.AddSingleton<LiveTurnControlService>();
+        services.AddSingleton<ILiveTurnControlService>(provider => provider.GetRequiredService<LiveTurnControlService>());
+        services.AddSingleton<SharpClaw.Code.Agents.Abstractions.IAgentTurnControlAccessor, LiveTurnSteeringService>();
+        services.AddSingleton<IRuntimeEventSink>(provider => provider.GetRequiredService<LiveTurnControlService>());
         services.AddSharpClawExternalAgents();
         services.AddSingleton<IExternalAgentConfigProvider, RuntimeExternalAgentConfigProvider>();
         services.AddSharpClawMemory();

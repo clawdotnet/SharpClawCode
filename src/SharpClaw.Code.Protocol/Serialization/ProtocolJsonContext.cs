@@ -16,6 +16,9 @@ namespace SharpClaw.Code.Protocol.Serialization;
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(CSharpToolArguments))]
+[JsonSerializable(typeof(ContextCompactedEvent))]
+[JsonSerializable(typeof(TurnSteeredEvent))]
+[JsonSerializable(typeof(CompactionWorkingState))]
 [JsonSerializable(typeof(CSharpReference))]
 [JsonSerializable(typeof(CSharpReferenceResult))]
 [JsonSerializable(typeof(CSharpTypeHierarchyResult))]

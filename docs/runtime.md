@@ -55,7 +55,7 @@ When the effective **`PrimaryMode`** is **`Spec`**, the assembler appends a stru
 
 When the effective **`PrimaryMode`** is **`Plan`**, the assembler now appends a deep-planning JSON contract that requires the model to return summary, assumptions, risks, next action, and task data.
 
-Conversation history is rebuilt from persisted session events and truncated by token budget before being attached to the next provider request. Assistant history prefers the persisted final turn output and only falls back to streamed provider deltas when needed.
+Conversation history is rebuilt from persisted session events, including completed primary-turn compaction snapshots and accepted steering. Before provider requests, automatic context maintenance can durably summarize older context while preserving recent complete tool exchanges. It no longer silently truncates history before maintenance. Assistant history prefers the persisted final turn output and only falls back to streamed provider deltas when needed. See [interactive runtime](interactive-runtime.md) for budgets, failure behavior, and live turn control.
 
 Cross-session memory is sourced from:
 
@@ -110,8 +110,8 @@ The parity layer adds several runtime-owned services:
 
 - **`ISharpClawConfigService`** — loads user/workspace `config.jsonc` + `sharpclaw.jsonc` and merges them by precedence
 - **`IAgentCatalogService`** — overlays configured specialist agents on top of built-in agents
-- **`IConversationCompactionService`** — creates durable session summaries stored in session metadata
-- compaction also promotes a project-scoped summary memory entry for later session recall
+- **`IConversationCompactionService`** — creates manual `/compact` summaries stored in session metadata and project-scoped summary memory
+- **`IAgentContextManager`** — performs automatic provider-context maintenance using durable compaction events; see [interactive runtime](interactive-runtime.md)
 - **`IShareSessionService`** — creates and removes self-hosted share snapshots
 - **`IHookDispatcher`** — executes configured hook processes for turn/tool/share/server events and exposes hook inspection/testing
 - **`ITodoService`** — persists session and workspace todo items under session metadata and `.sharpclaw/tasks.json`

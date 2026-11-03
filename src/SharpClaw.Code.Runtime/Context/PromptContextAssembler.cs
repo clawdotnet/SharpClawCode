@@ -270,7 +270,9 @@ public sealed class PromptContextAssembler(
                     .ReadAllAsync(workspaceRoot, session.Id, cancellationToken)
                     .ConfigureAwait(false);
                 var rawHistory = ConversationHistoryAssembler.Assemble(sessionEvents);
-                conversationHistory = ContextWindowManager.Truncate(rawHistory, ConversationHistoryCache.MaxHistoryTokenBudget);
+                // Context maintenance runs against the resolved provider/model before each request.
+                // Never silently discard old messages before they can be durably summarized.
+                conversationHistory = rawHistory;
                 ConversationHistoryCache.Store(workspaceRoot, session.Id, targetSequence, conversationHistory);
             }
         }

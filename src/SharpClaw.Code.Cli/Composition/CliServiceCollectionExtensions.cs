@@ -32,6 +32,8 @@ public static class CliServiceCollectionExtensions
         services.AddSingleton<ICommandRegistry, CommandRegistry>();
         services.AddSingleton<IReplHost, ReplHost>();
         services.AddSingleton<IReplTerminal, Terminal.SpectreReplTerminal>();
+        services.AddSingleton<ReplApprovalBroker>();
+        services.AddSingleton<SharpClaw.Code.Permissions.Abstractions.IApprovalTransport>(provider => provider.GetRequiredService<ReplApprovalBroker>());
         services.AddSingleton<ReplCommandHandler>();
         services.AddSingleton<SessionCommandHandler>();
         services.AddSingleton<PermissionsCommandHandler>();
