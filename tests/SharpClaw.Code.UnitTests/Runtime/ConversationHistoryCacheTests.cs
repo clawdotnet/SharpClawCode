@@ -9,6 +9,7 @@ namespace SharpClaw.Code.UnitTests.Runtime;
 /// <summary>
 /// Verifies the in-process conversation history cache evicts by recency rather than key ordering.
 /// </summary>
+[Collection("Conversation history cache isolation")]
 public sealed class ConversationHistoryCacheTests
 {
     private static readonly Type CacheType = typeof(PromptContextAssembler).Assembly
@@ -73,3 +74,7 @@ public sealed class ConversationHistoryCacheTests
             new ChatMessage("assistant", [new ContentBlock(ContentBlockKind.Text, text, null, null, null, null)])
         ];
 }
+
+/// <summary>Cache tests reset process-wide state and must not overlap runtime context tests.</summary>
+[CollectionDefinition("Conversation history cache isolation", DisableParallelization = true)]
+public sealed class ConversationHistoryCacheIsolationCollection;
