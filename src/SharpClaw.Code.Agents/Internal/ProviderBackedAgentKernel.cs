@@ -11,6 +11,7 @@ using SharpClaw.Code.Providers.Models;
 using SharpClaw.Code.Protocol.Enums;
 using SharpClaw.Code.Telemetry.Diagnostics;
 using SharpClaw.Code.Tools.Models;
+using SharpClaw.Code.Agents.Abstractions;
 
 namespace SharpClaw.Code.Agents.Internal;
 
@@ -26,7 +27,9 @@ public sealed class ProviderBackedAgentKernel(
     IOptions<AgentLoopOptions> loopOptions,
     IOptions<ProviderCatalogOptions> providerCatalogOptions,
     ISystemClock systemClock,
-    ILogger<ProviderBackedAgentKernel> logger)
+    ILogger<ProviderBackedAgentKernel> logger,
+    IAgentContextManager? contextManager = null,
+    IAgentTurnControlAccessor? turnControl = null)
 {
     internal async Task<ProviderInvocationResult> ExecuteAsync(
         AgentFrameworkRequest request,
@@ -178,12 +181,15 @@ public sealed class ProviderBackedAgentKernel(
             var allToolResults = new List<ToolResult>();
             var allToolEvents = new List<RuntimeEvent>();
             var outputSegments = new List<string>();
-            UsageSnapshot? terminalUsage = null;
+            UsageSnapshot? totalUsage = null;
+            var compactionUsage = new UsageSnapshot(0, 0, 0, 0, 0);
             ProviderRequest? lastProviderRequest = null;
 
+            var contextRecoveryAttempted = false;
             var iteration = 0;
             for (; iteration < options.MaxToolIterations; iteration++)
             {
+                await ApplySteeringAsync().ConfigureAwait(false);
                 UsageSnapshot? iterationUsage = null;
                 var iterationTextSegments = new List<string>();
                 var toolUseEvents = new List<ProviderEvent>();
@@ -209,7 +215,7 @@ public sealed class ProviderBackedAgentKernel(
                         OutputFormat: request.Context.OutputFormat,
                         Temperature: 0.1m,
                         Metadata: baseMetadata,
-                        Messages: messages,
+                        Messages: messages.ToArray(),
                         Tools: availableTools,
                         MaxTokens: options.MaxTokensPerRequest,
                         ContainsImageInput: messages.Any(static message => message.Content.Any(static block => block.Kind == ContentBlockKind.Image))));
@@ -218,9 +224,19 @@ public sealed class ProviderBackedAgentKernel(
                     var candidateToolUseEvents = new List<ProviderEvent>();
                     UsageSnapshot? candidateUsage = null;
 
+                    var providerStarted = false;
                     using var providerScope = new ProviderActivityScope(provider.ProviderName, candidateModel, providerRequest.Id);
                     try
                     {
+                        if (contextManager is not null)
+                        {
+                            var prepared = await contextManager.PrepareAsync(request.Context, provider, providerRequest, cancellationToken).ConfigureAwait(false);
+                            providerRequest = prepared.Request;
+                            messages = providerRequest.Messages?.ToList() ?? messages;
+                            if (prepared.CompactionUsage is { } used)
+                                compactionUsage = AddUsage(compactionUsage, used);
+                        }
+                        providerStarted = true;
                         var stream = await provider.StartStreamAsync(providerRequest, cancellationToken).ConfigureAwait(false);
                         await foreach (var providerEvent in stream.Events.WithCancellation(cancellationToken))
                         {
@@ -263,6 +279,18 @@ public sealed class ProviderBackedAgentKernel(
                     {
                         providerScope.SetError(exception.Message);
                         lastStreamFailure = exception;
+                        if (providerStarted && !contextRecoveryAttempted && contextManager is not null && ProviderStreamFailureClassifier.IsContextOverflow(exception))
+                        {
+                            contextRecoveryAttempted = true;
+                            var recovered = await contextManager.RecoverAsync(request.Context, provider, providerRequest, cancellationToken).ConfigureAwait(false);
+                            if (recovered is not null)
+                            {
+                                messages = recovered.Request.Messages?.ToList() ?? messages;
+                                if (recovered.CompactionUsage is { } recoveredUsage) compactionUsage = AddUsage(compactionUsage, recoveredUsage);
+                                candidateIndex--; // Retry this provider with a new request ID and fresh buffers.
+                                continue;
+                            }
+                        }
                         if (candidateIndex == providerCandidates.Count - 1)
                         {
                             break;
@@ -280,7 +308,8 @@ public sealed class ProviderBackedAgentKernel(
                     iterationTextSegments.AddRange(candidateTextSegments);
                     toolUseEvents.AddRange(candidateToolUseEvents);
                     iterationUsage = candidateUsage;
-                    terminalUsage = candidateUsage ?? terminalUsage;
+                    if (candidateUsage is not null)
+                        totalUsage = totalUsage is null ? candidateUsage : AddUsage(totalUsage, candidateUsage);
                     lastProviderRequest = providerRequest;
                     activeProviderIndex = candidateIndex;
                     activeProviderName = provider.ProviderName;
@@ -301,6 +330,9 @@ public sealed class ProviderBackedAgentKernel(
                 // If no tool-use events, accumulate text and break
                 if (toolUseEvents.Count == 0)
                 {
+                    // A correction arriving during the final stream must not disappear.
+                    messages.Add(new ChatMessage("assistant", [new(ContentBlockKind.Text, string.Concat(iterationTextSegments), null, null, null, null)]));
+                    if (iteration + 1 < options.MaxToolIterations && await ApplySteeringAsync().ConfigureAwait(false)) continue;
                     outputSegments.AddRange(iterationTextSegments);
                     break;
                 }
@@ -380,10 +412,12 @@ public sealed class ProviderBackedAgentKernel(
                     "Provider {ProviderName} returned no stream content for session {SessionId}; returning placeholder response.",
                     activeProviderName,
                     request.Context.SessionId);
-                return CreatePlaceholderResult(request, activeModel, $"Provider '{activeProviderName}' returned no content; using placeholder response.");
+                var placeholder = CreatePlaceholderResult(request, activeModel, $"Provider '{activeProviderName}' returned no content; using placeholder response.");
+                // Meter what the provider actually reported, not the synthetic placeholder estimate.
+                return placeholder with { Usage = AddUsage(totalUsage ?? placeholder.Usage, compactionUsage) };
             }
 
-            var usage = terminalUsage ?? new UsageSnapshot(
+            var usage = totalUsage ?? new UsageSnapshot(
                 InputTokens: request.Context.Prompt.Length,
                 OutputTokens: output.Length,
                 CachedInputTokens: 0,
@@ -394,6 +428,8 @@ public sealed class ProviderBackedAgentKernel(
                 ? $"Provider response from {activeProviderName}/{activeModel} is incomplete because the tool-calling loop reached the maximum of {options.MaxToolIterations} iterations."
                 : $"Streamed provider response from {activeProviderName}/{activeModel}.";
 
+            usage = AddUsage(usage, compactionUsage);
+
             return new ProviderInvocationResult(
                 Output: output,
                 Usage: usage,
@@ -402,6 +438,15 @@ public sealed class ProviderBackedAgentKernel(
                 ProviderEvents: allProviderEvents,
                 ToolResults: allToolResults.Count > 0 ? allToolResults : null,
                 ToolEvents: allToolEvents.Count > 0 ? allToolEvents : null);
+
+            async Task<bool> ApplySteeringAsync()
+            {
+                if (turnControl is null) return false;
+                var corrections = await turnControl.ConsumeSteeringAsync(request.Context, cancellationToken).ConfigureAwait(false);
+                foreach (var correction in corrections)
+                    messages.Add(new ChatMessage("user", [new(ContentBlockKind.Text, correction, null, null, null, null)]));
+                return corrections.Count > 0;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -425,6 +470,11 @@ public sealed class ProviderBackedAgentKernel(
                 exception);
         }
     }
+
+    private static UsageSnapshot AddUsage(UsageSnapshot left, UsageSnapshot right) => new(
+        left.InputTokens + right.InputTokens, left.OutputTokens + right.OutputTokens,
+        left.CachedInputTokens + right.CachedInputTokens, left.TotalTokens + right.TotalTokens,
+        left.EstimatedCostUsd is null || right.EstimatedCostUsd is null ? null : left.EstimatedCostUsd + right.EstimatedCostUsd);
 
     /// <summary>
     /// Backward-compatible overload for callers that do not need tool calling.

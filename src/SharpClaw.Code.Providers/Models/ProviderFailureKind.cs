@@ -19,4 +19,7 @@ public enum ProviderFailureKind
     /// The provider failed while starting or streaming the request.
     /// </summary>
     StreamFailed,
+
+    /// <summary>The provider rejected an input that exceeds its context window.</summary>
+    ContextWindowExceeded,
 }

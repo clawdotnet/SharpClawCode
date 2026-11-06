@@ -26,70 +26,91 @@ public sealed class AcpStdioHost(
     IProviderCatalogService providerCatalogService,
     AcpApprovalCoordinator approvalCoordinator,
     IPathService pathService,
-    ILogger<AcpStdioHost> logger)
+    ILogger<AcpStdioHost> logger,
+    ILiveTurnControlService? liveTurnControl)
 {
+    /// <summary>Creates a host with the original prompt and approval surface.</summary>
+    public AcpStdioHost(IConversationRuntime conversationRuntime, IWorkspaceSessionAttachmentStore attachmentStore,
+        IEditorContextBuffer editorContextBuffer, IWorkspaceIndexService workspaceIndexService,
+        IWorkspaceSearchService workspaceSearchService, IPersistentMemoryStore persistentMemoryStore,
+        IProviderCatalogService providerCatalogService, AcpApprovalCoordinator approvalCoordinator,
+        IPathService pathService, ILogger<AcpStdioHost> logger)
+        : this(conversationRuntime, attachmentStore, editorContextBuffer, workspaceIndexService, workspaceSearchService,
+            persistentMemoryStore, providerCatalogService, approvalCoordinator, pathService, logger, null) { }
+
     private readonly SemaphoreSlim writeLock = new(1, 1);
-    private Func<JsonObject, Task>? notificationWriter;
+    private int running;
 
     /// <summary>
     /// Processes newline-delimited JSON-RPC requests until the input stream ends.
     /// </summary>
     public async Task RunAsync(TextReader stdin, TextWriter stdout, CancellationToken cancellationToken)
     {
-        approvalCoordinator.Configure(
-            supportsApprovals: approvalCoordinator.SupportsApprovals,
-            notificationWriter: payload => WriteJsonLineAsync(stdout, payload, cancellationToken));
-        notificationWriter = payload => WriteJsonLineAsync(stdout, payload, cancellationToken);
-
+        if (Interlocked.Exchange(ref running, 1) != 0)
+            throw new InvalidOperationException("An ACP connection is already open on this host.");
+        using var disconnect = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        Task Notify(JsonObject payload) => WriteJsonLineAsync(stdout, payload, cancellationToken);
+        var live = new AcpLiveTurns(liveTurnControl, Notify, disconnect.Token);
+        approvalCoordinator.Configure(false, Notify);
         var inFlight = new List<Task>();
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var line = await stdin.ReadLineAsync(cancellationToken).ConfigureAwait(false);
-            if (line is null)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                break;
-            }
+                var line = await stdin.ReadLineAsync(cancellationToken).ConfigureAwait(false);
+                if (line is null)
+                {
+                    break;
+                }
 
-            if (string.IsNullOrWhiteSpace(line))
-            {
-                continue;
-            }
+                if (string.IsNullOrWhiteSpace(line))
+                {
+                    continue;
+                }
 
-            JsonNode? root;
+                JsonNode? root;
+                try
+                {
+                    root = JsonNode.Parse(line);
+                }
+                catch (JsonException ex)
+                {
+                    logger.LogWarning(ex, "ACP received non-JSON line.");
+                    await WriteErrorAsync(stdout, null, -32700, "Parse error.", cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                if (root is not JsonObject requestObject)
+                {
+                    await WriteErrorAsync(stdout, null, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
+                    continue;
+                }
+
+                inFlight.Add(ProcessRequestAsync(requestObject, live, stdout, cancellationToken));
+                inFlight.RemoveAll(static task => task.IsCompletedSuccessfully);
+            }
+        }
+        finally
+        {
             try
             {
-                root = JsonNode.Parse(line);
+                try { await disconnect.CancelAsync().ConfigureAwait(false); }
+                finally
+                {
+                    approvalCoordinator.CloseInput();
+                    await Task.WhenAll(inFlight).ConfigureAwait(false);
+                }
             }
-            catch (JsonException ex)
-            {
-                logger.LogWarning(ex, "ACP received non-JSON line.");
-                await WriteErrorAsync(stdout, null, -32700, "Parse error.", cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            if (root is not JsonObject requestObject)
-            {
-                await WriteErrorAsync(stdout, null, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
-                continue;
-            }
-
-            inFlight.Add(ProcessRequestAsync(requestObject, stdout, cancellationToken));
-            inFlight.RemoveAll(static task => task.IsCompleted);
-        }
-
-        if (inFlight.Count > 0)
-        {
-            await Task.WhenAll(inFlight).ConfigureAwait(false);
+            finally { Volatile.Write(ref running, 0); }
         }
     }
 
-    private async Task ProcessRequestAsync(JsonObject requestObject, TextWriter stdout, CancellationToken cancellationToken)
+    private async Task ProcessRequestAsync(JsonObject requestObject, AcpLiveTurns live, TextWriter stdout, CancellationToken cancellationToken)
     {
         var id = requestObject["id"];
-        var method = requestObject["method"]?.GetValue<string>();
-        if (!string.Equals(requestObject["jsonrpc"]?.GetValue<string>(), "2.0", StringComparison.Ordinal)
-            || string.IsNullOrWhiteSpace(method)
-            || id is null)
+        if (requestObject["jsonrpc"] is not JsonValue version || !version.TryGetValue<string>(out var protocol) || protocol != "2.0"
+            || requestObject["method"] is not JsonValue name || !name.TryGetValue<string>(out var method) || string.IsNullOrWhiteSpace(method)
+            || id is not JsonValue)
         {
             await WriteErrorAsync(stdout, id, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
             return;
@@ -97,13 +118,13 @@ public sealed class AcpStdioHost(
 
         try
         {
-            var response = await DispatchAsync(method, requestObject["params"], stdout, cancellationToken).ConfigureAwait(false);
+            var response = await DispatchAsync(method, id, requestObject["params"], live, stdout, cancellationToken).ConfigureAwait(false);
             await WriteResponseAsync(stdout, id, response, cancellationToken).ConfigureAwait(false);
         }
-        catch (AcpJsonRpcException ex)
+        catch (AcpRequestException ex)
         {
             logger.LogWarning(ex, "ACP request failed for method {Method} with JSON-RPC error {Code}.", method, ex.Code);
-            await WriteErrorAsync(stdout, id, ex.Code, ex.Message, cancellationToken).ConfigureAwait(false);
+            await WriteErrorAsync(stdout, id, ex.Code, ex.Message, cancellationToken, ex.Details).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -114,15 +135,21 @@ public sealed class AcpStdioHost(
 
     private async Task<JsonNode?> DispatchAsync(
         string method,
+        JsonNode id,
         JsonNode? parameters,
+        AcpLiveTurns live,
         TextWriter stdout,
         CancellationToken cancellationToken)
         => method switch
         {
-            "initialize" => await Task.FromResult<JsonNode?>(HandleInitialize(parameters)).ConfigureAwait(false),
+            "initialize" => await Task.FromResult<JsonNode?>(HandleInitialize(parameters, stdout, cancellationToken)).ConfigureAwait(false),
             "session/new" => await HandleSessionNewAsync(parameters, cancellationToken).ConfigureAwait(false),
             "session/load" => await HandleSessionLoadAsync(parameters, cancellationToken).ConfigureAwait(false),
+            "session/prompt" when parameters?["liveTurnControl"]?.GetValue<bool>() == true =>
+                await live.RunAsync(id, RequireWorkspace(parameters), RequireSession(parameters), token => HandleSessionPromptAsync(parameters, stdout, token, id)).ConfigureAwait(false),
             "session/prompt" => await HandleSessionPromptAsync(parameters, stdout, cancellationToken).ConfigureAwait(false),
+            "session/steer" => live.Control(RequireWorkspace(parameters), parameters, cancel: false),
+            "session/cancel" => live.Control(RequireWorkspace(parameters), parameters, cancel: true),
             "models/list" => await HandleModelsListAsync(cancellationToken).ConfigureAwait(false),
             "workspace/index/refresh" => await HandleWorkspaceIndexRefreshAsync(parameters, cancellationToken).ConfigureAwait(false),
             "workspace/search" => await HandleWorkspaceSearchAsync(parameters, cancellationToken).ConfigureAwait(false),
@@ -130,21 +157,20 @@ public sealed class AcpStdioHost(
             "memory/save" => await HandleMemorySaveAsync(parameters, cancellationToken).ConfigureAwait(false),
             "memory/delete" => await HandleMemoryDeleteAsync(parameters, cancellationToken).ConfigureAwait(false),
             "approval/respond" => await HandleApprovalRespondAsync(parameters).ConfigureAwait(false),
-            _ => throw new AcpJsonRpcException(-32601, $"Method '{method}' was not found.")
+            _ => throw new AcpRequestException(-32601, $"Method '{method}' was not found.")
         };
 
-    private JsonObject HandleInitialize(JsonNode? parameters)
+    private JsonObject HandleInitialize(JsonNode? parameters, TextWriter stdout, CancellationToken cancellationToken)
     {
         var supportsApprovals = parameters?["clientCapabilities"]?["approvalRequests"]?.GetValue<bool>() ?? false;
         approvalCoordinator.Configure(
             supportsApprovals,
-            payload => notificationWriter is null
-                ? Task.CompletedTask
-                : notificationWriter(payload));
+            payload => WriteJsonLineAsync(stdout, payload, cancellationToken));
 
         var capabilities = new JsonObject
         {
             ["loadSession"] = true,
+            ["liveTurnControl"] = liveTurnControl is not null,
             ["approvalRequests"] = true,
             ["models"] = true,
             ["workspaceSearch"] = true,
@@ -211,12 +237,16 @@ public sealed class AcpStdioHost(
         };
     }
 
+    private static string RequireSession(JsonNode? parameters)
+        => parameters?["sessionId"]?.GetValue<string>() ?? throw new AcpRequestException(-32602, "sessionId is required.");
+
     private async Task<JsonObject> HandleSessionPromptAsync(
         JsonNode? parameters,
         TextWriter stdout,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        JsonNode? promptRequestId = null)
     {
-        var sessionId = parameters?["sessionId"]?.GetValue<string>() ?? throw new InvalidOperationException("session/prompt requires sessionId.");
+        var sessionId = RequireSession(parameters);
         var workspace = RequireWorkspace(parameters);
         var promptText = ExtractPromptText(parameters?["prompt"]);
         var metadata = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -247,26 +277,25 @@ public sealed class AcpStdioHost(
                 cancellationToken)
             .ConfigureAwait(false);
 
-        await WriteJsonLineAsync(
-            stdout,
-            new JsonObject
+        var notification = new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["method"] = "session/notification",
+            ["params"] = new JsonObject
             {
-                ["jsonrpc"] = "2.0",
-                ["method"] = "session/notification",
-                ["params"] = new JsonObject
+                ["sessionId"] = sessionId,
+                ["update"] = new JsonObject
                 {
-                    ["sessionId"] = sessionId,
-                    ["update"] = new JsonObject
+                    ["sessionUpdate"] = "agentMessageChunk",
+                    ["chunk"] = new JsonObject
                     {
-                        ["sessionUpdate"] = "agentMessageChunk",
-                        ["chunk"] = new JsonObject
-                        {
-                            ["content"] = new JsonObject { ["type"] = "text", ["text"] = turn.FinalOutput ?? string.Empty },
-                        },
+                        ["content"] = new JsonObject { ["type"] = "text", ["text"] = turn.FinalOutput ?? string.Empty },
                     },
                 },
             },
-            cancellationToken).ConfigureAwait(false);
+        };
+        if (promptRequestId is not null) notification["params"]!["promptRequestId"] = promptRequestId.DeepClone();
+        await WriteJsonLineAsync(stdout, notification, cancellationToken).ConfigureAwait(false);
 
         return new JsonObject
         {
@@ -367,7 +396,7 @@ public sealed class AcpStdioHost(
     {
         if (node.Deserialize(ProtocolJsonContext.Default.EditorContextPayload) is { } payload)
         {
-            return string.IsNullOrWhiteSpace(payload.SessionId) ? payload with { SessionId = sessionId } : payload;
+            return payload with { WorkspaceRoot = workspaceRoot, SessionId = sessionId };
         }
 
         return new EditorContextPayload(
@@ -427,23 +456,10 @@ public sealed class AcpStdioHost(
             },
             cancellationToken);
 
-    private Task WriteErrorAsync(TextWriter stdout, JsonNode? id, int code, string message, CancellationToken cancellationToken)
-        => WriteJsonLineAsync(
-            stdout,
-            new JsonObject
-            {
-                ["jsonrpc"] = "2.0",
-                ["id"] = id?.DeepClone(),
-                ["error"] = new JsonObject
-                {
-                    ["code"] = code,
-                    ["message"] = message,
-                },
-            },
-            cancellationToken);
-
-    private sealed class AcpJsonRpcException(int code, string message) : Exception(message)
+    private Task WriteErrorAsync(TextWriter stdout, JsonNode? id, int code, string message, CancellationToken cancellationToken, JsonObject? details = null)
     {
-        public int Code { get; } = code;
+        var error = new JsonObject { ["code"] = code, ["message"] = message };
+        if (details is { Count: > 0 }) error["data"] = details;
+        return WriteJsonLineAsync(stdout, new JsonObject { ["jsonrpc"] = "2.0", ["id"] = id?.DeepClone(), ["error"] = error }, cancellationToken);
     }
 }

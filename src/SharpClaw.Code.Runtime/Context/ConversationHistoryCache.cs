@@ -15,6 +15,12 @@ internal static class ConversationHistoryCache
     private static readonly ConcurrentDictionary<string, CacheEntry> Cache = new(StringComparer.Ordinal);
     private static long accessCounter;
 
+    internal static void Invalidate(string workspaceRoot, string sessionId)
+    {
+        Cache[CreateKey(workspaceRoot, sessionId)] = new CacheEntry(-1, [], Interlocked.Increment(ref accessCounter));
+        EvictOverflow();
+    }
+
     public static bool TryGet(
         string workspaceRoot,
         string sessionId,
@@ -50,6 +56,7 @@ internal static class ConversationHistoryCache
     public static void StoreCompletedTurn(string workspaceRoot, string sessionId, ConversationTurn completedTurn)
     {
         ArgumentNullException.ThrowIfNull(completedTurn);
+        if (Cache.TryGetValue(CreateKey(workspaceRoot, sessionId), out var entry) && entry.CompletedTurnSequence == -1) return;
         if (completedTurn.SequenceNumber <= 0 || string.IsNullOrWhiteSpace(completedTurn.Output))
         {
             return;
@@ -75,7 +82,7 @@ internal static class ConversationHistoryCache
             workspaceRoot,
             sessionId,
             completedTurn.SequenceNumber,
-            ContextWindowManager.Truncate(updatedHistory, MaxHistoryTokenBudget));
+            updatedHistory);
     }
 
     private static ChatMessage CreateMessage(string role, string text)

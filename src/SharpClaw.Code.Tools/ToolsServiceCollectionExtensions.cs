@@ -59,6 +59,9 @@ public static class ToolsServiceCollectionExtensions
 
     private static IServiceCollection AddSharpClawToolsCore(IServiceCollection services)
     {
+        services.AddSingleton<ISharpClawTool, ReadFileSnapshotTool>();
+        services.AddSingleton<ISharpClawTool, PreviewFileSnapshotTool>();
+        services.AddSingleton<ISharpClawTool, EditFileSnapshotTool>();
         services.AddSingleton<ReadFileTool>();
         services.AddSingleton<WriteFileTool>();
         services.AddSingleton<EditFileTool>();

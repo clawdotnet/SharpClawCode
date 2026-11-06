@@ -101,6 +101,16 @@ public static class RuntimeServiceCollectionExtensions
         }
 
         services.AddSharpClawAgents();
+        var compactionOptions = services.AddOptions<AutomaticCompactionOptions>();
+        if (configuration is not null) compactionOptions.Bind(configuration.GetSection("SharpClaw:Compaction"));
+        compactionOptions.Validate(options => options.ContextWindowTokens > 0 && options.ReservedOutputTokens >= 0
+            && options.SummaryMaxTokens > 0 && options.MaxSummaryCalls > 0 && options.RetainedMessageCount >= 2 && options.TriggerRatio is > 0 and < 1
+            && options.ModelContextWindows.Values.All(value => value > 0), "Invalid automatic compaction budgets.").ValidateOnStart();
+        services.AddSingleton<SharpClaw.Code.Agents.Abstractions.IAgentContextManager, AutomaticContextManager>();
+        services.AddSingleton<LiveTurnControlService>();
+        services.AddSingleton<ILiveTurnControlService>(provider => provider.GetRequiredService<LiveTurnControlService>());
+        services.AddSingleton<SharpClaw.Code.Agents.Abstractions.IAgentTurnControlAccessor, LiveTurnSteeringService>();
+        services.AddSingleton<IRuntimeEventSink>(provider => provider.GetRequiredService<LiveTurnControlService>());
         services.AddSharpClawExternalAgents();
         services.AddSingleton<IExternalAgentConfigProvider, RuntimeExternalAgentConfigProvider>();
         services.AddSharpClawMemory();
@@ -127,6 +137,12 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IRuntimeEventPersistence, EventStoreRuntimeEventPersistence>();
         services.AddSingleton<ICheckpointStore, FileCheckpointStore>();
         services.AddSingleton<IMutationSetStore, FileMutationSetStore>();
+        services.AddSingleton<IToolOutputArtifactStore, FileToolOutputArtifactStore>();
+        var toolOutputOptions = services.AddOptions<ToolOutputOptions>();
+        if (configuration is not null) toolOutputOptions.Bind(configuration.GetSection("SharpClaw:ToolOutput"));
+        toolOutputOptions.Validate(options => options.MaxCharacters >= 2048, "Tool output previews require at least 2048 characters.").ValidateOnStart();
+        services.AddSingleton<SharpClaw.Code.Agents.Abstractions.IToolResultContextFormatter, ToolResultContextFormatter>();
+        services.AddSingleton<ISharpClawTool, SharpClaw.Code.Runtime.Tools.ReadToolOutputTool>();
         services.AddSingleton<IWorkspaceSessionAttachmentStore, FileWorkspaceSessionAttachmentStore>();
         services.AddSingleton<IEditorContextBuffer, EditorContextBuffer>();
         services.AddSingleton<MutationWorkspaceApplier>();

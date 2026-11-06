@@ -139,6 +139,27 @@ public sealed class AutomaticVerificationTests
         File.ReadAllText(Path.Combine(fixture.Root, "Source.cs")).Should().Be("original");
     }
 
+    /// <summary>Corrections consumed by the initial run and a repair are retained by subsequent repairs exactly once.</summary>
+    [Fact]
+    public async Task Repair_history_preserves_accepted_steering_across_each_attempt()
+    {
+        using var fixture = new Fixture();
+        var agent = new RecordingAgent();
+        using var provider = Provider(agent, new FixedVerification());
+        var events = provider.GetRequiredService<IEventStore>();
+        agent.AfterWriteAsync = async context =>
+        {
+            if (agent.Calls <= 2)
+                await events.AppendAsync(context.WorkingDirectory, context.SessionId,
+                    new TurnSteeredEvent("correction-" + agent.Calls, context.SessionId, context.TurnId, DateTimeOffset.UtcNow, "Constraint " + agent.Calls), CancellationToken.None);
+        };
+        await provider.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request(fixture.Root, 2), CancellationToken.None);
+        agent.Contexts[1].ConversationHistory!.SelectMany(message => message.Content).Should().ContainSingle(block => block.Text == "Constraint 1");
+        var finalHistory = agent.Contexts[2].ConversationHistory!.SelectMany(message => message.Content).ToArray();
+        finalHistory.Should().ContainSingle(block => block.Text == "Constraint 1");
+        finalHistory.Should().ContainSingle(block => block.Text == "Constraint 2");
+    }
+
     private static RunPromptRequest Request(string root, int budget) => new("make the change", null, root, PermissionMode.DangerFullAccess, OutputFormat.Json,
         new() { [SharpClawWorkflowMetadataKeys.VerificationEnabled] = "true", [SharpClawWorkflowMetadataKeys.VerificationMaxRepairIterations] = budget.ToString(), [SharpClawWorkflowMetadataKeys.VerificationTimeoutSeconds] = "900" }, AgentId: "fixture-agent", IsInteractive: false);
     private static ServiceProvider Provider(RecordingAgent agent, FixedVerification verification)
@@ -162,6 +183,7 @@ public sealed class AutomaticVerificationTests
         internal int Calls { get; private set; }
         internal List<AgentRunContext> Contexts { get; } = [];
         internal Action? AfterWrite { get; set; }
+        internal Func<AgentRunContext, Task>? AfterWriteAsync { get; set; }
         public async Task<AgentRunResult> RunAsync(AgentRunContext context, CancellationToken cancellationToken)
         {
             Calls++;
@@ -170,6 +192,7 @@ public sealed class AutomaticVerificationTests
             var result = await context.ToolExecutor.ExecuteAsync("write_file", JsonSerializer.Serialize(new { path = "Source.cs", content = "state" + Calls }), toolContext, cancellationToken);
             result.Result.Succeeded.Should().BeTrue(result.Result.ErrorMessage);
             AfterWrite?.Invoke();
+            if (AfterWriteAsync is not null) await AfterWriteAsync(context);
             return Result(context) with { ToolResults = [result.Result] };
         }
         internal static AgentRunResult Result(AgentRunContext context)

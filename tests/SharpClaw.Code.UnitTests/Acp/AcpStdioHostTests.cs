@@ -1,7 +1,14 @@
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
+using SharpClaw.Code.Permissions.Models;
+using SharpClaw.Code.Protocol.Events;
+using SharpClaw.Code.Runtime.Turns;
 using FluentAssertions;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Permissions.Abstractions;
+using SharpClaw.Code.Runtime;
 using SharpClaw.Code.Acp;
 using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Memory.Abstractions;
@@ -64,11 +71,10 @@ public sealed class AcpStdioHostTests
         var runtime = new StubConversationRuntime();
         var editorBuffer = new StubEditorContextBuffer();
         var host = CreateHost(runtime, editorBuffer);
-        using var initInput = new StringReader("""{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"approvalRequests":true}}}""");
-        using var initOutput = new StringWriter(new StringBuilder());
-        await host.RunAsync(initInput, initOutput, CancellationToken.None);
-
-        using var promptInput = new StringReader("""{"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"cwd":"/tmp/workspace","sessionId":"session-1","model":"ollama/qwen2.5-coder","prompt":"Summarize","editorContext":{"workspaceRoot":"/tmp/workspace","currentFilePath":"/tmp/workspace/src/App.cs","selection":{"start":0,"end":9,"text":"Summarize"}}}}""");
+        using var promptInput = new StringReader("""
+            {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"clientCapabilities":{"approvalRequests":true}}}
+            {"jsonrpc":"2.0","id":2,"method":"session/prompt","params":{"cwd":"/tmp/workspace","sessionId":"session-1","model":"ollama/qwen2.5-coder","prompt":"Summarize","editorContext":{"workspaceRoot":"/tmp/another-workspace","sessionId":"unrelated","currentFilePath":"/tmp/workspace/src/App.cs","selection":{"start":0,"end":9,"text":"Summarize"}}}}
+            """);
         using var promptOutput = new StringWriter(new StringBuilder());
         await host.RunAsync(promptInput, promptOutput, CancellationToken.None);
 
@@ -77,7 +83,9 @@ public sealed class AcpStdioHostTests
         runtime.LastRequest.Metadata!["model"].Should().Be("ollama/qwen2.5-coder");
         runtime.LastRequest.IsInteractive.Should().BeTrue();
         editorBuffer.LastPublished.Should().NotBeNull();
-        editorBuffer.LastPublished!.CurrentFilePath.Should().Be("/tmp/workspace/src/App.cs");
+        editorBuffer.LastPublished!.SessionId.Should().Be("session-1");
+        editorBuffer.LastPublished.WorkspaceRoot.Should().Be(NormalizePath("/tmp/workspace"));
+        editorBuffer.LastPublished.CurrentFilePath.Should().Be("/tmp/workspace/src/App.cs");
     }
 
     [Fact]
@@ -198,13 +206,116 @@ public sealed class AcpStdioHostTests
         ReadResponseResult(deleteOutput, "delete")["deleted"]!.GetValue<bool>().Should().BeTrue();
     }
 
+    [Fact]
+    public async Task Live_controls_match_prompt_session_and_workspace_and_return_unconsumed_steering()
+    {
+        var controls = new LiveTurnControlService();
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (request, token) =>
+            {
+                var evt = new TurnSteeredEvent("event", request.SessionId!, "turn", DateTimeOffset.UtcNow, "private correction");
+                await controls.PublishAsync(new("turnSteered", evt.OccurredAtUtc, evt, SessionId: request.SessionId), token);
+                await Task.Delay(Timeout.Infinite, token);
+            }
+        };
+        var host = CreateHost(runtime, controls: controls);
+        using var input = new StringReader("""
+            {"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}
+            {"jsonrpc":"2.0","id":"a","method":"session/prompt","params":{"cwd":".","sessionId":"one","prompt":"work","liveTurnControl":true}}
+            {"jsonrpc":"2.0","id":"b","method":"session/prompt","params":{"cwd":".","sessionId":"two","prompt":"work","liveTurnControl":true}}
+            {"jsonrpc":"2.0","id":"wrong-session","method":"session/cancel","params":{"cwd":".","sessionId":"two","promptRequestId":"a"}}
+            {"jsonrpc":"2.0","id":"wrong-workspace","method":"session/cancel","params":{"cwd":"another","sessionId":"one","promptRequestId":"a"}}
+            {"jsonrpc":"2.0","id":"wrong-id","method":"session/cancel","params":{"cwd":".","sessionId":"one","promptRequestId":"previous"}}
+            {"jsonrpc":"2.0","id":"steer-a","method":"session/steer","params":{"cwd":".","sessionId":"one","promptRequestId":"a","text":"keep API"}}
+            {"jsonrpc":"2.0","id":"cancel-a","method":"session/cancel","params":{"cwd":".","sessionId":"one","promptRequestId":"a"}}
+            {"jsonrpc":"2.0","id":"steer-b","method":"session/steer","params":{"cwd":".","sessionId":"two","promptRequestId":"b","text":"add tests"}}
+            """);
+        using var output = new StringWriter();
+        await host.RunAsync(input, output, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        ReadResponseResult(output, "init")["agentCapabilities"]!["liveTurnControl"]!.GetValue<bool>().Should().BeTrue();
+        foreach (var id in new[] { "wrong-session", "wrong-workspace", "wrong-id" })
+            ReadResponseResult(output, id)["accepted"]!.GetValue<bool>().Should().BeFalse();
+        foreach (var id in new[] { "steer-a", "cancel-a", "steer-b" })
+            ReadResponseResult(output, id)["accepted"]!.GetValue<bool>().Should().BeTrue();
+        ReadResponseResult(output, "a")["stopReason"]!.GetValue<string>().Should().Be("cancelled");
+        ReadResponseResult(output, "a")["pendingSteering"]![0]!.GetValue<string>().Should().Be("keep API");
+        ReadResponseResult(output, "b")["stopReason"]!.GetValue<string>().Should().Be("cancelled", "EOF releases the other live turn");
+        ReadResponseResult(output, "b")["pendingSteering"]![0]!.GetValue<string>().Should().Be("add tests");
+        var notifications = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => JsonNode.Parse(line)!).Where(message => message["method"] is not null).ToArray();
+        notifications.Select(message => (message["params"]!["sessionId"]!.GetValue<string>(), message["params"]!["promptRequestId"]!.GetValue<string>()))
+            .Should().BeEquivalentTo([("one", "a"), ("two", "b")]);
+        output.ToString().Should().NotContain("private correction");
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Cancellation_or_EOF_settles_a_pending_approval(bool cancel)
+    {
+        var approvals = new AcpApprovalCoordinator();
+        bool? approved = null;
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (request, token) =>
+            {
+                var decision = await approvals.RequestApprovalAsync(new(ApprovalScope.ShellExecution, "bash", "Allow?", "test", true),
+                    new(request.SessionId!, ".", ".", PermissionMode.WorkspaceWrite, null, false, true, PermissionRequestSourceKind.Runtime, "acp", null, null), token);
+                approved = decision.Approved;
+            }
+        };
+        var host = CreateHost(runtime, controls: new LiveTurnControlService(), approvals: approvals);
+        var lines = """
+            {"jsonrpc":"2.0","id":"init","method":"initialize","params":{"clientCapabilities":{"approvalRequests":true}}}
+            {"jsonrpc":"2.0","id":"prompt","method":"session/prompt","params":{"cwd":".","sessionId":"s","prompt":"run"}}
+            """;
+        if (cancel) lines = lines.Replace("\"prompt\":\"run\"", "\"prompt\":\"run\",\"liveTurnControl\":true") + "\n" +
+            """{"jsonrpc":"2.0","id":"cancel","method":"session/cancel","params":{"cwd":".","sessionId":"s","promptRequestId":"prompt"}}""";
+        using var output = new StringWriter();
+        await host.RunAsync(new StringReader(lines), output, CancellationToken.None).WaitAsync(TimeSpan.FromSeconds(10));
+        var notification = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => JsonNode.Parse(line)!).Single(message => message["params"]?["update"]?["sessionUpdate"]?.GetValue<string>() == "approvalRequest");
+        approvals.TryResolve(notification["params"]!["update"]!["approval"]!["requestId"]!.GetValue<string>(), true, true).Should().BeFalse();
+        ReadResponseResult(output, "prompt")["stopReason"]!.GetValue<string>().Should().Be(cancel ? "cancelled" : "endTurn");
+        approved.Should().NotBe(true);
+    }
+
+    [Theory]
+    [InlineData(null, false)]
+    [InlineData("other", false)]
+    [InlineData("tenant", true)]
+    public async Task Required_host_identity_is_checked_before_an_editor_can_grant_approval(string? identityTenant, bool allowed)
+    {
+        using var services = new ServiceCollection().AddSharpClawRuntime().AddSharpClawAcp().BuildServiceProvider();
+        var principal = identityTenant is null ? null : new ApprovalPrincipal("editor-user", TenantId: identityTenant);
+        using var identity = services.GetRequiredService<IApprovalPrincipalAccessor>().BeginScope(principal,
+            new(ApprovalAuthMode.TrustedHeader, true, true, RequireAuthenticatedApprovals: true));
+        var coordinator = services.GetRequiredService<AcpApprovalCoordinator>();
+        var shown = false;
+        coordinator.Configure(true, notification =>
+        {
+            shown = true;
+            coordinator.TryResolve(notification["params"]!["update"]!["approval"]!["requestId"]!.GetValue<string>(), true, false);
+            return Task.CompletedTask;
+        });
+        var result = await services.GetRequiredService<IApprovalService>().RequestApprovalAsync(
+            new(ApprovalScope.ShellExecution, "bash", "Allow?", "test", false),
+            new("s", ".", ".", PermissionMode.WorkspaceWrite, null, false, true, PermissionRequestSourceKind.Runtime, "acp", null, null, TenantId: "tenant"),
+            CancellationToken.None);
+        result.Approved.Should().Be(allowed);
+        shown.Should().Be(allowed);
+        if (allowed) result.Principal.Should().Be(principal);
+    }
+
     private static AcpStdioHost CreateHost(
         StubConversationRuntime? runtime = null,
         StubEditorContextBuffer? editorBuffer = null,
         StubWorkspaceIndexService? workspaceIndexService = null,
         StubWorkspaceSearchService? workspaceSearchService = null,
         StubPersistentMemoryStore? persistentMemoryStore = null,
-        StubProviderCatalogService? providerCatalogService = null)
+        StubProviderCatalogService? providerCatalogService = null,
+        LiveTurnControlService? controls = null, AcpApprovalCoordinator? approvals = null)
         => new(
             runtime ?? new StubConversationRuntime(),
             new StubAttachmentStore(),
@@ -213,9 +324,9 @@ public sealed class AcpStdioHostTests
             workspaceSearchService ?? new StubWorkspaceSearchService(),
             persistentMemoryStore ?? new StubPersistentMemoryStore(),
             providerCatalogService ?? new StubProviderCatalogService(),
-            new AcpApprovalCoordinator(),
+            approvals ?? new AcpApprovalCoordinator(),
             new PathService(),
-            NullLogger<AcpStdioHost>.Instance);
+            NullLogger<AcpStdioHost>.Instance, controls);
 
     private static System.Text.Json.Nodes.JsonNode ReadResponseResult(StringWriter output, string id)
     {
@@ -240,6 +351,7 @@ public sealed class AcpStdioHostTests
 
     private sealed class StubConversationRuntime : IConversationRuntime
     {
+        public Func<RunPromptRequest, CancellationToken, Task>? DuringPrompt { get; init; }
         public RunPromptRequest? LastRequest { get; private set; }
 
         public Task<ConversationSession> CreateSessionAsync(string workspacePath, PermissionMode permissionMode, OutputFormat outputFormat, CancellationToken cancellationToken)
@@ -256,17 +368,18 @@ public sealed class AcpStdioHostTests
         public Task<ConversationSession?> GetSessionAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
             => Task.FromResult<ConversationSession?>(new ConversationSession(sessionId, "Loaded", SessionLifecycleState.Active, PermissionMode.WorkspaceWrite, OutputFormat.Json, workspacePath, workspacePath, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null));
 
-        public Task<TurnExecutionResult> RunPromptAsync(RunPromptRequest request, CancellationToken cancellationToken)
+        public async Task<TurnExecutionResult> RunPromptAsync(RunPromptRequest request, CancellationToken cancellationToken)
         {
             LastRequest = request;
-            return Task.FromResult(new TurnExecutionResult(
+            if (DuringPrompt is not null) await DuringPrompt(request, cancellationToken);
+            return new TurnExecutionResult(
                 new ConversationSession("session-1", "Prompt", SessionLifecycleState.Active, PermissionMode.WorkspaceWrite, OutputFormat.Json, request.WorkingDirectory ?? "/tmp/workspace", request.WorkingDirectory ?? "/tmp/workspace", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null),
                 new ConversationTurn("turn-1", "session-1", 1, request.Prompt, "ok", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "primary-coding-agent", null, null, null),
                 "ok",
                 [],
                 null,
                 null,
-                []));
+                []);
         }
     }
 

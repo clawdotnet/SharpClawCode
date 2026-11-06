@@ -18,6 +18,7 @@ public static class InfrastructureServiceCollectionExtensions
     public static IServiceCollection AddSharpClawInfrastructure(this IServiceCollection services)
     {
         services.AddSingleton<IFileSystem, LocalFileSystem>();
+        services.AddSingleton<IConditionalFileWriter, ConditionalFileWriter>();
         services.AddSingleton<ISystemClock, SystemClock>();
         services.AddSingleton<IPathService, PathService>();
         services.AddSingleton<IProcessRunner, ProcessRunner>();

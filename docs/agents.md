@@ -32,9 +32,9 @@ All concrete agents inherit **`SharpClawAgentBase`**, which implements **`RunAsy
 
 ## Tools and the agent path
 
-**`AgentRunContext`** includes **`IToolExecutor`**, but **`AgentFrameworkBridge`** does **not** currently register SharpClaw tools with the Microsoft Agent Framework tool-calling pipeline; **`AgentRunResult.ToolResults`** is an empty array in that bridge.
+**`AgentFrameworkBridge`** builds the permission-aware tool execution context and supplies registry definitions to **`ProviderBackedAgentKernel`**. The kernel owns the multi-iteration provider tool loop and uses **`ToolCallDispatcher`** to execute tools through **`IToolExecutor`**. The bridge returns the collected tool results in **`AgentRunResult.ToolResults`**.
 
-Tools remain available to **`DefaultTurnRunner`** consumers if a different agent implementation uses **`IToolExecutor`**; tests and parity harness exercise **`IToolExecutor`** directly.
+At complete tool boundaries, the kernel accepts queued steering and invokes the optional **`IAgentContextManager`** registered by Runtime for durable automatic compaction. Neither path bypasses tool permissions. See [interactive runtime](interactive-runtime.md).
 
 ## Metadata
 

@@ -138,6 +138,7 @@ Primary workflow modes:
 | Capability | Why it matters |
 |---|---|
 | Durable sessions | Persist conversation state, turn history, checkpoints, and recovery metadata for longer-running agent work |
+| Interactive execution | Snapshot-aware batch edits, durable automatic context compaction, live tool progress, steering, and turn-scoped cancellation |
 | Permission-aware tools | Route file, shell, and plugin-backed actions through explicit policy and approval decisions |
 | Provider abstraction | Run against Anthropic and OpenAI-compatible backends through a typed runtime surface |
 | Local runtime catalog | Surface Ollama, llama.cpp, and other OpenAI-compatible profiles with health, model discovery, and embedding defaults |
@@ -247,6 +248,7 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `m
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | Solution layout, dependencies, and execution flows |
 | [docs/runtime.md](docs/runtime.md) | Turns, `ConversationRuntime`, and runtime coordinators |
+| [docs/interactive-runtime.md](docs/interactive-runtime.md) | Snapshot editing, automatic compaction, live control, and configuration |
 | [docs/sessions.md](docs/sessions.md) | Session snapshots and append-only event logs |
 | [docs/providers.md](docs/providers.md) | `IModelProvider`, configuration, and provider integration |
 | [docs/tools.md](docs/tools.md) | Tool registry, executor behavior, and built-ins |
