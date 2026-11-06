@@ -39,10 +39,6 @@ internal static class AnthropicMessageBuilder
 
     private static MessageParam BuildMessageParam(ChatMessage message)
     {
-        var role = message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase)
-            ? Role.Assistant
-            : Role.User;
-
         var contentBlocks = new List<ContentBlockParam>(message.Content.Count);
         foreach (var block in message.Content)
         {
@@ -53,11 +49,9 @@ internal static class AnthropicMessageBuilder
             }
         }
 
-        return new MessageParam
-        {
-            Role = role,
-            Content = contentBlocks,
-        };
+        return message.Role.Equals("assistant", StringComparison.OrdinalIgnoreCase)
+            ? new AssistantMessageParam { Content = contentBlocks }
+            : new UserMessageParam { Content = contentBlocks };
     }
 
     private static ContentBlockParam? BuildContentBlockParam(Protocol.Models.ContentBlock block)

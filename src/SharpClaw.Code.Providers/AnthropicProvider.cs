@@ -111,9 +111,8 @@ public sealed class AnthropicProvider(
                 Model = modelId,
                 Messages =
                 [
-                    new MessageParam
+                    new UserMessageParam
                     {
-                        Role = Role.User,
                         Content = request.Prompt,
                     },
                 ],
