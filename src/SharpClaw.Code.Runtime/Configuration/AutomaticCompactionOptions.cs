@@ -17,4 +17,6 @@ public sealed class AutomaticCompactionOptions
     public int SummaryMaxTokens { get; set; } = 4096;
     /// <summary>Recent messages retained verbatim, extended to keep tool exchanges intact.</summary>
     public int RetainedMessageCount { get; set; } = 6;
+    /// <summary>Maximum tool-free summary calls per compaction, bounding work on unusually large archives.</summary>
+    public int MaxSummaryCalls { get; set; } = 32;
 }

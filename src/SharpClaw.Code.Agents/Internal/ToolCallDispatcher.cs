@@ -15,7 +15,8 @@ namespace SharpClaw.Code.Agents.Internal;
 /// </summary>
 public sealed class ToolCallDispatcher(
     IToolExecutor toolExecutor,
-    ISubAgentOrchestrator subAgentOrchestrator)
+    ISubAgentOrchestrator subAgentOrchestrator,
+    IToolResultContextFormatter? contextFormatter = null)
 {
     /// <summary>
     /// Executes a tool call and returns a tool-result content block.
@@ -43,7 +44,9 @@ public sealed class ToolCallDispatcher(
 
         if (string.Equals(toolName, SubAgentToolContract.ToolName, StringComparison.OrdinalIgnoreCase))
         {
-            return await DispatchSubAgentsAsync(toolUseEvent, toolUseId, toolInputJson, context, cancellationToken).ConfigureAwait(false);
+            var delegated = await DispatchSubAgentsAsync(toolUseEvent, toolUseId, toolInputJson, context, cancellationToken).ConfigureAwait(false);
+            if (contextFormatter is not null) delegated.ResultBlock = await contextFormatter.PrepareAsync(delegated.ResultBlock, toolName, context, cancellationToken).ConfigureAwait(false);
+            return delegated;
         }
 
         // Execute the tool — ToolExecutor already publishes ToolStartedEvent and ToolCompletedEvent
@@ -72,6 +75,8 @@ public sealed class ToolCallDispatcher(
                 null,
                 true);
         }
+
+        if (contextFormatter is not null) resultBlock = await contextFormatter.PrepareAsync(resultBlock, toolName, context, cancellationToken).ConfigureAwait(false);
 
         // Events are already published by ToolExecutor; return empty list to avoid duplicates.
         return (resultBlock, envelope.Result, []);

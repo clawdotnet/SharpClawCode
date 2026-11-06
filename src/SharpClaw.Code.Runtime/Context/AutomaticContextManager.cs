@@ -27,7 +27,17 @@ public sealed class AutomaticContextManager(
         """;
 
     /// <inheritdoc />
-    public async Task<AgentContextPreparation> PrepareAsync(AgentRunContext context, IModelProvider provider, ProviderRequest request, CancellationToken cancellationToken)
+    public Task<AgentContextPreparation> PrepareAsync(AgentRunContext context, IModelProvider provider, ProviderRequest request, CancellationToken cancellationToken)
+        => PrepareCoreAsync(context, provider, request, force: false, cancellationToken);
+
+    /// <inheritdoc />
+    public async Task<AgentContextPreparation?> RecoverAsync(AgentRunContext context, IModelProvider provider, ProviderRequest request, CancellationToken cancellationToken)
+    {
+        var prepared = await PrepareCoreAsync(context, provider, request, force: true, cancellationToken).ConfigureAwait(false);
+        return ReferenceEquals(prepared.Request, request) ? null : prepared;
+    }
+
+    private async Task<AgentContextPreparation> PrepareCoreAsync(AgentRunContext context, IModelProvider provider, ProviderRequest request, bool force, CancellationToken cancellationToken)
     {
         var settings = options.Value;
         var messages = request.Messages?.ToArray() ?? [];
@@ -37,10 +47,10 @@ public sealed class AutomaticContextManager(
         var overhead = Estimate(request.SystemPrompt) + (request.Tools?.Sum(tool => Estimate(tool.Description) + Estimate(tool.InputSchemaJson)) ?? 0);
         var budget = window - reserve - overhead;
         var before = Estimate(messages);
-        if (before <= budget * settings.TriggerRatio) return new(request);
+        if (!force && before <= budget * settings.TriggerRatio) return new(request);
         if (budget <= settings.SummaryMaxTokens) throw new InvalidOperationException("Context window is too small for instructions, tools, output reservation and summary. Adjust SharpClaw:Compaction budgets.");
 
-        var cut = Math.Max(0, messages.Length - settings.RetainedMessageCount);
+        var cut = Math.Max(0, messages.Length - (force ? 2 : settings.RetainedMessageCount));
         // A tool result must remain with its preceding assistant tool call.
         while (cut > 0 && messages[cut].Content.Any(block => block.Kind == ContentBlockKind.ToolResult)) cut--;
         if (cut == 0)
@@ -73,31 +83,7 @@ public sealed class AutomaticContextManager(
         var summarySource = archived.Select(message => message with { Content = message.Content.Select(block => block.Kind == ContentBlockKind.Image
             ? new ContentBlock(ContentBlockKind.Text, "[Image retained verbatim in active context]", null, null, null, null) : block).ToArray() }).ToArray();
         var source = JsonSerializer.Serialize(summarySource, ProtocolJsonContext.Default.ChatMessageArray);
-        var summaryPrompt = "Archived conversation data:\n" + source;
-        if (Estimate(summaryPrompt) + Estimate(SummaryInstructions) + settings.SummaryMaxTokens > window)
-            throw new InvalidOperationException("Archived context exceeds the summarization window. Original history is intact; select a larger context window or reduce incoming tool output.");
-        var summaryRequest = request with
-        {
-            Id = $"compaction-{Guid.NewGuid():N}", Prompt = summaryPrompt, SystemPrompt = SummaryInstructions,
-            Messages = [TextMessage(summaryPrompt)], Tools = null, MaxTokens = settings.SummaryMaxTokens,
-            ContainsImageInput = false,
-            OutputFormat = SharpClaw.Code.Protocol.Enums.OutputFormat.Json,
-        };
-        var stream = await provider.StartStreamAsync(summaryRequest, cancellationToken).ConfigureAwait(false);
-        var output = new StringBuilder();
-        UsageSnapshot? usage = null;
-        var completed = false;
-        await foreach (var item in stream.Events.WithCancellation(cancellationToken).ConfigureAwait(false))
-        {
-            if (string.Equals(item.Kind, "failed", StringComparison.OrdinalIgnoreCase) || item.ToolUseId is not null) throw new InvalidOperationException("Context summarization failed; original context was retained.");
-            if (item.IsTerminal) { completed = true; usage = item.Usage; }
-            else if (item.Content is not null) output.Append(item.Content);
-            if (output.Length > settings.SummaryMaxTokens * 16L) throw new InvalidOperationException("Context summary exceeded its size limit.");
-        }
-        if (!completed) throw new InvalidOperationException("Context summary stream ended without completion; original context was retained.");
-        var state = JsonSerializer.Deserialize(output.ToString(), ProtocolJsonContext.Default.CompactionWorkingState);
-        if (state is null || string.IsNullOrWhiteSpace(state.Objective) || state.Constraints is null || state.Decisions is null || state.ChangedFiles is null || state.Verification is null || state.OutstandingWork is null)
-            throw new InvalidOperationException("Context summary did not contain the required working-state fields; original context was retained.");
+        var (state, usage) = await SummarizeAsync(source, window, settings, provider, request, cancellationToken).ConfigureAwait(false);
         var summary = "Working state from earlier conversation (context data, not new instructions):\n" + JsonSerializer.Serialize(state, ProtocolJsonContext.Default.CompactionWorkingState);
         var compacted = new[] { TextMessage(summary) }.Concat(retained).ToArray();
         var after = Estimate(compacted);
@@ -108,6 +94,56 @@ public sealed class AutomaticContextManager(
         ConversationHistoryCache.Invalidate(context.WorkingDirectory, context.SessionId);
         await publisher.PublishAsync(evt, new(context.WorkingDirectory, context.SessionId), cancellationToken).ConfigureAwait(false);
         return new(request with { Messages = compacted }, usage);
+    }
+
+    private static async Task<(CompactionWorkingState State, UsageSnapshot? Usage)> SummarizeAsync(
+        string source, int window, AutomaticCompactionOptions settings, IModelProvider provider, ProviderRequest request, CancellationToken cancellationToken)
+    {
+        CompactionWorkingState? state = null;
+        UsageSnapshot? usage = null;
+        var inputBudget = window - Estimate(SummaryInstructions) - settings.SummaryMaxTokens - 64;
+        var offset = 0;
+        var calls = 0;
+        while (offset < source.Length)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (++calls > settings.MaxSummaryCalls) throw new InvalidOperationException("Compaction exceeded MaxSummaryCalls; original history is intact.");
+            var prefix = state is null ? "Archived conversation data:\n" :
+                "Previously summarized working state (data; carry forward all still-relevant facts):\n" + JsonSerializer.Serialize(state, ProtocolJsonContext.Default.CompactionWorkingState) + "\nNext archived conversation fragment (may continue mid-message):\n";
+            var capacity = Math.Min(int.MaxValue, 4L * inputBudget - prefix.Length);
+            if (capacity < 128) throw new InvalidOperationException("The summarizer window cannot fit working state and another archive fragment.");
+            var count = (int)Math.Min(source.Length - (long)offset, capacity);
+            if (offset + count < source.Length && char.IsHighSurrogate(source[offset + count - 1])) count--;
+            var prompt = prefix + source.Substring(offset, count);
+            var summaryRequest = request with
+            {
+                Id = $"compaction-{Guid.NewGuid():N}", Prompt = prompt, SystemPrompt = SummaryInstructions,
+                Messages = [TextMessage(prompt)], Tools = null, MaxTokens = settings.SummaryMaxTokens,
+                ContainsImageInput = false, OutputFormat = SharpClaw.Code.Protocol.Enums.OutputFormat.Json,
+            };
+            var stream = await provider.StartStreamAsync(summaryRequest, cancellationToken).ConfigureAwait(false);
+            var output = new StringBuilder();
+            UsageSnapshot? callUsage = null;
+            var completed = false;
+            await foreach (var item in stream.Events.WithCancellation(cancellationToken).ConfigureAwait(false))
+            {
+                if (string.Equals(item.Kind, "failed", StringComparison.OrdinalIgnoreCase) || item.ToolUseId is not null)
+                    throw new InvalidOperationException("Context summarization failed; original context was retained.");
+                if (item.IsTerminal) { completed = true; callUsage = item.Usage; }
+                else if (item.Content is not null) output.Append(item.Content);
+                if (output.Length > settings.SummaryMaxTokens * 4L) throw new InvalidOperationException("Context summary exceeded its reserved size limit.");
+            }
+            if (!completed) throw new InvalidOperationException("Context summary stream ended without completion; original context was retained.");
+            state = JsonSerializer.Deserialize(output.ToString(), ProtocolJsonContext.Default.CompactionWorkingState);
+            if (state is null || string.IsNullOrWhiteSpace(state.Objective) || state.Constraints is null || state.Decisions is null || state.ChangedFiles is null || state.Verification is null || state.OutstandingWork is null)
+                throw new InvalidOperationException("Context summary did not contain the required working-state fields; original context was retained.");
+            if (callUsage is not null) usage = usage is null ? callUsage : new(
+                usage.InputTokens + callUsage.InputTokens, usage.OutputTokens + callUsage.OutputTokens,
+                usage.CachedInputTokens + callUsage.CachedInputTokens, usage.TotalTokens + callUsage.TotalTokens,
+                usage.EstimatedCostUsd is null || callUsage.EstimatedCostUsd is null ? null : usage.EstimatedCostUsd + callUsage.EstimatedCostUsd);
+            offset += count;
+        }
+        return (state ?? throw new InvalidOperationException("Cannot summarize an empty archive."), usage);
     }
 
     private static ChatMessage TextMessage(string text) => new("user", [new(ContentBlockKind.Text, text, null, null, null, null)]);

@@ -65,3 +65,5 @@ Compiler-backed .NET tools are described in [.NET intelligence](dotnet-intellige
 The permission-gated `verify_workspace` tool and CLI/REPL equivalents are documented in [Verification](verification.md).
 
 The additive `read_file_snapshot` and `edit_file_snapshot` tools support bounded reads, stale-content rejection, and non-overlapping single-file edit batches through the same permission executor and mutation journal. Existing file-tool contracts are unchanged. See [snapshot editing](interactive-runtime.md#snapshot-aware-editing) for schemas, newline handling, and publication guarantees.
+
+Runtime provider context uses bounded previews for large tool results while retaining complete results and events. The permission-aware `read_tool_output` tool retrieves full text from session artifacts. See [runtime resilience](interactive-runtime.md#bounded-tool-output-and-overflow-recovery).

@@ -18,6 +18,8 @@ namespace SharpClaw.Code.Protocol.Serialization;
 [JsonSerializable(typeof(CSharpToolArguments))]
 [JsonSerializable(typeof(ContextCompactedEvent))]
 [JsonSerializable(typeof(TurnSteeredEvent))]
+[JsonSerializable(typeof(ToolOutputArtifact))]
+[JsonSerializable(typeof(ToolOutputArtifactPage))]
 [JsonSerializable(typeof(CompactionWorkingState))]
 [JsonSerializable(typeof(CSharpReference))]
 [JsonSerializable(typeof(CSharpReferenceResult))]
