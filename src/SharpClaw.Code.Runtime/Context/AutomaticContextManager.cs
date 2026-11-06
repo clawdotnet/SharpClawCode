@@ -46,9 +46,9 @@ public sealed class AutomaticContextManager(
         var reserve = Math.Max(settings.ReservedOutputTokens, request.MaxTokens ?? 0);
         var overhead = Estimate(request.SystemPrompt) + (request.Tools?.Sum(tool => Estimate(tool.Description) + Estimate(tool.InputSchemaJson)) ?? 0);
         var budget = window - reserve - overhead;
-        if (budget <= settings.SummaryMaxTokens) throw new InvalidOperationException("Context window is too small for instructions, tools, output reservation and summary. Adjust SharpClaw:Compaction budgets.");
         var before = Estimate(messages);
         if (!force && before <= budget * settings.TriggerRatio) return new(request);
+        if (budget <= settings.SummaryMaxTokens) throw new InvalidOperationException("Context window is too small for instructions, tools, output reservation and summary. Adjust SharpClaw:Compaction budgets.");
 
         var cut = Math.Max(0, messages.Length - (force ? 2 : settings.RetainedMessageCount));
         // A tool result must remain with its preceding assistant tool call.
@@ -60,13 +60,15 @@ public sealed class AutomaticContextManager(
         }
         var archived = messages[..cut];
         var retained = messages[cut..].ToList();
-        // Keep the active user request verbatim even when compacting a long tool-loop turn.
+        // Keep the turn's original request and its latest correction verbatim even when compacting a long tool-loop turn.
         var activePrompt = messages.LastOrDefault(message => message.Role == "user" && message.Content.Any(block => block.Kind == ContentBlockKind.Text) && message.Content.All(block => block.Kind != ContentBlockKind.ToolResult));
+        var originalPrompt = string.IsNullOrEmpty(request.Prompt) ? null
+            : messages.LastOrDefault(message => message.Role == "user" && message.Content.Any(block => block.Kind == ContentBlockKind.Text && block.Text == request.Prompt));
         var pinnedIndices = new SortedSet<int>();
         for (var i = 0; i < archived.Length; i++)
         {
             var message = archived[i];
-            if (!ReferenceEquals(message, activePrompt) && message.Role is not ("system" or "developer")
+            if (!ReferenceEquals(message, activePrompt) && !ReferenceEquals(message, originalPrompt) && message.Role is not ("system" or "developer")
                 && !message.Content.Any(block => block.Kind == ContentBlockKind.Image)) continue;
             pinnedIndices.Add(i);
             // Image-bearing tool exchanges are retained together, just like recent exchanges.

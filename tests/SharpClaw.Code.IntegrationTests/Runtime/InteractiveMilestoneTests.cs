@@ -59,6 +59,7 @@ public sealed class InteractiveMilestoneTests : IDisposable
         var control = services.GetRequiredService<ILiveTurnControlService>();
         var publisher = services.GetRequiredService<IRuntimeEventPublisher>();
         var ready = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var firstCancelled = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         var count = 0;
         async Task RunAsync(string id)
         {
@@ -70,7 +71,13 @@ public sealed class InteractiveMilestoneTests : IDisposable
             (await reader.MoveNextAsync().AsTask().WaitAsync(TimeSpan.FromSeconds(10))).Should().BeTrue();
             reader.Current.SessionId.Should().Be(id);
             handle.CancellationToken.IsCancellationRequested.Should().BeFalse();
-            if (id == "first") handle.Cancel();
+            if (id == "first") { handle.Cancel(); firstCancelled.TrySetResult(); }
+            else
+            {
+                // Check again after the other flow cancels, so a cancel-all regression cannot pass by ordering.
+                await firstCancelled.Task.WaitAsync(TimeSpan.FromSeconds(10));
+                handle.CancellationToken.IsCancellationRequested.Should().BeFalse();
+            }
         }
         await Task.WhenAll(Task.Run(() => RunAsync("first")), Task.Run(() => RunAsync("second")));
     }

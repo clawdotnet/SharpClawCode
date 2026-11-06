@@ -412,7 +412,9 @@ public sealed class ProviderBackedAgentKernel(
                     "Provider {ProviderName} returned no stream content for session {SessionId}; returning placeholder response.",
                     activeProviderName,
                     request.Context.SessionId);
-                return CreatePlaceholderResult(request, activeModel, $"Provider '{activeProviderName}' returned no content; using placeholder response.");
+                var placeholder = CreatePlaceholderResult(request, activeModel, $"Provider '{activeProviderName}' returned no content; using placeholder response.");
+                // Meter what the provider actually reported, not the synthetic placeholder estimate.
+                return placeholder with { Usage = AddUsage(totalUsage ?? placeholder.Usage, compactionUsage) };
             }
 
             var usage = totalUsage ?? new UsageSnapshot(
