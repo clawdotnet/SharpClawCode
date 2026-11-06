@@ -54,6 +54,53 @@ if (args.Length > 0 && args[0] == "--parallel-search")
     return;
 }
 
+if (args.Length > 0 && args[0] == "--deed-page")
+{
+    int? ttlSeconds = null;
+    var validUsage = args.Length is 2 or 3;
+    if (validUsage && args.Length == 3)
+    {
+        validUsage = int.TryParse(args[2], out var ttl) && ttl > 0;
+        ttlSeconds = validUsage ? ttl : null;
+    }
+
+    if (!validUsage)
+    {
+        Console.Error.WriteLine("Usage: --deed-page <folder> [ttl-seconds]");
+        Environment.ExitCode = 2;
+        return;
+    }
+
+    using var cancellation = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+    Console.CancelKeyPress += (_, eventArgs) =>
+    {
+        eventArgs.Cancel = true;
+        cancellation.Cancel();
+    };
+
+    var workspace = Directory.GetCurrentDirectory();
+    var context = new SharpClaw.Code.Tools.Models.ToolExecutionContext(
+        Guid.NewGuid().ToString("N"), "deed-page-example", workspace, workspace,
+        PermissionMode.WorkspaceWrite, OutputFormat.Text, null,
+        AllowedTools: [DeedPageExample.ToolName], IsInteractive: true);
+
+    try
+    {
+        Console.WriteLine($"Publishing '{args[1]}' to deed.page. The site will be public"
+            + (ttlSeconds is null ? "." : $" and expire after {ttlSeconds} seconds."));
+        var arguments = await DeedPageExample.CreatePublishArgumentsAsync(args[1], ttlSeconds, cancellation.Token);
+        var envelope = await DeedPageExample.ExecuteAsync(arguments, context, cancellation.Token);
+        Console.WriteLine(envelope.Result.Output ?? envelope.Result.ErrorMessage);
+        Environment.ExitCode = envelope.Result.Succeeded ? 0 : 1;
+    }
+    catch (Exception exception) when (exception is not OutOfMemoryException)
+    {
+        Console.Error.WriteLine(exception.Message);
+        Environment.ExitCode = 1;
+    }
+    return;
+}
+
 var builder = Host.CreateApplicationBuilder(args);
 builder.Services.AddSharpClawRuntime(builder.Configuration);
 
