@@ -87,7 +87,7 @@
     "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.6",
     "@types/vscode": "^1.144.0",
     "typescript": "^7.0.2"
   }
