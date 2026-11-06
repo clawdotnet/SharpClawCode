@@ -73,6 +73,21 @@ public sealed class ConversationHistoryAssemblerTests
     }
 
     [Fact]
+    public void Preserves_accepted_corrections_from_an_interrupted_turn_without_fabricating_an_answer()
+    {
+        RuntimeEvent[] events =
+        [
+            MakeStarted("turn-1", "Investigate"),
+            new TurnSteeredEvent("steering", "session-1", "turn-1", Now, "Keep the API unchanged"),
+        ];
+
+        var result = ConversationHistoryAssembler.Assemble(events);
+        result.Should().HaveCount(2).And.OnlyContain(message => message.Role == "user");
+        result.SelectMany(message => message.Content).Select(block => block.Text)
+            .Should().Equal("Investigate", "Keep the API unchanged");
+    }
+
+    [Fact]
     public void Assembles_user_assistant_pairs_from_completed_turns()
     {
         var events = new RuntimeEvent[]

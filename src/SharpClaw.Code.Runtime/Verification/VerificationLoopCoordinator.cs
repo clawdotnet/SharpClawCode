@@ -31,6 +31,7 @@ public sealed class VerificationLoopCoordinator(IToolExecutor tools, IEventStore
         var completed = prior.OfType<VerificationCompletedEvent>().LastOrDefault();
         var aggregate = initial;
         var report = completed?.Report;
+        var replayedCorrections = new HashSet<string>(StringComparer.Ordinal);
         var history = new List<ChatMessage>(context.ConversationHistory ?? []);
         history.Add(new("user", context.UserContent ?? [Text(context.Prompt)]));
         if (report is null) report = await VerifyAsync(consumed).ConfigureAwait(false);
@@ -40,6 +41,14 @@ public sealed class VerificationLoopCoordinator(IToolExecutor tools, IEventStore
             await PublishAsync(new VerificationRepairStartedEvent(Id(), context.SessionId, context.TurnId, DateTimeOffset.UtcNow, attempt), cancellationToken).ConfigureAwait(false);
             history.Add(new("assistant", [Text(DotNetDiagnosticParser.Bound(aggregate.Output, 4000))]));
             if (aggregate.ToolResults is { Count: > 0 }) history.Add(new("user", [Text("Prior tool results: " + DotNetDiagnosticParser.Bound(string.Join('\n', aggregate.ToolResults.Select(result => result.ToolName + ": " + (result.StructuredOutputJson ?? result.Output ?? result.ErrorMessage))), 6000))]));
+            // Kernel-consumed steering is no longer in the live queue. Replay it from the log
+            // before every repair, including corrections accepted during a previous repair.
+            if (!string.IsNullOrWhiteSpace(context.SessionId))
+            {
+                var latest = await events.ReadAllAsync(context.WorkingDirectory, context.SessionId, cancellationToken).ConfigureAwait(false);
+                foreach (var correction in latest.OfType<TurnSteeredEvent>().Where(item => item.TurnId == context.TurnId))
+                    if (replayedCorrections.Add(correction.EventId)) history.Add(new("user", [Text(correction.Message)]));
+            }
             var prompt = VerificationFailureContextFormatter.Format(context.Prompt, aggregate.Output, report, attempt, limit);
             try
             {

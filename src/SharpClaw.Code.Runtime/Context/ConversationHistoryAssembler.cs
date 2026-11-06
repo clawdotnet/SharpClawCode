@@ -10,13 +10,13 @@ public static class ConversationHistoryAssembler
 {
     /// <summary>
     /// Converts a flat list of runtime events into an ordered conversation history.
-    /// Only completed turns (those with both a <see cref="TurnStartedEvent"/> and a
-    /// <see cref="TurnCompletedEvent"/>) contribute to the returned messages.
+    /// Completed turns contribute their conversation; interrupted turns retain accepted user corrections
+    /// and their original request without inventing an assistant response.
     /// </summary>
     /// <param name="events">The full ordered event log for a session.</param>
     /// <returns>
     /// An array of <see cref="ChatMessage"/> objects in chronological turn order,
-    /// alternating user / assistant pairs.
+    /// incorporating the latest completed primary compaction snapshot and subsequent steering.
     /// </returns>
     public static ChatMessage[] Assemble(IReadOnlyList<RuntimeEvent> events)
     {
@@ -57,17 +57,36 @@ public static class ConversationHistoryAssembler
             var started = bucket.OfType<TurnStartedEvent>().FirstOrDefault();
             var completed = bucket.OfType<TurnCompletedEvent>().FirstOrDefault();
 
-            // Skip incomplete turns.
-            if (started is null || completed is null)
+            if (started is null) continue;
+            if (completed is null)
             {
+                // Accepted steering is durable even when cancellation prevents a final answer.
+                // An unfinished compaction must not replace history from completed turns.
+                var corrections = bucket.OfType<TurnSteeredEvent>().ToArray();
+                if (corrections.Length > 0)
+                {
+                    messages.Add(new ChatMessage("user", [new(ContentBlockKind.Text, started.Turn.Input ?? string.Empty, null, null, null, null)]));
+                    foreach (var correction in corrections)
+                        messages.Add(new ChatMessage("user", [new(ContentBlockKind.Text, correction.Message, null, null, null, null)]));
+                }
                 continue;
             }
 
             // User message: the raw input for the turn.
             var userInput = started.Turn.Input ?? string.Empty;
-            messages.Add(new ChatMessage(
+            var compaction = bucket.OfType<ContextCompactedEvent>().LastOrDefault(item => item.IsPrimaryRun);
+            if (compaction is not null)
+            {
+                messages.Clear();
+                messages.AddRange(compaction.Messages);
+            }
+            else messages.Add(new ChatMessage(
                 "user",
                 [new ContentBlock(ContentBlockKind.Text, userInput, null, null, null, null)]));
+
+            var replayEvents = compaction is null ? bucket : bucket.Skip(bucket.IndexOf(compaction) + 1);
+            foreach (var correction in replayEvents.OfType<TurnSteeredEvent>())
+                messages.Add(new ChatMessage("user", [new(ContentBlockKind.Text, correction.Message, null, null, null, null)]));
 
             // Assistant message: prefer the persisted turn output; fall back to accumulated deltas.
             string assistantText;

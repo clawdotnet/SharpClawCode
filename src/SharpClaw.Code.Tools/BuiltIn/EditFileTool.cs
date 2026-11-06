@@ -36,6 +36,8 @@ public sealed class EditFileTool(IFileSystem fileSystem, IPathService pathServic
         var arguments = DeserializeArguments<EditFileToolArguments>(request);
         var pathResolver = new WorkspacePathResolver(pathService);
         var fullPath = pathResolver.ResolvePath(context, arguments.Path);
+        // Share the semantic-write lock with snapshot edits and Roslyn rename, so their staged publication cannot overwrite this write.
+        await using var writeLock = await fileSystem.AcquireExclusiveFileLockAsync(pathResolver.ResolvePath(context, ".sharpclaw/locks/semantic-write.lock"), cancellationToken).ConfigureAwait(false);
         var content = await fileSystem.ReadAllTextIfExistsAsync(fullPath, cancellationToken).ConfigureAwait(false);
         if (content is null)
         {
