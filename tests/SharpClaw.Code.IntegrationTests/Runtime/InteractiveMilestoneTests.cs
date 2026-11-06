@@ -30,17 +30,33 @@ public sealed class InteractiveMilestoneTests : IDisposable
     private readonly string workspace = Path.Combine(Path.GetTempPath(), $"sharpclaw-milestone-{Guid.NewGuid():N}");
 
     /// <summary>Snapshot mutations integrate with durable checkpoint undo/redo across host instances.</summary>
-    [Fact]
-    public async Task Snapshot_edit_survives_restart_and_uses_existing_undo_redo()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Snapshot_edit_survives_restart_and_uses_existing_undo_redo(bool previewFirst)
     {
         Directory.CreateDirectory(workspace);
         var path = Path.Combine(workspace, "editable.txt");
         await File.WriteAllTextAsync(path, "before\r\n");
         string sessionId;
-        using (var services = Services(new ScenarioProvider { SnapshotEdit = true }))
+        var provider = new ScenarioProvider { SnapshotEdit = true, PreviewFirst = previewFirst };
+        using (var services = Services(provider))
         {
             var result = await services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Edit the file.") with { PermissionMode = PermissionMode.WorkspaceWrite }, CancellationToken.None);
             result.ToolResults.Should().Contain(item => item.ToolName == "edit_file_snapshot" && item.Succeeded);
+            if (previewFirst)
+            {
+                var advertised = provider.Requests.First().Tools!;
+                var previewTool = advertised.Single(item => item.Name == "preview_file_snapshot");
+                JsonNode.Parse(previewTool.InputSchemaJson ?? throw new InvalidOperationException("Preview schema missing."))!["properties"]!["edits"].Should().NotBeNull();
+                var applySchema = JsonNode.Parse(advertised.Single(item => item.Name == "edit_file_snapshot").InputSchemaJson ?? throw new InvalidOperationException("Apply schema missing."))!;
+                applySchema["properties"]!["previewId"].Should().NotBeNull();
+                applySchema["required"]!.AsArray().Select(node => node!.GetValue<string>()).Should().NotContain("previewId");
+                result.ToolResults.Select(item => item.ToolName).Should().Equal("read_file_snapshot", "preview_file_snapshot", "edit_file_snapshot");
+                var preview = JsonNode.Parse(result.ToolResults[1].StructuredOutputJson!)!;
+                var applied = JsonNode.Parse(result.ToolResults[2].StructuredOutputJson!)!;
+                applied["snapshotId"]!.GetValue<string>().Should().Be(preview["resultSnapshotId"]!.GetValue<string>());
+            }
             sessionId = result.Session.Id;
             (await File.ReadAllTextAsync(path)).Should().Be("after\r\n");
         }
@@ -336,6 +352,7 @@ public sealed class InteractiveMilestoneTests : IDisposable
         public bool RepeatOverflow { get; init; }
         public bool BlockFirstResponse { get; init; }
         public bool SnapshotEdit { get; init; }
+        public bool PreviewFirst { get; init; }
         public ConcurrentQueue<ProviderRequest> Requests { get; } = new();
         public TaskCompletionSource Started { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -368,12 +385,19 @@ public sealed class InteractiveMilestoneTests : IDisposable
             }
             else if (SnapshotEdit && index == 1)
                 yield return new("read", request.Id, "tool_use", DateTimeOffset.UtcNow, null, false, null, "tool_use", "read-snapshot", "read_file_snapshot", """{"path":"editable.txt"}""");
-            else if (SnapshotEdit && index == 2)
+            else if (SnapshotEdit && (index == 2 || (PreviewFirst && index == 3)))
             {
-                var text = request.Messages!.SelectMany(item => item.Content).Last(item => item.Kind == ContentBlockKind.ToolResult).Text!;
-                var snapshotId = text.Split('\n')[0]["Snapshot: ".Length..];
-                var args = JsonSerializer.Serialize(new { path = "editable.txt", snapshotId, edits = new[] { new { startLine = 1, deleteLineCount = 1, newText = "after\r\n" } } });
-                yield return new("edit", request.Id, "tool_use", DateTimeOffset.UtcNow, null, false, null, "tool_use", "edit-snapshot", "edit_file_snapshot", args);
+                var outputs = request.Messages!.SelectMany(item => item.Content).Where(item => item.Kind == ContentBlockKind.ToolResult).ToArray();
+                var snapshotId = outputs[0].Text!.Split('\n')[0]["Snapshot: ".Length..];
+                var args = new SharpClaw.Code.Tools.Models.EditFileSnapshotArguments("editable.txt", snapshotId, [new(1, 1, "after\r\n")]);
+                var tool = PreviewFirst && index == 2 ? "preview_file_snapshot" : "edit_file_snapshot";
+                if (PreviewFirst && index == 3)
+                {
+                    var id = outputs[^1].Text!.Split('\n').Single(line => line.StartsWith("Preview: ", StringComparison.Ordinal));
+                    args = args with { PreviewId = id["Preview: ".Length..] };
+                }
+                yield return new($"edit-{index}", request.Id, "tool_use", DateTimeOffset.UtcNow, null, false, null, "tool_use", $"snapshot-{index}", tool,
+                    JsonSerializer.Serialize(args, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
             }
             else if (index <= ToolCalls)
                 yield return new($"tool-{index}", request.Id, "tool_use", DateTimeOffset.UtcNow, null, false, null, "tool_use", $"call-{index}", "read_file", """{"path":"large.txt"}""");

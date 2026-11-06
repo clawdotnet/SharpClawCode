@@ -176,6 +176,7 @@ public sealed class SnapshotEditingTests : IDisposable
     [Theory]
     [InlineData("read_file_snapshot")]
     [InlineData("edit_file_snapshot")]
+    [InlineData("preview_file_snapshot")]
     public async Task Snapshot_tools_reject_workspace_escape_at_the_permission_boundary(string toolName)
     {
         var result = await services.GetRequiredService<IToolExecutor>().ExecuteAsync(toolName,
@@ -184,6 +185,79 @@ public sealed class SnapshotEditingTests : IDisposable
         result.PermissionDecision.IsAllowed.Should().BeFalse();
         result.Result.ErrorMessage.Should().Contain("workspace boundary");
     }
+
+    [Fact]
+    public async Task Plan_preview_matches_the_guarded_write_and_preserves_exact_fragments()
+    {
+        var path = Path.Combine(workspace, "file.txt");
+        const string original = "one\r\ntwo\r\n最後";
+        await File.WriteAllTextAsync(path, original);
+        var snapshot = await ReadAsync();
+        SnapshotLineEdit[] edits = [new(4, 0, "!"), new(1, 1, "three\r\nfour\r\n")];
+        var args = new EditFileSnapshotArguments("file.txt", snapshot.SnapshotId, edits);
+        var readOnly = Context() with { PermissionMode = PermissionMode.ReadOnly, PrimaryMode = PrimaryMode.Plan };
+        var envelope = await ExecuteSnapshotAsync(PreviewFileSnapshotTool.ToolName, args, readOnly);
+        envelope.Result.Succeeded.Should().BeTrue(envelope.Result.ErrorMessage);
+        var preview = JsonSerializer.Deserialize<SnapshotEditPreview>(envelope.Result.StructuredOutputJson!, Json)!;
+        preview.Status.Should().Be("previewed");
+        preview.SnapshotId.Should().Be(snapshot.SnapshotId);
+        preview.Changes.Should().Equal(new SnapshotEditChange(1, 1, "one\r\n", "three\r\nfour\r\n"), new SnapshotEditChange(4, 0, "", "!"));
+        (await File.ReadAllTextAsync(path)).Should().Be(original);
+        File.Exists(Path.Combine(workspace, ".sharpclaw/locks/semantic-write.lock")).Should().BeFalse();
+        recorder.Mutations.Should().BeEmpty();
+
+        var guarded = args with { Edits = edits.Reverse().ToArray(), PreviewId = preview.PreviewId };
+        (await ExecuteSnapshotAsync(EditFileSnapshotTool.ToolName, guarded, readOnly)).PermissionDecision.IsAllowed.Should().BeFalse();
+        var applied = await ExecuteSnapshotAsync(EditFileSnapshotTool.ToolName, guarded, Context());
+        applied.Result.Succeeded.Should().BeTrue(applied.Result.ErrorMessage);
+        (await File.ReadAllTextAsync(path)).Should().Be("three\r\nfour\r\ntwo\r\n最後!");
+        (await ReadAsync()).SnapshotId.Should().Be(preview.ResultSnapshotId);
+        recorder.Mutations.Should().ContainSingle();
+    }
+
+    [Fact]
+    public async Task Guard_rejects_retargeted_or_modified_results_including_no_ops()
+    {
+        await File.WriteAllTextAsync(Path.Combine(workspace, "file.txt"), "before");
+        await File.WriteAllTextAsync(Path.Combine(workspace, "other.txt"), "before");
+        var args = new EditFileSnapshotArguments("file.txt", (await ReadAsync()).SnapshotId, [new(1, 1, "reviewed")]);
+        var result = await ExecuteSnapshotAsync(PreviewFileSnapshotTool.ToolName, args, Context());
+        var preview = JsonSerializer.Deserialize<SnapshotEditPreview>(result.Result.StructuredOutputJson!, Json)!;
+        var guarded = args with { PreviewId = preview.PreviewId };
+        foreach (var changed in new[] { guarded with { Path = "other.txt" }, guarded with { Edits = [new(1, 1, "different")] }, guarded with { Edits = [new(1, 1, "before")] } })
+        {
+            var rejected = await ExecuteSnapshotAsync(EditFileSnapshotTool.ToolName, changed, Context());
+            rejected.Result.Succeeded.Should().BeFalse();
+            rejected.Result.StructuredOutputJson.Should().Contain("previewMismatch");
+        }
+        await File.WriteAllTextAsync(Path.Combine(workspace, "file.txt"), "external");
+        var stale = await ExecuteSnapshotAsync(EditFileSnapshotTool.ToolName, guarded, Context());
+        stale.Result.StructuredOutputJson.Should().Contain("staleSnapshot");
+        (await File.ReadAllTextAsync(Path.Combine(workspace, "file.txt"))).Should().Be("external");
+        (await File.ReadAllTextAsync(Path.Combine(workspace, "other.txt"))).Should().Be("before");
+        recorder.Mutations.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Preview_reports_invalid_stale_missing_and_unchanged_batches_without_mutation()
+    {
+        await File.WriteAllTextAsync(Path.Combine(workspace, "file.txt"), "x");
+        var args = new EditFileSnapshotArguments("file.txt", (await ReadAsync()).SnapshotId, [new(1, 1, "x")]);
+        foreach (var (input, status) in new[] { (args, "unchanged"), (args with { SnapshotId = "old" }, "staleSnapshot"),
+            (args with { Path = "absent.txt" }, "notFound"), (args with { Edits = [new(1, 1, "x"), new(1, 0, "y")] }, "invalidEdits") })
+        {
+            var envelope = await ExecuteSnapshotAsync(PreviewFileSnapshotTool.ToolName, input, Context());
+            var preview = JsonSerializer.Deserialize<SnapshotEditPreview>(envelope.Result.StructuredOutputJson!, Json)!;
+            preview.Status.Should().Be(status);
+            envelope.Result.Succeeded.Should().Be(status == "unchanged");
+            if (envelope.Result.Succeeded) preview.ResultSnapshotId.Should().Be(args.SnapshotId);
+            else preview.PreviewId.Should().BeNull();
+        }
+        recorder.Mutations.Should().BeEmpty();
+    }
+
+    private Task<ToolExecutionEnvelope> ExecuteSnapshotAsync(string tool, EditFileSnapshotArguments args, ToolExecutionContext context)
+        => services.GetRequiredService<IToolExecutor>().ExecuteAsync(tool, JsonSerializer.Serialize(args, Json), context, CancellationToken.None);
 
     private async Task<FileSnapshotResult> ReadAsync(int start = 1, int limit = 200)
     {

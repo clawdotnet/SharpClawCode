@@ -10,7 +10,19 @@ public sealed record FileSnapshotResult(string Path, string SnapshotId, string C
 public sealed record SnapshotLineEdit(int StartLine, int DeleteLineCount, string NewText);
 
 /// <summary>Applies non-overlapping edits against one exact file snapshot.</summary>
-public sealed record EditFileSnapshotArguments(string Path, string SnapshotId, SnapshotLineEdit[] Edits);
+public sealed record EditFileSnapshotArguments(string Path, string SnapshotId, SnapshotLineEdit[] Edits)
+{
+    /// <summary>Optional guard binding application to the path, source and result of a prior preview.</summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PreviewId { get; init; }
+}
+
+/// <summary>One proposed replacement, expressed in original line coordinates with exact text and line terminators.</summary>
+public sealed record SnapshotEditChange(int StartLine, int DeleteLineCount, string Before, string After);
+
+/// <summary>A read-only edit preview. A successful result identifies the complete proposed file contents.</summary>
+public sealed record SnapshotEditPreview(string Path, string Status, string? SnapshotId, string? ResultSnapshotId,
+    string? PreviewId, SnapshotEditChange[] Changes, string Message);
 
 /// <summary>Machine-readable snapshot edit outcome; failed operations leave the target untouched.</summary>
 public sealed record SnapshotEditResult(string Path, string Status, string? SnapshotId, int AppliedEdits, string Message);
