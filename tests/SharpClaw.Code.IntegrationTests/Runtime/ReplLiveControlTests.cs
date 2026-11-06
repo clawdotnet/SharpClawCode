@@ -100,6 +100,30 @@ public sealed class ReplLiveControlTests : IDisposable
         (await services.GetRequiredService<IReplHost>().RunAsync(Context(), "fail", deadline.Token)).Should().Be(1);
     }
 
+    /// <summary>An unknown slash command is a failed command, so ending input right after it exits nonzero.</summary>
+    [Fact]
+    public async Task Unknown_slash_command_is_a_nonzero_exit_at_EOF()
+    {
+        using var services = Services(new Provider());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        terminal.Input.Writer.TryWrite("/definitely-not-a-command");
+        terminal.Input.Writer.TryComplete();
+        (await services.GetRequiredService<IReplHost>().RunAsync(Context(), null, deadline.Token)).Should().Be(1);
+    }
+
+    /// <summary>A non-provider failure while handling a prompt keeps the REPL open for queued work.</summary>
+    [Fact]
+    public async Task Non_provider_prompt_failure_keeps_the_repl_open()
+    {
+        using var services = Services(new Provider());
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+        renderer.ThrowOnNextTurn = true;
+        terminal.Input.Writer.TryWrite("second");
+        terminal.Input.Writer.TryComplete();
+        (await services.GetRequiredService<IReplHost>().RunAsync(Context(), "first", deadline.Token)).Should().Be(0);
+        (await renderer.Results.Reader.ReadAsync(deadline.Token)).Turn.Input.Should().Be("second");
+    }
+
     /// <summary>EOF denies a pending approval and lets the turn settle without a console reader.</summary>
     [Fact]
     public async Task End_of_input_denies_pending_approval_without_hanging()
@@ -158,7 +182,13 @@ public sealed class ReplLiveControlTests : IDisposable
         public OutputFormat Format => OutputFormat.Text;
         public Channel<TurnExecutionResult> Results { get; } = Channel.CreateUnbounded<TurnExecutionResult>();
         public Task RenderCommandResultAsync(CommandResult result, CancellationToken token) => Task.CompletedTask;
-        public Task RenderTurnExecutionResultAsync(TurnExecutionResult result, CancellationToken token) { Results.Writer.TryWrite(result); return Task.CompletedTask; }
+        public bool ThrowOnNextTurn { get; set; }
+        public Task RenderTurnExecutionResultAsync(TurnExecutionResult result, CancellationToken token)
+        {
+            if (ThrowOnNextTurn) { ThrowOnNextTurn = false; throw new InvalidOperationException("Test rendering failure"); }
+            Results.Writer.TryWrite(result);
+            return Task.CompletedTask;
+        }
     }
     private sealed class Preflight : IProviderRequestPreflight { public ProviderRequest Prepare(ProviderRequest request) => request with { ProviderName = "repl-test" }; }
     private sealed class Auth : IAuthFlowService { public Task<AuthStatus> GetStatusAsync(string name, CancellationToken token) => Task.FromResult(new AuthStatus("test", true, name, null, null, ["api"])); }

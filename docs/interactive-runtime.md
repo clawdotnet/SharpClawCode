@@ -45,9 +45,9 @@ Application checks the source snapshot again, then compares the proposed result 
 
 The entire batch is validated before writing. The tool stages a complete replacement in the same directory, checks the original content again immediately before publication, and records one mutation with before/after text for existing checkpoint undo/redo. Failures return a structured status such as `staleSnapshot`, `invalidEdits`, or `notFound`. A stale snapshot requires a fresh read. Unchanged batches produce no mutation.
 
-Execution uses the normal `FileSystemWrite` policy and workspace resolver. Read-only and plan modes still block mutation. Snapshot writes share the semantic-write workspace lock with Roslyn rename. The final file replacement avoids partially written targets on cancellation; temporary files are cleaned up. Cancellation cannot interrupt the synchronous publication-to-journal-recording interval.
+Execution uses the normal `FileSystemWrite` policy and workspace resolver. Read-only and plan modes still block mutation. Snapshot writes share the semantic-write workspace lock with Roslyn rename, `write_file`, and `edit_file`. The final file replacement avoids partially written targets on cancellation; temporary files are cleaned up. Cancellation cannot interrupt the synchronous publication-to-journal-recording interval.
 
-The lock coordinates cooperating writers, not external editors. There remains a filesystem race between the last content check and replacement; this is not an operating-system compare-and-swap. Like existing mutation snapshots, identifiers describe decoded text and writes use UTF-8, not byte-for-byte encoding/BOM preservation. Untouched line endings and Unix file modes are preserved.
+The lock coordinates cooperating writers, not external editors. There remains a filesystem race between the last content check and replacement; this is not an operating-system compare-and-swap. Like existing mutation snapshots, identifiers describe decoded text and writes use UTF-8, not byte-for-byte encoding/BOM preservation. Untouched line endings and Unix file modes are preserved. Because the staged file replaces the target, its owner, group, ACLs, and extended attributes come from the staged file rather than the original; `edit_file` writes in place and keeps them.
 
 ## Durable automatic compaction
 
