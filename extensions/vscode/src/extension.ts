@@ -1,9 +1,9 @@
-import * as readline from "node:readline";
-import { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { AcpConnection, AcpError } from "./acpConnection";
+import { spawn } from "node:child_process";
 import * as path from "node:path";
 import * as vscode from "vscode";
 
-type JsonRpcResponse = { jsonrpc: string; id?: string | number; result?: unknown; error?: { code: number; message: string } };
 type ProviderCatalogEntry = {
     providerName: string;
     defaultModel: string;
@@ -12,31 +12,75 @@ type ProviderCatalogEntry = {
 };
 
 class AcpClient implements vscode.Disposable {
-    private process: ChildProcessWithoutNullStreams | undefined;
-    private initialized = false;
-    private nextId = 1;
-    private readonly pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void }>();
+    private readonly connection: AcpConnection;
+    private readonly busy = new Set<string>();
+    private readonly active = new Map<string, { cwd: string; sessionId: string; promptRequestId: string }>();
 
-    constructor(
-        private readonly output: vscode.OutputChannel,
-        private readonly workspaceState: vscode.Memento,
-        private readonly context: vscode.ExtensionContext) {}
-
-    dispose(): void {
-        this.process?.kill();
-        this.process = undefined;
-        this.pending.clear();
+    constructor(private readonly output: vscode.OutputChannel, private readonly workspaceState: vscode.Memento,
+        context: vscode.ExtensionContext) {
+        this.connection = new AcpConnection(() => {
+            const config = vscode.workspace.getConfiguration("sharpClaw");
+            const command = config.get<string>("cliCommand", "dotnet");
+            const args = config.get<string[]>("cliArgs", ["run", "--project", "src/SharpClaw.Code.Cli", "--", "acp"]);
+            const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionPath;
+            return spawn(command, args, { cwd, stdio: "pipe" });
+        }, (params, reply) => this.handleNotification(params, reply), text => this.output.append(text));
     }
 
-    async call<T>(method: string, params: Record<string, unknown>): Promise<T> {
-        await this.ensureStarted();
-        const id = this.nextId++;
-        const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
-        const response = await new Promise<unknown>((resolve, reject) => {
-            this.pending.set(id, { resolve, reject });
-            this.process!.stdin.write(payload + "\n", "utf8");
-        });
-        return response as T;
+    dispose(): void { this.connection.dispose(); }
+
+    call<T>(method: string, params: Record<string, unknown>): Promise<T> {
+        return this.connection.call<T>(method, params);
+    }
+
+    async prompt(folder: vscode.WorkspaceFolder, prompt: string): Promise<void> {
+        const key = folder.uri.toString();
+        if (this.busy.has(key)) {
+            void vscode.window.showInformationMessage("A SharpClaw prompt is running. Use Steer Active Turn to add a correction.");
+            return;
+        }
+        this.busy.add(key);
+        try {
+            const sessionId = await this.ensureSession(folder);
+            const live = await this.connection.capabilities();
+            const target = { cwd: folder.uri.fsPath, sessionId, promptRequestId: randomUUID() };
+            if (live) this.active.set(key, target);
+            const editor = vscode.window.activeTextEditor;
+            const editorContext = editor && vscode.workspace.getWorkspaceFolder(editor.document.uri)?.uri.toString() === key
+                ? buildEditorContext(editor, sessionId) : undefined;
+            this.output.show(true);
+            this.output.appendLine(`> ${prompt}`);
+            const result = await this.connection.call<{ stopReason: string; pendingSteering?: string[] }>("session/prompt", {
+                cwd: target.cwd, sessionId, prompt, model: this.workspaceState.get<string>(`model:${key}`),
+                editorContext, ...(live ? { liveTurnControl: true } : {})
+            }, target.promptRequestId);
+            if (result.stopReason === "cancelled") this.output.appendLine("Turn cancelled.");
+            this.showPending(result.pendingSteering);
+        } catch (error) {
+            if (error instanceof AcpError) this.showPending(error.data?.pendingSteering);
+            throw error;
+        } finally {
+            this.active.delete(key);
+            this.busy.delete(key);
+        }
+    }
+
+    async control(folder: vscode.WorkspaceFolder, cancel: boolean): Promise<void> {
+        const target = this.active.get(folder.uri.toString());
+        if (!target) {
+            void vscode.window.showInformationMessage("No active SharpClaw turn with live controls in this workspace.");
+            return;
+        }
+        const text = cancel ? undefined : await vscode.window.showInputBox({ prompt: "Correction for the active SharpClaw turn" });
+        if (!cancel && !text?.trim()) return;
+        const result = await this.connection.call<{ accepted: boolean }>(cancel ? "session/cancel" : "session/steer", { ...target, text });
+        this.output.show(true);
+        this.output.appendLine(result.accepted ? (cancel ? "Cancellation requested." : "Correction queued.")
+            : "The turn could not accept this request.");
+    }
+
+    private showPending(messages?: string[]): void {
+        for (const message of messages ?? []) this.output.appendLine(`Unapplied correction: ${message}`);
     }
 
     async ensureSession(workspaceFolder: vscode.WorkspaceFolder): Promise<string> {
@@ -55,62 +99,7 @@ class AcpClient implements vscode.Disposable {
         return created.sessionId;
     }
 
-    private async ensureStarted(): Promise<void> {
-        if (this.process && this.initialized) {
-            return;
-        }
-
-        const config = vscode.workspace.getConfiguration("sharpClaw");
-        const command = config.get<string>("cliCommand", "dotnet");
-        const args = config.get<string[]>("cliArgs", ["run", "--project", "src/SharpClaw.Code.Cli", "--", "acp"]);
-        const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? this.context.extensionPath;
-        this.process = spawn(command, args, { cwd, stdio: "pipe" });
-        this.process.stderr.on("data", chunk => this.output.append(chunk.toString()));
-        const rl = readline.createInterface({ input: this.process.stdout });
-        rl.on("line", line => this.handleLine(line));
-        this.process.on("exit", code => {
-            for (const pending of this.pending.values()) {
-                pending.reject(new Error(`SharpClaw ACP exited with code ${code ?? 0}.`));
-            }
-            this.pending.clear();
-            this.initialized = false;
-            this.process = undefined;
-        });
-
-        await this.call("initialize", { clientCapabilities: { approvalRequests: true } });
-        this.initialized = true;
-    }
-
-    private handleLine(line: string): void {
-        if (!line.trim()) {
-            return;
-        }
-
-        const message = JSON.parse(line) as JsonRpcResponse & { method?: string; params?: any };
-        if (message.method === "session/notification") {
-            this.handleNotification(message.params);
-            return;
-        }
-
-        if (typeof message.id !== "number") {
-            return;
-        }
-
-        const pending = this.pending.get(message.id);
-        if (!pending) {
-            return;
-        }
-
-        this.pending.delete(message.id);
-        if (message.error) {
-            pending.reject(new Error(message.error.message));
-            return;
-        }
-
-        pending.resolve(message.result);
-    }
-
-    private async handleNotification(params: any): Promise<void> {
+    private async handleNotification(params: any, reply: (method: string, params: Record<string, unknown>) => Promise<unknown>): Promise<void> {
         const update = params?.update;
         if (!update) {
             return;
@@ -125,6 +114,18 @@ class AcpClient implements vscode.Disposable {
             return;
         }
 
+        if (update.sessionUpdate === "turnProgress") {
+            const target = [...this.active.values()].find(item => item.promptRequestId === params.promptRequestId && item.sessionId === params.sessionId);
+            if (!target) return;
+            const descriptions: Record<string, string> = {
+                turnStarted: "Turn started", toolStarted: `Running ${update.toolName}`,
+                toolCompleted: `${update.toolName} ${update.succeeded ? "completed" : "failed"}`,
+                contextCompacted: "Context compacted", steeringAccepted: "Correction accepted"
+            };
+            if (descriptions[update.kind]) this.output.appendLine(`[${path.basename(target.cwd)}] ${descriptions[update.kind]}`);
+            return;
+        }
+
         if (update.sessionUpdate === "approvalRequest") {
             const approval = update.approval;
             const choice = await vscode.window.showWarningMessage(
@@ -132,7 +133,7 @@ class AcpClient implements vscode.Disposable {
                 { modal: true },
                 approval.canRememberDecision ? "Allow and Remember" : "Allow",
                 "Deny");
-            await this.call("approval/respond", {
+            await reply("approval/respond", {
                 requestId: approval.requestId,
                 approved: choice === "Allow" || choice === "Allow and Remember",
                 remember: choice === "Allow and Remember"
@@ -153,20 +154,12 @@ export function activate(context: vscode.ExtensionContext): void {
             return;
         }
 
-        const sessionId = await client.ensureSession(folder);
-        const model = context.workspaceState.get<string>(`model:${folder.uri.toString()}`);
-        const editor = vscode.window.activeTextEditor;
-        const editorContext = editor ? buildEditorContext(editor, sessionId) : undefined;
-        output.show(true);
-        output.appendLine(`> ${prompt}`);
-        await client.call("session/prompt", {
-            cwd: folder.uri.fsPath,
-            sessionId,
-            model,
-            prompt,
-            editorContext
-        });
+        await client.prompt(folder, prompt);
     }));
+    context.subscriptions.push(vscode.commands.registerCommand("sharpClaw.cancelTurn",
+        () => client.control(requireWorkspaceFolder(), true)));
+    context.subscriptions.push(vscode.commands.registerCommand("sharpClaw.steerTurn",
+        () => client.control(requireWorkspaceFolder(), false)));
 
     context.subscriptions.push(vscode.commands.registerCommand("sharpClaw.refreshIndex", async () => {
         const folder = requireWorkspaceFolder();
@@ -296,7 +289,8 @@ export function deactivate(): void {
 }
 
 function requireWorkspaceFolder(): vscode.WorkspaceFolder {
-    const folder = vscode.workspace.workspaceFolders?.[0];
+    const editor = vscode.window.activeTextEditor;
+    const folder = (editor && vscode.workspace.getWorkspaceFolder(editor.document.uri)) ?? vscode.workspace.workspaceFolders?.[0];
     if (!folder) {
         throw new Error("Open a workspace folder before using SharpClaw.");
     }

@@ -16,7 +16,9 @@
     "onCommand:sharpClaw.searchWorkspace",
     "onCommand:sharpClaw.saveMemory",
     "onCommand:sharpClaw.listMemory",
-    "onCommand:sharpClaw.selectModel"
+    "onCommand:sharpClaw.selectModel",
+    "onCommand:sharpClaw.cancelTurn",
+    "onCommand:sharpClaw.steerTurn"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -44,6 +46,14 @@
       {
         "command": "sharpClaw.selectModel",
         "title": "SharpClaw: Select Model"
+      },
+      {
+        "command": "sharpClaw.cancelTurn",
+        "title": "SharpClaw: Cancel Active Turn"
+      },
+      {
+        "command": "sharpClaw.steerTurn",
+        "title": "SharpClaw: Steer Active Turn"
       }
     ],
     "configuration": {
@@ -73,7 +83,8 @@
   },
   "scripts": {
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "test": "node --test test/*.test.cjs"
   },
   "devDependencies": {
     "@types/node": "^26.6.4",
