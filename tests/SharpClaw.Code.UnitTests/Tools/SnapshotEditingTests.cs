@@ -116,6 +116,63 @@ public sealed class SnapshotEditingTests : IDisposable
         Directory.GetFiles(workspace, ".sharpclaw-edit-*.tmp").Should().BeEmpty();
     }
 
+    [Fact]
+    public async Task Publication_rechecks_target_after_staging()
+    {
+        var path = Path.Combine(workspace, "file.txt");
+        await File.WriteAllTextAsync(path, "stale");
+        var fileSystem = new HookedFileSystem
+        {
+            BeforeWrite = (target, content) => target != path && content.Length > 0 ? File.WriteAllTextAsync(path, "external") : Task.CompletedTask,
+        };
+        (await new ConditionalFileWriter(fileSystem).WriteAsync(path, "stale", "agent", CancellationToken.None)).Should().BeFalse();
+        (await File.ReadAllTextAsync(path)).Should().Be("external");
+        Directory.GetFiles(workspace, ".sharpclaw-edit-*.tmp").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Target_deleted_during_staging_is_reported_as_stale()
+    {
+        var path = Path.Combine(workspace, "file.txt");
+        await File.WriteAllTextAsync(path, "before");
+        var fileSystem = new HookedFileSystem
+        {
+            BeforeWrite = (target, _) => { if (target != path) File.Delete(path); return Task.CompletedTask; },
+        };
+        (await new ConditionalFileWriter(fileSystem).WriteAsync(path, "before", "agent", CancellationToken.None)).Should().BeFalse();
+        File.Exists(path).Should().BeFalse();
+        Directory.GetFiles(workspace, ".sharpclaw-edit-*.tmp").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Cancellation_during_precheck_leaves_target_untouched()
+    {
+        var path = Path.Combine(workspace, "file.txt");
+        await File.WriteAllTextAsync(path, "external");
+        using var cancellation = new CancellationTokenSource();
+        var fileSystem = new HookedFileSystem { AfterRead = target => { if (target == path) cancellation.Cancel(); } };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ConditionalFileWriter(fileSystem).WriteAsync(path, "external", "agent", cancellation.Token));
+        (await File.ReadAllTextAsync(path)).Should().Be("external");
+        Directory.GetFiles(workspace, ".sharpclaw-edit-*.tmp").Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Snapshot_read_rejects_in_workspace_symlink_to_outside_file()
+    {
+        var outside = Path.Combine(Path.GetTempPath(), $"sharpclaw-snapshot-outside-{Guid.NewGuid():N}.txt");
+        try
+        {
+            await File.WriteAllTextAsync(outside, "outside");
+            try { File.CreateSymbolicLink(Path.Combine(workspace, "link.txt"), outside); }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or PlatformNotSupportedException) { return; }
+            var result = await services.GetRequiredService<IToolExecutor>().ExecuteAsync(ReadFileSnapshotTool.ToolName,
+                JsonSerializer.Serialize(new ReadFileSnapshotArguments("link.txt"), Json), Context(), CancellationToken.None);
+            result.Result.Succeeded.Should().BeFalse();
+            result.PermissionDecision.IsAllowed.Should().BeFalse();
+        }
+        finally { File.Delete(outside); }
+    }
+
     [Theory]
     [InlineData("read_file_snapshot")]
     [InlineData("edit_file_snapshot")]
@@ -145,4 +202,32 @@ public sealed class SnapshotEditingTests : IDisposable
         public void Record(FileMutationOperation mutation) => Mutations.Add(mutation);
     }
     public void Dispose() { services.Dispose(); Directory.Delete(workspace, recursive: true); }
+    private sealed class HookedFileSystem : IFileSystem
+    {
+        private readonly LocalFileSystem inner = new();
+        public Func<string, string, Task>? BeforeWrite { get; init; }
+        public Action<string>? AfterRead { get; init; }
+        public Task<IAsyncDisposable> AcquireExclusiveFileLockAsync(string lockFilePath, CancellationToken cancellationToken = default) => inner.AcquireExclusiveFileLockAsync(lockFilePath, cancellationToken);
+        public void CreateDirectory(string path) => inner.CreateDirectory(path);
+        public bool FileExists(string path) => inner.FileExists(path);
+        public bool DirectoryExists(string path) => inner.DirectoryExists(path);
+        public IEnumerable<string> EnumerateDirectories(string path) => inner.EnumerateDirectories(path);
+        public IEnumerable<string> EnumerateFiles(string path, string searchPattern) => inner.EnumerateFiles(path, searchPattern);
+        public async Task<string?> ReadAllTextIfExistsAsync(string path, CancellationToken cancellationToken)
+        {
+            var text = await inner.ReadAllTextIfExistsAsync(path, cancellationToken);
+            AfterRead?.Invoke(path);
+            return text;
+        }
+        public Task<string[]> ReadAllLinesIfExistsAsync(string path, CancellationToken cancellationToken) => inner.ReadAllLinesIfExistsAsync(path, cancellationToken);
+        public async Task WriteAllTextAsync(string path, string content, CancellationToken cancellationToken)
+        {
+            if (BeforeWrite is not null) await BeforeWrite(path, content);
+            await inner.WriteAllTextAsync(path, content, cancellationToken);
+        }
+        public Task CopyFileAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken) => inner.CopyFileAsync(sourcePath, destinationPath, cancellationToken);
+        public Task AppendLineAsync(string path, string line, CancellationToken cancellationToken) => inner.AppendLineAsync(path, line, cancellationToken);
+        public void DeleteDirectoryRecursive(string path) => inner.DeleteDirectoryRecursive(path);
+        public void TryDeleteFile(string path) => inner.TryDeleteFile(path);
+    }
 }

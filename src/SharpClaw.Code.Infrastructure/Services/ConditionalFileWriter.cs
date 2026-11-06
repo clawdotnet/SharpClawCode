@@ -11,8 +11,14 @@ public sealed class ConditionalFileWriter(IFileSystem fileSystem) : IConditional
         var temporaryPath = Path.Combine(Path.GetDirectoryName(path)!, $".sharpclaw-edit-{Guid.NewGuid():N}.tmp");
         try
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                // Apply the target's mode while the staged file is still empty, so replacement text is never exposed more widely.
+                await fileSystem.WriteAllTextAsync(temporaryPath, string.Empty, cancellationToken).ConfigureAwait(false);
+                try { File.SetUnixFileMode(temporaryPath, File.GetUnixFileMode(path)); }
+                catch (FileNotFoundException) { return false; }
+            }
             await fileSystem.WriteAllTextAsync(temporaryPath, newText, cancellationToken).ConfigureAwait(false);
-            if (!OperatingSystem.IsWindows()) File.SetUnixFileMode(temporaryPath, File.GetUnixFileMode(path));
             if (!string.Equals(await fileSystem.ReadAllTextIfExistsAsync(path, cancellationToken).ConfigureAwait(false), expectedText, StringComparison.Ordinal)) return false;
             cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporaryPath, path, overwrite: true);

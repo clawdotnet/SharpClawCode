@@ -109,7 +109,7 @@ public sealed class ReplHost(
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested)
         {
-            return 0;
+            return lastExitCode;
         }
         finally
         {
@@ -232,6 +232,7 @@ public sealed class ReplHost(
             var customDef = await FindCustomCommandAsync(parsed.CommandName, context.WorkingDirectory, cancellationToken).ConfigureAwait(false);
             if (customDef is not null)
             {
+                int customExitCode;
                 try
                 {
                     var argLine = string.Join(' ', parsed.Arguments);
@@ -247,6 +248,7 @@ public sealed class ReplHost(
                             cancellationToken)
                         .ConfigureAwait(false);
                     await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken);
+                    customExitCode = ExitCodeFor(result);
                 }
                 catch (ProviderExecutionException exception)
                 {
@@ -254,9 +256,10 @@ public sealed class ReplHost(
                         CreateProviderFailureResult(exception, context.OutputFormat),
                         context.OutputFormat,
                         cancellationToken);
+                    customExitCode = 1;
                 }
 
-                return 0;
+                return customExitCode;
             }
 
             await outputRendererDispatcher.RenderCommandResultAsync(
@@ -268,7 +271,7 @@ public sealed class ReplHost(
                     DataJson: null),
                 context.OutputFormat,
                 cancellationToken);
-            return 0;
+            return 1;
         }
 
         return 0;
@@ -301,7 +304,7 @@ public sealed class ReplHost(
                 cancellationToken).ConfigureAwait(false);
 
             await outputRendererDispatcher.RenderTurnExecutionResultAsync(result, context.OutputFormat, cancellationToken).ConfigureAwait(false);
-            return result.Verification?.Status is VerificationStatus.Failed or VerificationStatus.Cancelled ? 1 : 0;
+            return ExitCodeFor(result);
         }
         catch (ProviderExecutionException exception)
         {
@@ -311,7 +314,24 @@ public sealed class ReplHost(
                 cancellationToken).ConfigureAwait(false);
             return 1;
         }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // A failed prompt must not end the interactive session.
+            await outputRendererDispatcher.RenderCommandResultAsync(
+                new CommandResult(
+                    Succeeded: false,
+                    ExitCode: 1,
+                    OutputFormat: context.OutputFormat,
+                    Message: $"Prompt failed: {exception.Message}",
+                    DataJson: null),
+                context.OutputFormat,
+                cancellationToken).ConfigureAwait(false);
+            return 1;
+        }
     }
+
+    private static int ExitCodeFor(TurnExecutionResult result)
+        => result.Verification?.Status is VerificationStatus.Failed or VerificationStatus.Cancelled ? 1 : 0;
 
     private static CommandResult CreateProviderFailureResult(ProviderExecutionException exception, OutputFormat outputFormat)
         => new(
