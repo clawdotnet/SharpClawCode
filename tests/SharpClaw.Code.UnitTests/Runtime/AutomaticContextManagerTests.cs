@@ -118,12 +118,35 @@ public sealed class AutomaticContextManagerTests
     }
 
     [Fact]
+    public async Task Small_window_does_not_fail_requests_below_the_compaction_trigger()
+    {
+        settings.ModelContextWindows["test/small"] = 1_000;
+        var request = Request() with { Model = "small", Messages = [Text("short")] };
+        (await Manager().PrepareAsync(Context(), provider, request, CancellationToken.None)).Request.Should().BeSameAs(request);
+        provider.Request.Should().BeNull();
+    }
+
+    [Fact]
+    public async Task Original_request_stays_verbatim_after_a_steering_correction()
+    {
+        var messages = Request().Messages!.Concat([
+            Text("Correction: keep tabs."),
+            new("assistant", [new(ContentBlockKind.ToolUse, null, "call2", "read_file", "{}", null)]),
+            new("user", [new(ContentBlockKind.ToolResult, "more contents", "call2", null, null, false)])]).ToArray();
+        var result = await Manager().PrepareAsync(Context(), provider, Request() with { Messages = messages }, CancellationToken.None);
+        var texts = result.Request.Messages!.SelectMany(message => message.Content).Select(block => block.Text).ToArray();
+        texts.Should().Contain("Current request: preserve behavior.").And.Contain("Correction: keep tabs.");
+        store.Events.OfType<ContextCompactedEvent>().Should().ContainSingle();
+    }
+
+    [Fact]
     public void Unfinished_or_child_compaction_does_not_replace_primary_replay()
     {
         var turn = new ConversationTurn("turn", "session", 1, "original", "answer", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null, null, null);
         var evt = new ContextCompactedEvent("compact", "session", "turn", DateTimeOffset.UtcNow, false, "model", State, [], [Text("child only")], 100, 20, null);
         var started = new TurnStartedEvent("start", "session", "turn", DateTimeOffset.UtcNow, turn);
         ConversationHistoryAssembler.Assemble([started, evt]).Should().BeEmpty();
+        ConversationHistoryAssembler.Assemble([started, evt with { IsPrimaryRun = true }]).Should().BeEmpty();
         var replay = ConversationHistoryAssembler.Assemble([started, evt, new TurnCompletedEvent("end", "session", "turn", DateTimeOffset.UtcNow, turn, true, null)]);
         replay[0].Content[0].Text.Should().Be("original");
     }
