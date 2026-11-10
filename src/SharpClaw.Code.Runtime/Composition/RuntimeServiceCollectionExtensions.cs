@@ -187,6 +187,7 @@ public static class RuntimeServiceCollectionExtensions
         AddOperationalDiagnostics(services);
         services.AddSingleton<Orchestration.SessionTurnLock>();
         services.AddSingleton<Orchestration.RuntimeDiagnosticsCommands>();
+        services.AddSingleton<Orchestration.SessionAdminCommands>();
         services.AddSingleton<Orchestration.ConversationRuntime>();
         services.AddSingleton<IConversationRuntime>(serviceProvider => serviceProvider.GetRequiredService<Orchestration.ConversationRuntime>());
         services.AddSingleton<IRuntimeCommandService>(serviceProvider => serviceProvider.GetRequiredService<Orchestration.ConversationRuntime>());
