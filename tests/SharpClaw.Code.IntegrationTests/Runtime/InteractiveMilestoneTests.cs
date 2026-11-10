@@ -42,7 +42,7 @@ public sealed class InteractiveMilestoneTests : IDisposable
         var provider = new ScenarioProvider { SnapshotEdit = true, PreviewFirst = previewFirst };
         using (var services = Services(provider))
         {
-            var result = await services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Edit the file.") with { PermissionMode = PermissionMode.WorkspaceWrite }, CancellationToken.None);
+            var result = await services.GetRequiredService<IConversationRuntime>().RunPromptAsync(Request("Edit the file.") with { PermissionMode = PermissionMode.WorkspaceWrite, ApprovalSettings = new ApprovalSettings([ApprovalScope.FileSystemWrite], null) }, CancellationToken.None);
             result.ToolResults.Should().Contain(item => item.ToolName == "edit_file_snapshot" && item.Succeeded);
             if (previewFirst)
             {

@@ -269,6 +269,27 @@ public sealed class ResilienceTests
         mock.CallCount.Should().Be(2);
     }
 
+    [Fact]
+    public async Task Failed_events_open_the_circuit_instead_of_resetting_it()
+    {
+        async IAsyncEnumerable<ProviderEvent> Failure()
+        {
+            await Task.Yield();
+            yield return CreateEvent("failed") with { IsTerminal = true, Content = "HTTP 429 TooManyRequests" };
+        }
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, Failure())));
+        var decorator = BuildDecorator(mock, new ProviderResilienceOptions
+        {
+            MaxRetries = 0, CircuitBreakerFailureThreshold = 1,
+            CircuitBreakerBreakDuration = TimeSpan.FromMinutes(1), RequestTimeout = TimeSpan.FromSeconds(5),
+        });
+        var handle = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await FluentActions.Awaiting(() => DrainAsync(handle.Events)).Should().ThrowAsync<ProviderExecutionException>();
+        await FluentActions.Awaiting(() => decorator.StartStreamAsync(FakeRequest, CancellationToken.None)).Should().ThrowAsync<ProviderExecutionException>().WithMessage("*Circuit breaker*");
+        mock.CallCount.Should().Be(1);
+    }
+
     private static async Task DrainAsync(IAsyncEnumerable<ProviderEvent> events)
         => _ = await CollectAsync(events);
 

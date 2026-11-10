@@ -30,15 +30,14 @@ public sealed class PluginTrustRule : IPermissionRule
             return Task.FromResult(PermissionRuleResult.Abstain());
         }
 
-        if (manifestTrust is PluginTrustLevel.DeveloperTrusted or PluginTrustLevel.WorkspaceTrusted)
+        if (context.PermissionMode == PermissionMode.ReadOnly || context.PrimaryMode is PrimaryMode.Plan or PrimaryMode.Research)
         {
-            return Task.FromResult(PermissionRuleResult.Abstain());
+            return Task.FromResult(PermissionRuleResult.Deny("Plugin processes are unavailable in read-only workflows."));
         }
 
-        return PermissionRuleHelpers.IsTrusted(context.TrustedPluginNames, context.ToolOriginatingPluginId)
-            ? Task.FromResult(PermissionRuleResult.Abstain())
-            : Task.FromResult(PermissionRuleResult.RequireApproval(
-                $"Plugin tool '{request.ToolName}' from '{context.ToolOriginatingPluginId}' (manifest trust: Untrusted) requires approval or session trust.",
-                canRememberApproval: true));
+        // Workspace session files, like manifests, are not an authority for executing arbitrary processes.
+        return Task.FromResult(PermissionRuleResult.RequireApproval(
+                $"Plugin tool '{request.ToolName}' from '{context.ToolOriginatingPluginId}' (manifest trust: {manifestTrust}) requires explicit approval.",
+                canRememberApproval: false));
     }
 }

@@ -99,6 +99,21 @@ public sealed class WorkspaceKnowledgeServicesTests : IDisposable
         recalled.Should().Contain(entry => entry.Id == "user-memory-1");
     }
 
+    [Theory]
+    [InlineData("NOT")]
+    [InlineData("OR")]
+    [InlineData("AND")]
+    [InlineData("this AND that OR NOT")]
+    public async Task Fts_operators_in_user_text_are_literal_search_terms(string query)
+    {
+        Directory.CreateDirectory(workspaceRoot);
+        await File.WriteAllTextAsync(Path.Combine(workspaceRoot, "README.md"), "NOT OR AND this that");
+        var store = CreateStore();
+        await new WorkspaceIndexService(fileSystem, pathService, store).RefreshAsync(workspaceRoot, CancellationToken.None);
+        var result = await new WorkspaceSearchService(store).SearchAsync(workspaceRoot, new WorkspaceSearchRequest(query, 10), CancellationToken.None);
+        result.Hits.Should().NotBeEmpty();
+    }
+
     public void Dispose()
     {
         TestDirectoryCleanup.DeleteIfExists(workspaceRoot, clearSqlitePools: true);

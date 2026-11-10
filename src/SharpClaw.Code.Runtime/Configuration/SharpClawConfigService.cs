@@ -14,6 +14,8 @@ public sealed class SharpClawConfigService(
     IFileSystem fileSystem,
     IPathService pathService) : ISharpClawConfigService
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Content, SharpClawConfigDocument? Document)> parsedDocuments = new(StringComparer.Ordinal);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -63,6 +65,20 @@ public sealed class SharpClawConfigService(
             return null;
         }
 
+        // Config is read on every hook dispatch and many commands; reparse only when the file text changes.
+        // JSONC comments make the source-generated parse throw, so an uncached read costs an exception plus a reflection parse.
+        if (parsedDocuments.TryGetValue(path, out var cached) && string.Equals(cached.Content, content, StringComparison.Ordinal))
+        {
+            return cached.Document;
+        }
+
+        var document = Parse(content);
+        parsedDocuments[path] = (content, document);
+        return document;
+    }
+
+    private static SharpClawConfigDocument? Parse(string content)
+    {
         try
         {
             return JsonSerializer.Deserialize(content, ProtocolJsonContext.Default.SharpClawConfigDocument)
@@ -83,7 +99,7 @@ public sealed class SharpClawConfigService(
 
         var defaultAgentId = workspace?.DefaultAgentId ?? user?.DefaultAgentId;
         var shareMode = workspace?.ShareMode ?? user?.ShareMode ?? Protocol.Models.ShareMode.Manual;
-        var server = workspace?.Server ?? user?.Server ?? new SharpClawServerOptions("127.0.0.1", 7345, null);
+        var server = user?.Server ?? new SharpClawServerOptions("127.0.0.1", 7345, null);
 
         return new SharpClawConfigDocument(
             shareMode,
@@ -91,7 +107,7 @@ public sealed class SharpClawConfigService(
             defaultAgentId,
             MergeByKey(user?.Agents, workspace?.Agents, static item => item.Id),
             MergeByKey(user?.LspServers, workspace?.LspServers, static item => item.Id),
-            MergeByKey(user?.Hooks, workspace?.Hooks, static item => item.Name),
+            user?.Hooks, // Workspace files cannot authorize process execution.
             MergeByKey(user?.ConnectLinks, workspace?.ConnectLinks, static item => item.Target),
             MergeExternalAgents(user?.ExternalAgents, workspace?.ExternalAgents),
             workspace?.SkillPacks ?? user?.SkillPacks ?? new SkillPacksConfig(),

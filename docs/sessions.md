@@ -4,7 +4,7 @@ SharpClaw persists **per-workspace** conversation state under **`.sharpclaw/`** 
 
 ## Layout
 
-Defined in **`SessionStorageLayout`** (`src/SharpClaw.Code.Sessions/Storage/SessionStorageLayout.cs`):
+Resolved by **`IRuntimeStoragePathResolver`** (`src/SharpClaw.Code.Infrastructure/Services/RuntimeStoragePathResolver.cs`), which also validates session and checkpoint IDs as single path segments. Embedded hosts with a storage root or tenant use a host-scoped root instead of `{workspace}/.sharpclaw`:
 
 | Path | Purpose |
 |------|---------|
@@ -21,7 +21,7 @@ Creating a session ensures **`.sharpclaw`** exists (`ConversationRuntime.CreateS
 - **`ISessionStore`** — `SaveAsync`, `GetByIdAsync`, `GetLatestAsync`, `ListAllAsync` (implementation: **`FileSessionStore`**).
 - **`IMutationSetStore`** — durable **`MutationSetDocument`** payloads under **`mutations/`** (**`FileMutationSetStore`**).
 - **`IWorkspaceSessionAttachmentStore`** — reads/writes **`active-session.json`** (**`FileWorkspaceSessionAttachmentStore`**).
-- **`IEventStore`** — `AppendAsync`, `ReadAllAsync` (implementation: **`NdjsonEventStore`**).
+- **`IEventStore`** — `AppendAsync`, `AppendRangeAsync`, `ReadAllAsync` (implementations: **`NdjsonEventStore`**, **`SqliteEventStore`**, selected per host by **`HostAwareEventStore`**).
 - **`IRuntimeEventPersistence`** — bridges telemetry to the event store (**`EventStoreRuntimeEventPersistence`**).
 
 When **`IRuntimeEventPublisher.PublishAsync`** is called with **`RuntimeEventPublishOptions`** that request persistence (see **`ToolExecutor`** / runtime), events are appended to **`events.ndjson`** for the active session.

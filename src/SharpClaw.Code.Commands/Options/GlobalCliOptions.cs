@@ -212,6 +212,8 @@ public sealed class GlobalCliOptions
         var resolvedWorkingDirectory = string.IsNullOrWhiteSpace(cwd)
             ? Environment.CurrentDirectory
             : Path.GetFullPath(cwd);
+        if (!Directory.Exists(resolvedWorkingDirectory))
+            throw new DirectoryNotFoundException($"Working directory does not exist: {resolvedWorkingDirectory}");
         var primaryText = parseResult.GetValue(PrimaryModeOption) ?? "build";
         var hostId = parseResult.GetValue(HostIdOption);
         var tenantId = parseResult.GetValue(TenantIdOption);
@@ -226,6 +228,7 @@ public sealed class GlobalCliOptions
             PermissionMode: yolo ? PermissionMode.DangerFullAccess : ParsePermissionMode(permissionModeText),
             OutputFormat: ParseOutputFormat(outputFormatText),
             PrimaryMode: ParsePrimaryMode(primaryText),
+            PrimaryModeSpecified: parseResult.GetResult(PrimaryModeOption) is { Implicit: false },
             SessionId: parseResult.GetValue(SessionOption),
             AgentId: parseResult.GetValue(AgentOption),
             HostContext: hostContext,
@@ -263,7 +266,8 @@ public sealed class GlobalCliOptions
         => value.Trim().ToLowerInvariant() switch
         {
             "json" => OutputFormat.Json,
-            _ => OutputFormat.Text,
+            "text" => OutputFormat.Text,
+            _ => throw new ArgumentException($"Unknown output format: {value}."),
         };
 
     private static PermissionMode ParsePermissionMode(string value)
@@ -272,7 +276,7 @@ public sealed class GlobalCliOptions
             "readonly" or "read-only" => PermissionMode.ReadOnly,
             "workspacewrite" or "workspace-write" or "prompt" or "autoapprovesafe" or "auto-approve-safe" => PermissionMode.WorkspaceWrite,
             "dangerfullaccess" or "danger-full-access" or "fulltrust" or "full-trust" => PermissionMode.DangerFullAccess,
-            _ => PermissionMode.WorkspaceWrite,
+            _ => throw new ArgumentException($"Unknown permission mode: {value}."),
         };
 
     private static PrimaryMode ParsePrimaryMode(string value)
@@ -281,7 +285,8 @@ public sealed class GlobalCliOptions
             "plan" => PrimaryMode.Plan,
             "spec" => PrimaryMode.Spec,
             "research" => PrimaryMode.Research,
-            _ => PrimaryMode.Build,
+            "build" => PrimaryMode.Build,
+            _ => throw new ArgumentException($"Unknown primary mode: {value}."),
         };
 
     private static SessionStoreKind? ParseSessionStoreKind(string? value)
@@ -290,6 +295,6 @@ public sealed class GlobalCliOptions
             null or "" => null,
             "filesystem" or "file-system" or "fileSystem" => SessionStoreKind.FileSystem,
             "sqlite" => SessionStoreKind.Sqlite,
-            _ => SessionStoreKind.FileSystem,
+            _ => throw new ArgumentException($"Unknown session store: {value}."),
         };
 }

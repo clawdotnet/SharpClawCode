@@ -15,6 +15,26 @@ namespace SharpClaw.Code.UnitTests.Commands;
 /// </summary>
 public sealed class ModeAndCliOptionsTests
 {
+    [Theory]
+    [InlineData("--permission-mode bogus")]
+    [InlineData("--primary-mode plna")]
+    public void Invalid_modes_are_rejected(string arguments)
+    {
+        var options = new GlobalCliOptions();
+        var command = new RootCommand();
+        foreach (var option in options.All) command.Options.Add(option);
+        FluentActions.Invoking(() => options.Resolve(command.Parse(arguments))).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Unspecified_primary_mode_is_left_to_agent_or_session_defaults()
+    {
+        var options = new GlobalCliOptions();
+        var command = new RootCommand();
+        foreach (var option in options.All) command.Options.Add(option);
+        options.Resolve(command.Parse("")).ToRuntimeCommandContext().PrimaryMode.Should().BeNull();
+    }
+
     [Fact]
     public void Global_cli_options_should_parse_spec_primary_mode()
     {

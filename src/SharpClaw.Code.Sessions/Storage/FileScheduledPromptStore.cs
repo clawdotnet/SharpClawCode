@@ -81,6 +81,6 @@ public sealed class FileScheduledPromptStore(
     private Task SaveAsync(string path, IReadOnlyList<ScheduledPromptDefinition> items, CancellationToken cancellationToken)
         => fileSystem.WriteAllTextAsync(
             path,
-            JsonSerializer.Serialize(items, ProtocolJsonContext.Default.ListScheduledPromptDefinition),
+            JsonSerializer.Serialize(items.ToList(), ProtocolJsonContext.Default.ListScheduledPromptDefinition),
             cancellationToken);
 }

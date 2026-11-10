@@ -17,6 +17,21 @@ public interface IEventStore
     Task AppendAsync(string workspacePath, string sessionId, RuntimeEvent runtimeEvent, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Appends several runtime events in order. Durable backends should write them in one operation.
+    /// </summary>
+    /// <param name="workspacePath">The workspace root path.</param>
+    /// <param name="sessionId">The session identifier.</param>
+    /// <param name="runtimeEvents">The runtime events to append.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    async Task AppendRangeAsync(string workspacePath, string sessionId, IReadOnlyList<RuntimeEvent> runtimeEvents, CancellationToken cancellationToken)
+    {
+        foreach (var runtimeEvent in runtimeEvents)
+        {
+            await AppendAsync(workspacePath, sessionId, runtimeEvent, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Reads all runtime events for a session.
     /// </summary>
     /// <param name="workspacePath">The workspace root path.</param>

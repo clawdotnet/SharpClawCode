@@ -252,7 +252,7 @@ public sealed class ProviderBackedAgentKernel(
                                     CreateProviderFailedEventMessage(provider.ProviderName, providerEvent));
                             }
 
-                            if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
+                            if (!providerEvent.IsTerminal && !string.IsNullOrEmpty(providerEvent.Content))
                             {
                                 candidateTextSegments.Add(providerEvent.Content);
                             }
@@ -406,15 +406,11 @@ public sealed class ProviderBackedAgentKernel(
             }
 
             var output = string.Concat(outputSegments);
-            if (string.IsNullOrWhiteSpace(output))
+            // A turn that ran tools may legitimately end without closing text; only a turn that produced nothing is a failure.
+            if (string.IsNullOrWhiteSpace(output) && allToolResults.Count == 0)
             {
-                logger.LogWarning(
-                    "Provider {ProviderName} returned no stream content for session {SessionId}; returning placeholder response.",
-                    activeProviderName,
-                    request.Context.SessionId);
-                var placeholder = CreatePlaceholderResult(request, activeModel, $"Provider '{activeProviderName}' returned no content; using placeholder response.");
-                // Meter what the provider actually reported, not the synthetic placeholder estimate.
-                return placeholder with { Usage = AddUsage(totalUsage ?? placeholder.Usage, compactionUsage) };
+                throw new ProviderExecutionException(activeProviderName, activeModel, ProviderFailureKind.StreamFailed,
+                    $"Provider '{activeProviderName}' returned an empty response.");
             }
 
             var usage = totalUsage ?? new UsageSnapshot(
@@ -481,19 +477,6 @@ public sealed class ProviderBackedAgentKernel(
     /// </summary>
     internal Task<ProviderInvocationResult> ExecuteAsync(AgentFrameworkRequest request, CancellationToken cancellationToken)
         => ExecuteAsync(request, toolExecutionContext: null, availableTools: null, cancellationToken);
-
-    private static ProviderInvocationResult CreatePlaceholderResult(AgentFrameworkRequest request, string model, string summary)
-    {
-        var output = $"Session {request.Context.SessionId} turn {request.Context.TurnId}: placeholder response for '{request.Context.Prompt}' using model '{model}'.";
-        var usage = new UsageSnapshot(
-            InputTokens: request.Context.Prompt.Length,
-            OutputTokens: output.Length,
-            CachedInputTokens: 0,
-            TotalTokens: request.Context.Prompt.Length + output.Length,
-            EstimatedCostUsd: 0.0001m);
-
-        return new ProviderInvocationResult(output, usage, summary, null, null);
-    }
 
     private static ProviderExecutionException CreateMissingProviderException(
         string providerName,

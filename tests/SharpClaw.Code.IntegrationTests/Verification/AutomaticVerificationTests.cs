@@ -71,7 +71,7 @@ public sealed class AutomaticVerificationTests
         var disabled = Request(fixture.Root, 2) with { Metadata = new() { [SharpClawWorkflowMetadataKeys.VerificationEnabled] = "false" } };
         (await runtime.RunPromptAsync(disabled, CancellationToken.None)).Verification.Should().BeNull();
         verification.Calls.Should().Be(2);
-        var denied = await runtime.RunPromptAsync(Request(fixture.Root, 2) with { PermissionMode = PermissionMode.WorkspaceWrite }, CancellationToken.None);
+        var denied = await runtime.RunPromptAsync(Request(fixture.Root, 2) with { PermissionMode = PermissionMode.WorkspaceWrite, ApprovalSettings = new ApprovalSettings([ApprovalScope.FileSystemWrite], null) }, CancellationToken.None);
         denied.Verification!.Reason.Should().Be(VerificationFailureReason.PermissionDenied);
         agent.Calls.Should().Be(4);
         verification.Calls.Should().Be(2);
@@ -188,7 +188,7 @@ public sealed class AutomaticVerificationTests
         {
             Calls++;
             Contexts.Add(context);
-            var toolContext = new ToolExecutionContext(context.SessionId, context.TurnId, context.WorkingDirectory, context.WorkingDirectory, context.PermissionMode, context.OutputFormat, null, IsInteractive: context.IsInteractive, MutationRecorder: context.ToolMutationRecorder);
+            var toolContext = new ToolExecutionContext(context.SessionId, context.TurnId, context.WorkingDirectory, context.WorkingDirectory, context.PermissionMode, context.OutputFormat, null, IsInteractive: context.IsInteractive, MutationRecorder: context.ToolMutationRecorder, ApprovalSettings: context.ApprovalSettings);
             var result = await context.ToolExecutor.ExecuteAsync("write_file", JsonSerializer.Serialize(new { path = "Source.cs", content = "state" + Calls }), toolContext, cancellationToken);
             result.Result.Succeeded.Should().BeTrue(result.Result.ErrorMessage);
             AfterWrite?.Invoke();

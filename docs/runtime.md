@@ -122,7 +122,10 @@ These services are intentionally small and runtime-owned rather than separate or
 
 ## Embedded server
 
-**`IWorkspaceHttpServer`** / **`WorkspaceHttpServer`** expose a minimal local HTTP surface for editor and automation clients:
+**`IWorkspaceHttpServer`** / **`WorkspaceHttpServer`** expose a minimal local HTTP surface for editor and automation clients.
+
+The server refuses to start unless `SHARPCLAW_SERVER_TOKEN` holds a secret of at least 32 non-whitespace characters, and every endpoint (including `/s/{shareId}`) requires it as `Authorization: Bearer <secret>` or `X-SharpClaw-Server-Token: <secret>`. Use the header form when `Authorization` carries an OIDC approval identity. Requests with an `Origin` header or an unexpected `Host` are rejected. Request JSON cannot raise the host's permission mode or leave a host-selected Plan/Research mode, and session IDs must be single path segments.
+
 
 - `POST /v1/prompt`
 - `GET /v1/sessions`

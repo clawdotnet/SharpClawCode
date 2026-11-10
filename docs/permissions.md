@@ -47,7 +47,11 @@ The auto-approve budget is process-local and session-scoped, similar to remember
 
 Rules return **`PermissionRuleOutcome`**: Abstain, Allow, Deny, or **RequireApproval**.
 
-If all rules abstain, **`EvaluateByModeAsync`** applies mode defaults (e.g. **ReadOnly** allows non-destructive **`ToolExecution`**; **WorkspaceWrite** auto-allows file/tool scope but may require approval for shell, network, session operations).
+Mode restrictions and every denial take precedence over approvals or allowances. **ReadOnly** blocks mutations and elevated scopes; Plan/Research also deny mutating operations. `RequiresApproval` is enforced outside DangerFullAccess. Approval prompts include exact arguments and working directory, and remembered grants are scoped to those arguments. Authenticated hosts revalidate identity on every approval, before any memory or auto-approval shortcut.
+
+WorkspaceWrite allows file/tool scopes only when the tool does not explicitly require approval. Shell, network, and session operations require approval. Non-rememberable security gates (dangerous shell patterns and plugin processes) cannot use scope auto-approval. A plugin manifest or workspace session file cannot authorize its own executable code. Plugin process tools are blocked in read-only workflows. `web_fetch` uses network scope and restricts connections, DNS answers, and redirects to public HTTP(S) destinations.
+
+The dangerous-shell patterns are an additional approval gate, not an OS sandbox or a complete shell-language classifier. Approved shell commands still execute with the user's OS privileges. Subprocesses have a two-minute deadline and a one-MiB character output cap per stream.
 
 ## Approvals
 
@@ -76,7 +80,7 @@ Authenticated approvals are tenant-bound. If the runtime host context carries `T
 
 ### Remembered approvals
 
-**`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust**).
+**`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust, and the exact tool arguments**). Expired entries are ignored, and authenticated hosts revalidate every approval instead of reusing memory.
 
 When a rule returns **`RequireApproval`** with **`CanRememberApproval`**, an approved outcome may be **`Store`**d and reused via **`TryGet`**. In embedded-host flows, the remembered approval remains scoped to the current session and tenant context.
 

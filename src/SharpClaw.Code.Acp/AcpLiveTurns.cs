@@ -67,6 +67,28 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
         return new JsonObject { ["accepted"] = cancel || target.Handle.TrySteer(text!) };
     }
 
+    /// <summary>
+    /// Handles a spec-shaped <c>session/cancel</c> notification, which carries only <c>sessionId</c>:
+    /// cancels every live-controlled prompt for that session on this connection, optionally narrowed by <c>cwd</c>.
+    /// </summary>
+    internal int CancelSession(JsonNode? parameters, string? workspace)
+    {
+        var sessionId = parameters?["sessionId"] is JsonValue value && value.TryGetValue<string>(out var text) ? text : null;
+        if (string.IsNullOrEmpty(sessionId)) return 0;
+        workspace = workspace is null ? null : Path.TrimEndingDirectorySeparator(workspace);
+        var cancelled = 0;
+        foreach (var prompt in active.Values)
+        {
+            if (prompt.SessionId != sessionId) continue;
+            if (workspace is not null && !string.Equals(prompt.Workspace, workspace,
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)) continue;
+            prompt.Handle.Cancel();
+            cancelled++;
+        }
+
+        return cancelled;
+    }
+
     private static void AddPending(JsonObject result, IReadOnlyList<string> pending)
     {
         if (pending.Count == 0) return;

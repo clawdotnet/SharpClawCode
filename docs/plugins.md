@@ -20,7 +20,9 @@ Only plugins in **`PluginLifecycleState.Enabled`** surface tool descriptors to *
 
 ## Trust and permissions
 
-Manifest trust flows into **Protocol** models and **`PermissionEvaluationContext`** (`ToolOriginatingPluginId`, **`PluginTrustRule`**, etc.).
+Manifest trust is advisory metadata in **Protocol** and **`PermissionEvaluationContext`**. It does not grant execution authority. Plugin process tools require an explicit approval for each call; scope auto-approval and remembered workspace trust do not waive that gate. ReadOnly, Plan, and Research workflows block plugin processes. Explicit `plugins enable` runs the requested health check.
+
+Malformed manifests/states are skipped with diagnostics. Conflicting plugin tool names are omitted without disabling built-in tools. IDs and canonical catalog paths are validated before package filesystem operations.
 
 ## CLI
 

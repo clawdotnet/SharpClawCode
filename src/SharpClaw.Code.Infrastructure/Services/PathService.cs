@@ -16,8 +16,11 @@ public sealed class PathService : IPathService
         => Path.GetFullPath(path);
 
     /// <inheritdoc />
-    public string GetCanonicalFullPath(string path)
+    public string GetCanonicalFullPath(string path) => GetCanonicalFullPath(path, 0);
+
+    private static string GetCanonicalFullPath(string path, int linkDepth)
     {
+        if (linkDepth > 40) throw new IOException("Too many symbolic links in path.");
         ArgumentException.ThrowIfNullOrWhiteSpace(path);
 
         var fullPath = Path.GetFullPath(path);
@@ -38,7 +41,7 @@ public sealed class PathService : IPathService
             {
                 current = string.Equals(resolved, current, StringComparison.Ordinal)
                     ? resolved
-                    : GetCanonicalFullPath(resolved);
+                    : GetCanonicalFullPath(resolved, linkDepth + 1);
             }
         }
 
@@ -59,7 +62,12 @@ public sealed class PathService : IPathService
 
     private static string? TryResolveExistingLink(string path)
     {
-        FileSystemInfo? info = null;
+        FileSystemInfo? info = new FileInfo(path);
+        if (info.LinkTarget is { } linkTarget)
+        {
+            return Path.GetFullPath(Path.IsPathRooted(linkTarget) ? linkTarget : Path.Combine(Path.GetDirectoryName(path)!, linkTarget));
+        }
+        info = null;
         if (Directory.Exists(path))
         {
             info = new DirectoryInfo(path);

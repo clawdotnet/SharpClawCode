@@ -110,26 +110,38 @@ public sealed class AcpStdioHost(
         var id = requestObject["id"];
         if (requestObject["jsonrpc"] is not JsonValue version || !version.TryGetValue<string>(out var protocol) || protocol != "2.0"
             || requestObject["method"] is not JsonValue name || !name.TryGetValue<string>(out var method) || string.IsNullOrWhiteSpace(method)
-            || id is not JsonValue)
+            || (id is not null && id is not JsonValue))
         {
-            await WriteErrorAsync(stdout, id, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
+            if (id is not null) await WriteErrorAsync(stdout, id, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
             return;
         }
 
         try
         {
+            if (id is null)
+            {
+                if (method == "session/cancel")
+                {
+                    var parameters = requestObject["params"];
+                    if (parameters?["promptRequestId"] is not null)
+                        live.Control(RequireWorkspace(parameters), parameters, cancel: true);
+                    else if (live.CancelSession(parameters, parameters?["cwd"] is null ? null : RequireWorkspace(parameters)) == 0)
+                        logger.LogDebug("ACP session/cancel notification matched no live-controlled prompt.");
+                }
+                return;
+            }
             var response = await DispatchAsync(method, id, requestObject["params"], live, stdout, cancellationToken).ConfigureAwait(false);
             await WriteResponseAsync(stdout, id, response, cancellationToken).ConfigureAwait(false);
         }
         catch (AcpRequestException ex)
         {
             logger.LogWarning(ex, "ACP request failed for method {Method} with JSON-RPC error {Code}.", method, ex.Code);
-            await WriteErrorAsync(stdout, id, ex.Code, ex.Message, cancellationToken, ex.Details).ConfigureAwait(false);
+            if (id is not null) await WriteErrorAsync(stdout, id, ex.Code, ex.Message, cancellationToken, ex.Details).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
             logger.LogError(ex, "ACP request failed for method {Method}.", method);
-            await WriteErrorAsync(stdout, id, -32603, ex.Message, cancellationToken).ConfigureAwait(false);
+            if (id is not null) await WriteErrorAsync(stdout, id, -32603, ex.Message, cancellationToken).ConfigureAwait(false);
         }
     }
 

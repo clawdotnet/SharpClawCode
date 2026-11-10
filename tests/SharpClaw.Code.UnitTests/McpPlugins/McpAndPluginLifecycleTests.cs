@@ -218,7 +218,7 @@ public sealed class McpAndPluginLifecycleTests
     /// Ensures conflicting tool names across enabled plugins are rejected at descriptor list time.
     /// </summary>
     [Fact]
-    public async Task Plugin_manager_should_reject_duplicate_tool_names_across_enabled_plugins()
+    public async Task Plugin_manager_should_quarantine_duplicate_tool_names_across_enabled_plugins()
     {
         var workspacePath = CreateTemporaryWorkspace();
         var manager = CreatePluginManager();
@@ -242,10 +242,8 @@ public sealed class McpAndPluginLifecycleTests
         await manager.EnableAsync(workspacePath, "p.one", CancellationToken.None);
         await manager.EnableAsync(workspacePath, "p.two", CancellationToken.None);
 
-        var act = async () => await manager.ListToolDescriptorsAsync(workspacePath, CancellationToken.None);
-
-        await act.Should().ThrowAsync<InvalidOperationException>()
-            .Where(exception => exception.Message.Contains("shared_tool", StringComparison.Ordinal));
+        var tools = await manager.ListToolDescriptorsAsync(workspacePath, CancellationToken.None);
+        tools.Should().NotContain(tool => tool.Name == "shared_tool");
     }
 
     private static string CreateTemporaryWorkspace()

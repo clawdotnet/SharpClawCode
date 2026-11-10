@@ -73,6 +73,7 @@ public sealed class ToolRegistry : IToolRegistry
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toolName);
+        if (tools.TryGetValue(toolName, out var builtIn)) return builtIn;
         var allTools = await GetAllToolsAsync(workspaceRootForPluginTools, cancellationToken).ConfigureAwait(false);
         return allTools.TryGetValue(toolName, out var tool)
             ? tool

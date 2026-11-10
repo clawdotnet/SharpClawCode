@@ -19,7 +19,7 @@ It is designed for:
 
 - teams that want a **C# coding agent** runtime instead of stitching together ad hoc scripts
 - developers building **AI-powered CLI tools** with strong machine-readable output
-- products that need **MCP integration**, plugin discovery, and permission-aware tool execution
+- products that need **MCP server hosting and outbound lifecycle management**, plugin discovery, and permission-aware tool execution
 - workflows that need **durable session state**, append-only history, and replayable runtime events
 - cross-platform environments, with deliberate attention to **Windows-safe behavior**
 
@@ -142,8 +142,8 @@ Primary workflow modes:
 | Permission-aware tools | Route file, shell, and plugin-backed actions through explicit policy and approval decisions |
 | Provider abstraction | Run against Anthropic and OpenAI-compatible backends through a typed runtime surface |
 | Local runtime catalog | Surface Ollama, llama.cpp, and other OpenAI-compatible profiles with health, model discovery, and embedding defaults |
-| MCP support | Register outbound servers and host permission-aware stdio or Streamable HTTP tools |
-| Plugins and skills | Extend the runtime with trusted plugin manifests and discoverable workspace skills |
+| MCP support | Manage outbound server lifecycle (agent tool invocation is not connected); host permission-aware stdio or Streamable HTTP tools |
+| Plugins and skills | Discover plugin manifests and workspace skills; plugin process calls require explicit approval |
 | .NET intelligence | Resolve exact Roslyn symbols, find references and hierarchy, inspect compiler diagnostics, and rename with undo |
 | Verification | Explicit build/test reports and opt-in bounded repair, with permission checks and durable recovery |
 | Workspace knowledge | Build a durable local index for lexical, symbol, and semantic workspace search |
@@ -153,7 +153,7 @@ Primary workflow modes:
 | JSON-friendly CLI | Use the same runtime through human-readable terminal flows or machine-readable command output |
 | Spec workflow mode | Turn prompts into structured requirements, technical design, and task documents for feature proposals |
 | Embedded SDK + server | Host the runtime via `SharpClaw.Code` or expose prompt, session, admin, and SSE endpoints for editor or automation clients |
-| Config + agent catalog | Layer user/workspace JSONC config with typed agent defaults, tool allowlists, and runtime hooks |
+| Config + agent catalog | Layer user/workspace JSONC config with typed agent defaults and tool allowlists; executable hooks are user-config only |
 | Session sharing | Create self-hosted share links and durable sanitized share snapshots under `.sharpclaw/` |
 | Diagnostics context | Surface configured diagnostics sources into prompt context, status, and machine-readable output |
 
@@ -267,7 +267,7 @@ Subcommands include `prompt`, `repl`, `doctor`, `status`, `session`, `index`, `m
 
 ## Configuration
 
-SharpClaw Code uses both the standard .NET configuration stack (`appsettings.json`, environment variables, CLI args) and layered SharpClaw JSONC config files:
+The CLI reads provider/runtime settings from environment variables and binds command options explicitly. It never loads repository `appsettings*.json` or .NET command-line configuration overrides. Embedded .NET hosts may supply their own trusted `IConfiguration`. Layered SharpClaw JSONC config files are:
 
 - user config: `~/.config/sharpclaw/config.jsonc` on Unix-like systems
 - Windows user config: `%AppData%\\SharpClaw\\config.jsonc`
@@ -275,7 +275,9 @@ SharpClaw Code uses both the standard .NET configuration stack (`appsettings.jso
 
 Precedence is:
 
-`CLI args > workspace sharpclaw.jsonc > user config.jsonc > appsettings/environment defaults`
+`explicit CLI options > workspace agent/content settings > user JSONC defaults`
+
+`server` and executable `hooks` settings come only from user JSONC or an explicit embedded-host configuration service. Workspace JSONC cannot override them. CLI invocations do not start the background scheduler; embedded hosts can opt into its hosted lifecycle.
 
 Key runtime configuration sections:
 
@@ -290,11 +292,11 @@ Key runtime configuration sections:
 Key `sharpclaw.jsonc` capabilities:
 
 - `shareMode`: `manual`, `auto`, or `disabled`
-- `server`: host, port, and optional public base URL for share links
+- `server` (user config only): host, port, approval identity settings, and optional public base URL for share links
 - `defaultAgentId`: default prompt agent
 - `agents`: typed agent catalog entries with model defaults, tool allowlists, and instruction appendices
 - `lspServers`: configured diagnostics sources
-- `hooks`: lifecycle hooks for turn/tool/share/server events
+- `hooks` (user config only): explicitly configured executable lifecycle hooks for turn/tool/share/server events
 - `connectLinks`: browser entry points for provider or external auth flows
 
 All options are validated at startup via `IValidateOptions` implementations.
@@ -310,7 +312,10 @@ All options are validated at startup via `IValidateOptions` implementations.
 - Embedded hosts can opt into trusted-header or OIDC-backed approval identity, tenant-aware usage metering, webhook/SSE event streaming, and admin APIs for provider catalog, index status, search, memory inspection, and tool package management.
 - The CLI mirrors those enterprise surfaces with `usage summary`, `usage detail`, and `tool-packages` commands while preserving the existing workspace-local `usage`, `cost`, and `stats` flows.
 - Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
-- The embedded server exposes local JSON and SSE endpoints for prompts, sessions, admin control, metering, and event streaming.
+- Every embedded HTTP endpoint requires a host secret: set `SHARPCLAW_SERVER_TOKEN` to at least 32 non-whitespace characters. Send it as `Authorization: Bearer <secret>`, or use `X-SharpClaw-Server-Token` when `Authorization` carries a separate OIDC approval identity. Browser Origin requests and unexpected Host values are rejected. Share links also require authentication.
+- HTTP requests cannot raise the host permission mode or select tenant/storage roots. Hosts bind identity and storage through `RuntimeCommandContext.HostContext`.
+- `/v1/admin/events/stream` streams runtime envelopes. `/v1/prompt` SSE replays buffered turn events after completion; ACP currently sends final assistant text. Neither promises incremental model-token delivery.
+- See [launch findings review](docs/launch-findings-review.md) for fixes, evidence, and remaining limitations.
 
 ## Contributing
 

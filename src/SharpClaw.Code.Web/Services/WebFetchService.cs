@@ -18,9 +18,9 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(url);
 
-        using var response = await ResilientHttpGet.GetAsync(httpClient, url, cancellationToken).ConfigureAwait(false);
+        using var response = await FetchPublicAsync(new Uri(url, UriKind.Absolute), cancellationToken).ConfigureAwait(false);
         var contentType = response.Content.Headers.ContentType?.MediaType;
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var body = await ReadBoundedBodyAsync(response.Content, cancellationToken).ConfigureAwait(false);
 
         if (!ShouldTreatBodyAsHtml(contentType, body))
         {
@@ -47,6 +47,48 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
             ContentType: contentType,
             Title: title,
             Content: DecodeAndNormalize(text));
+    }
+
+    /// <summary>Maximum response bytes read from one fetch; larger bodies are truncated.</summary>
+    public const int MaxBodyBytes = 5 * 1024 * 1024;
+
+    private static async Task<string> ReadBoundedBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var bounded = new MemoryStream();
+        var chunk = new byte[81920];
+        while (bounded.Length < MaxBodyBytes)
+        {
+            var wanted = (int)Math.Min(chunk.Length, MaxBodyBytes - bounded.Length);
+            var read = await stream.ReadAsync(chunk.AsMemory(0, wanted), cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            bounded.Write(chunk, 0, read);
+        }
+
+        var encoding = System.Text.Encoding.UTF8;
+        var charset = content.Headers.ContentType?.CharSet?.Trim('"');
+        if (!string.IsNullOrWhiteSpace(charset))
+        {
+            try { encoding = System.Text.Encoding.GetEncoding(charset); }
+            catch (ArgumentException) { /* Unknown charset: fall back to UTF-8. */ }
+        }
+
+        return encoding.GetString(bounded.GetBuffer(), 0, (int)bounded.Length).TrimStart('\uFEFF');
+    }
+
+    private async Task<HttpResponseMessage> FetchPublicAsync(Uri uri, CancellationToken cancellationToken)
+    {
+        for (var redirects = 0; redirects <= 5; redirects++)
+        {
+            PublicNetwork.ValidateUri(uri);
+            var response = await ResilientHttpGet.GetAsync(httpClient, uri.AbsoluteUri, cancellationToken).ConfigureAwait(false);
+            if ((int)response.StatusCode is not (301 or 302 or 303 or 307 or 308)) return response;
+            var location = response.Headers.Location;
+            response.Dispose();
+            if (location is null) throw new HttpRequestException("Redirect has no destination.");
+            uri = new Uri(uri, location);
+        }
+        throw new HttpRequestException("Too many redirects.");
     }
 
     /// <summary>

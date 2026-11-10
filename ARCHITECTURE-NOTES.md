@@ -8,7 +8,7 @@ High-effort or cross-cutting items identified during review. Low/medium fixes ar
 
 ## Stable JSON for MCP diagnostics
 
-- **TODO:** `McpDoctorService` builds `DataJson` with anonymous objects and reflection-based `JsonSerializer.Serialize`. Align with `ProtocolJsonContext` by introducing explicit DTOs (for example `McpWorkspaceStatusReport`, `McpDoctorReport`) in `SharpClaw.Code.Protocol` and source-generated serialization, similar to operational reports.
+- **Done:** `McpDoctorService` serializes typed payloads through its source-generated `McpDoctorJsonContext`.
 
 ## Plugin manifest parsing
 

@@ -31,6 +31,7 @@ public sealed class ApprovalAuthIntegrationTests
     public async Task Embedded_http_server_should_enforce_oidc_admin_and_prompt_approval_auth()
     {
         await using var authority = new TestOidcAuthority();
+        Environment.SetEnvironmentVariable("SHARPCLAW_SERVER_TOKEN", "integration-test-server-token-32-characters");
         var workspaceRoot = CreateTemporaryWorkspace();
         var outsideFile = Path.Combine(Path.GetTempPath(), "sharpclaw-approval-auth-targets", Guid.NewGuid().ToString("N"), "secret.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(outsideFile)!);
@@ -54,6 +55,8 @@ public sealed class ApprovalAuthIntegrationTests
 
         var services = new ServiceCollection();
         services.AddSharpClawRuntime();
+        // This embedded host explicitly supplies its OIDC configuration; workspace files cannot do so.
+        services.AddSingleton<ISharpClawConfigService>(new HostConfig(workspaceRoot));
         services.AddDeterministicMockModelProvider();
         using var serviceProvider = services.BuildServiceProvider();
 
@@ -68,6 +71,8 @@ public sealed class ApprovalAuthIntegrationTests
                 BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                 Timeout = TimeSpan.FromSeconds(10),
             };
+
+            httpClient.DefaultRequestHeaders.Add("X-SharpClaw-Server-Token", "integration-test-server-token-32-characters");
 
             using var unauthenticatedAdminResponse = await httpClient.GetAsync("v1/admin/providers", CancellationToken.None);
             unauthenticatedAdminResponse.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -88,7 +93,7 @@ public sealed class ApprovalAuthIntegrationTests
             approvedPromptResponse.EnsureSuccessStatusCode();
 
             using var wrongTenantPromptRequest = BuildPromptRequest(outsideFile, tenantId: "tenant-b");
-            wrongTenantPromptRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authority.CreateToken("alice", "tenant-a"));
+            wrongTenantPromptRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authority.CreateToken("alice", "tenant-b"));
             using var wrongTenantPromptResponse = await httpClient.SendAsync(wrongTenantPromptRequest, CancellationToken.None);
             wrongTenantPromptResponse.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
             (await ReadErrorAsync(wrongTenantPromptResponse)).Should().Contain("does not match runtime tenant");
@@ -97,6 +102,15 @@ public sealed class ApprovalAuthIntegrationTests
         {
             serverCts.Cancel();
             await serverTask;
+        }
+    }
+
+    private sealed class HostConfig(string workspaceRoot) : ISharpClawConfigService
+    {
+        public async Task<SharpClawConfigSnapshot> GetConfigAsync(string workspace, CancellationToken cancellationToken)
+        {
+            var json = await File.ReadAllTextAsync(Path.Combine(workspaceRoot, "sharpclaw.jsonc"), cancellationToken);
+            return new SharpClawConfigSnapshot(workspace, null, null, JsonSerializer.Deserialize(json, ProtocolJsonContext.Default.SharpClawConfigDocument)!);
         }
     }
 
@@ -184,7 +198,7 @@ public sealed class ApprovalAuthIntegrationTests
                     WorkingDirectory: workspaceRoot,
                     Model: "default",
                     PermissionMode: PermissionMode.WorkspaceWrite,
-                    OutputFormat: OutputFormat.Json),
+                    OutputFormat: OutputFormat.Json, HostContext: new RuntimeHostContext("test-host", "tenant-a")),
                 cancellationToken);
 
             try
@@ -194,6 +208,7 @@ public sealed class ApprovalAuthIntegrationTests
                     BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                     Timeout = TimeSpan.FromMilliseconds(500),
                 };
+                httpClient.DefaultRequestHeaders.Add("X-SharpClaw-Server-Token", "integration-test-server-token-32-characters");
                 await WaitForServerAsync(httpClient, serverTask, TimeSpan.FromSeconds(10), cancellationToken).ConfigureAwait(false);
                 return (port, serverTask);
             }

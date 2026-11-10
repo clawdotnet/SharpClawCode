@@ -25,6 +25,7 @@ public sealed class WorkspaceHttpServerAdminTests
     [Fact]
     public async Task Admin_endpoints_should_expose_provider_session_usage_package_and_event_data()
     {
+        Environment.SetEnvironmentVariable("SHARPCLAW_SERVER_TOKEN", "integration-test-server-token-32-characters");
         var workspaceRoot = CreateTemporaryWorkspace();
         await File.WriteAllTextAsync(Path.Combine(workspaceRoot, "README.md"), "Workspace admin search content.");
 
@@ -54,7 +55,21 @@ public sealed class WorkspaceHttpServerAdminTests
                 BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                 Timeout = TimeSpan.FromSeconds(10),
             };
+            httpClient.DefaultRequestHeaders.Add("X-SharpClaw-Server-Token", "integration-test-server-token-32-characters");
             await WaitForServerAsync(httpClient, CancellationToken.None);
+
+            using (var unauthenticated = new HttpClient { BaseAddress = httpClient.BaseAddress })
+                (await unauthenticated.GetAsync("v1/status")).StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+            using (var browserRequest = new HttpRequestMessage(HttpMethod.Get, "v1/status"))
+            {
+                browserRequest.Headers.Add("Origin", "https://attacker.example");
+                (await httpClient.SendAsync(browserRequest)).StatusCode.Should().Be(System.Net.HttpStatusCode.Unauthorized);
+            }
+            using (var rebound = new HttpRequestMessage(HttpMethod.Get, "v1/status"))
+            {
+                rebound.Headers.Host = "attacker.example";
+                ((int)(await httpClient.SendAsync(rebound)).StatusCode).Should().BeGreaterThanOrEqualTo(400);
+            }
 
             var providersJson = await httpClient.GetStringAsync("v1/admin/providers");
             providersJson.Should().Contain("mock");
@@ -66,13 +81,14 @@ public sealed class WorkspaceHttpServerAdminTests
 
             using var createSessionResponse = await httpClient.PostAsync(
                 "v1/admin/sessions",
-                new StringContent("""{"permissionMode":"workspaceWrite","outputFormat":"json"}""", Encoding.UTF8, "application/json"),
+                new StringContent("""{"permissionMode":"dangerFullAccess","outputFormat":"json"}""", Encoding.UTF8, "application/json"),
                 CancellationToken.None);
             createSessionResponse.EnsureSuccessStatusCode();
             var createdSession = JsonSerializer.Deserialize(
                 await createSessionResponse.Content.ReadAsStringAsync(),
                 ProtocolJsonContext.Default.ConversationSession);
             createdSession.Should().NotBeNull();
+            createdSession!.PermissionMode.Should().Be(PermissionMode.WorkspaceWrite);
 
             using var forkSessionResponse = await httpClient.PostAsync(
                 $"v1/admin/sessions/{createdSession!.Id}/fork",
@@ -144,6 +160,56 @@ public sealed class WorkspaceHttpServerAdminTests
                 ProtocolJsonContext.Default.ListRuntimeEventEnvelope);
             events.Should().NotBeNull();
             events!.Should().Contain(envelope => envelope.EventType == nameof(SharpClaw.Code.Protocol.Events.TurnCompletedEvent));
+        }
+        finally
+        {
+            serverCts.Cancel();
+            await serverTask;
+        }
+    }
+
+    /// <summary>
+    /// Ensures prompt JSON cannot raise the host's permission mode or leave a host-selected research mode.
+    /// </summary>
+    [Fact]
+    public async Task Prompt_requests_cannot_raise_host_permission_or_primary_mode()
+    {
+        Environment.SetEnvironmentVariable("SHARPCLAW_SERVER_TOKEN", "integration-test-server-token-32-characters");
+        var workspaceRoot = CreateTemporaryWorkspace();
+        var services = new ServiceCollection();
+        services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
+        using var serviceProvider = services.BuildServiceProvider();
+        var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
+        var port = FindFreePort();
+        using var serverCts = new CancellationTokenSource();
+        var serverTask = server.RunAsync(
+            workspaceRoot,
+            "127.0.0.1",
+            port,
+            new RuntimeCommandContext(
+                WorkingDirectory: workspaceRoot,
+                Model: "default",
+                PermissionMode: PermissionMode.ReadOnly,
+                OutputFormat: OutputFormat.Json,
+                PrimaryMode: PrimaryMode.Research),
+            serverCts.Token);
+
+        try
+        {
+            using var httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
+            httpClient.DefaultRequestHeaders.Add("X-SharpClaw-Server-Token", "integration-test-server-token-32-characters");
+            await WaitForServerAsync(httpClient, CancellationToken.None);
+
+            using var promptResponse = await httpClient.PostAsync(
+                "v1/prompt",
+                new StringContent("""{"prompt":"escalate","model":"default","permissionMode":"dangerFullAccess","primaryMode":"build"}""", Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            promptResponse.EnsureSuccessStatusCode();
+            var result = JsonSerializer.Deserialize(await promptResponse.Content.ReadAsStringAsync(), ProtocolJsonContext.Default.TurnExecutionResult)!;
+
+            result.Session.PermissionMode.Should().Be(PermissionMode.ReadOnly);
+            result.Session.Metadata![SharpClawWorkflowMetadataKeys.PrimaryMode].Should().BeEquivalentTo(nameof(PrimaryMode.Research));
         }
         finally
         {

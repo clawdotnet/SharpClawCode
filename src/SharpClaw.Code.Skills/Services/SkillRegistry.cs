@@ -84,7 +84,7 @@ public sealed class SkillRegistry(
         var skillsRoot = EnsureSkillsRoot(workspaceRoot);
         fileSystem.CreateDirectory(skillsRoot);
 
-        var skillDirectory = pathService.Combine(skillsRoot, request.Id);
+        var skillDirectory = SharpClaw.Code.Infrastructure.Services.LocalPackagePath.Resolve(pathService, skillsRoot, request.Id, workspaceRoot);
         fileSystem.CreateDirectory(skillDirectory);
 
         var metadata = new Dictionary<string, string>(request.Metadata ?? new Dictionary<string, string>(), StringComparer.Ordinal)
@@ -125,7 +125,7 @@ public sealed class SkillRegistry(
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(skillId);
 
-        var skillDirectory = pathService.Combine(EnsureSkillsRoot(workspaceRoot), skillId);
+        var skillDirectory = SharpClaw.Code.Infrastructure.Services.LocalPackagePath.Resolve(pathService, EnsureSkillsRoot(workspaceRoot), skillId, workspaceRoot);
         if (!fileSystem.DirectoryExists(skillDirectory))
         {
             return Task.FromResult(false);

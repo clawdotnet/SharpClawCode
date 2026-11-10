@@ -45,6 +45,7 @@ public static class WebServiceCollectionExtensions
         services.AddHttpClient<IWebSearchService, WebSearchService>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60));
         services.AddHttpClient<IWebFetchService, WebFetchService>()
+            .ConfigurePrimaryHttpMessageHandler(PublicNetwork.CreateHandler)
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60));
         return services;
     }

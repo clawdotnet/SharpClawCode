@@ -470,13 +470,16 @@ public sealed class SqliteWorkspaceKnowledgeStore(
         {
             DataSource = dbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            Cache = SqliteCacheMode.Private,
         }.ToString();
         connectionPools.TryAdd(connectionString, 0);
         var connection = new SqliteConnection(connectionString);
         try
         {
             await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var pragma = connection.CreateCommand();
+            pragma.CommandText = "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;";
+            await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
             await EnsureSchemaAsync(connection, cancellationToken).ConfigureAwait(false);
             return connection;
         }
@@ -677,7 +680,7 @@ public sealed class SqliteWorkspaceKnowledgeStore(
             .Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
             .Select(static token => new string(token.Where(static character => char.IsLetterOrDigit(character) || character == '_').ToArray()))
             .Where(static token => !string.IsNullOrWhiteSpace(token))
-            .Select(static token => token.EndsWith('*') ? token : $"{token}*");
+            .Select(static token => $"\"{token}\"*");
 
         return string.Join(" ", tokens);
     }

@@ -36,6 +36,8 @@ public sealed class ReadFileTool(IFileSystem fileSystem, IPathService pathServic
         var arguments = DeserializeArguments<ReadFileToolArguments>(request);
         var pathResolver = new WorkspacePathResolver(pathService);
         var fullPath = pathResolver.ResolvePath(context, arguments.Path);
+        if (File.Exists(fullPath) && new FileInfo(fullPath).Length > 2 * 1024 * 1024)
+            return CreateFailureResult(context, request, "File exceeds the 2 MiB read limit.");
         var lines = await fileSystem.ReadAllLinesIfExistsAsync(fullPath, cancellationToken).ConfigureAwait(false);
         if (lines.Length == 0 && !fileSystem.FileExists(fullPath))
         {

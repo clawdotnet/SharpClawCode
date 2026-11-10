@@ -149,7 +149,7 @@ public sealed class FeatureCommandHandlersTests
         var toolPackages = new StubToolPackageService();
         var globalOptions = new GlobalCliOptions();
         var handler = new ToolPackagesCommandHandler(toolPackages, new OutputRendererDispatcher([renderer]));
-        var exitCode = await InvokeCommandAsync(handler.BuildCommand(globalOptions), globalOptions, "tool-packages list --cwd /workspace --output-format json");
+        var exitCode = await InvokeCommandAsync(handler.BuildCommand(globalOptions), globalOptions, "tool-packages list --cwd . --output-format json");
 
         exitCode.Should().Be(0);
         var payload = JsonSerializer.Deserialize(renderer.LastResult!.DataJson!, ProtocolJsonContext.Default.ListInstalledToolPackage);
@@ -180,7 +180,7 @@ public sealed class FeatureCommandHandlersTests
             var exitCode = await InvokeCommandAsync(
                 handler.BuildCommand(globalOptions),
                 globalOptions,
-                $"tool-packages install --manifest \"{manifestPath}\" --install-source cli --disable --cwd /workspace --output-format json");
+                $"tool-packages install --manifest \"{manifestPath}\" --install-source cli --disable --cwd . --output-format json");
 
             exitCode.Should().Be(0);
             toolPackages.LastInstallRequest.Should().NotBeNull();

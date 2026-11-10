@@ -269,7 +269,7 @@ public sealed class SnapshotEditingTests : IDisposable
     private Task<ToolExecutionEnvelope> EditAsync(string id, SnapshotLineEdit[] edits, ToolExecutionContext? context = null)
         => services.GetRequiredService<IToolExecutor>().ExecuteAsync(EditFileSnapshotTool.ToolName,
             JsonSerializer.Serialize(new EditFileSnapshotArguments("file.txt", id, edits), Json), context ?? Context(), CancellationToken.None);
-    private ToolExecutionContext Context() => new("snapshot-session", "snapshot-turn", workspace, workspace, PermissionMode.WorkspaceWrite, OutputFormat.Json, null, IsInteractive: false, MutationRecorder: recorder);
+    private ToolExecutionContext Context() => new("snapshot-session", "snapshot-turn", workspace, workspace, PermissionMode.DangerFullAccess, OutputFormat.Json, null, IsInteractive: false, MutationRecorder: recorder);
     private sealed class Recorder : IToolMutationRecorder
     {
         public List<FileMutationOperation> Mutations { get; } = [];

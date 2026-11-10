@@ -96,7 +96,7 @@ public sealed class WebServiceAndToolTests
             TurnId: "turn-001",
             WorkspaceRoot: "/workspace",
             WorkingDirectory: "/workspace",
-            PermissionMode: PermissionMode.WorkspaceWrite,
+            PermissionMode: PermissionMode.DangerFullAccess,
             OutputFormat: OutputFormat.Json,
             EnvironmentVariables: null,
             AllowedTools: null,

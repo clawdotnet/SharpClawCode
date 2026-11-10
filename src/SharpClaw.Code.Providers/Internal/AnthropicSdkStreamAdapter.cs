@@ -25,6 +25,9 @@ internal static class AnthropicSdkStreamAdapter
         string? pendingToolName = null;
         System.Text.StringBuilder? pendingToolInputBuilder = null;
 
+        long inputTokens = 0, outputTokens = 0, cachedTokens = 0, createdCacheTokens = 0;
+        var tools = new List<ProviderEvent>();
+        string? stopReason = null;
         IAsyncEnumerator<RawMessageStreamEvent>? enumerator = null;
         try
         {
@@ -61,7 +64,25 @@ internal static class AnthropicSdkStreamAdapter
 
                 var ev = enumerator.Current;
 
-                if (ev.TryPickContentBlockStart(out var blockStart))
+                if (ev.TryPickStart(out var start))
+                {
+                    inputTokens = start.Message.Usage.InputTokens;
+                    createdCacheTokens = start.Message.Usage.CacheCreationInputTokens ?? 0;
+                    outputTokens = start.Message.Usage.OutputTokens;
+                    cachedTokens = start.Message.Usage.CacheReadInputTokens ?? 0;
+                }
+                else if (ev.TryPickDelta(out var delta))
+                {
+                    inputTokens = delta.Usage.InputTokens ?? inputTokens;
+                    createdCacheTokens = delta.Usage.CacheCreationInputTokens ?? createdCacheTokens;
+                    outputTokens = delta.Usage.OutputTokens;
+                    cachedTokens = delta.Usage.CacheReadInputTokens ?? cachedTokens;
+                    // Read the wire value of the SDK's extensible enum.
+                    var json = System.Text.Json.JsonSerializer.SerializeToElement(delta.Delta);
+                    if (json.TryGetProperty("stop_reason", out var reason) && reason.ValueKind == System.Text.Json.JsonValueKind.String)
+                        stopReason = reason.GetString();
+                }
+                else if (ev.TryPickContentBlockStart(out var blockStart))
                 {
                     if (blockStart.ContentBlock.TryPickToolUse(out var toolUse))
                     {
@@ -87,7 +108,7 @@ internal static class AnthropicSdkStreamAdapter
                     if (pendingToolUseId is not null && pendingToolName is not null && pendingToolInputBuilder is not null)
                     {
                         var toolInputJson = pendingToolInputBuilder.ToString();
-                        yield return ProviderStreamEventFactory.ToolUse(requestId, clock, pendingToolUseId, pendingToolName, toolInputJson);
+                        tools.Add(ProviderStreamEventFactory.ToolUse(requestId, clock, pendingToolUseId, pendingToolName, string.IsNullOrEmpty(toolInputJson) ? "{}" : toolInputJson));
                         pendingToolUseId = null;
                         pendingToolName = null;
                         pendingToolInputBuilder = null;
@@ -95,7 +116,14 @@ internal static class AnthropicSdkStreamAdapter
                 }
                 else if (ev.TryPickStop(out _))
                 {
-                    yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
+                    if (stopReason is not ("end_turn" or "tool_use" or "stop_sequence") || pendingToolUseId is not null)
+                    {
+                        yield return ProviderStreamEventFactory.Failed(requestId, clock, $"Anthropic response is incomplete (stop reason: {stopReason ?? "missing"}); tool calls were discarded.");
+                        yield break;
+                    }
+                    foreach (var tool in tools) yield return tool;
+                    yield return ProviderStreamEventFactory.Completed(requestId, clock,
+                        new UsageSnapshot(inputTokens + createdCacheTokens + cachedTokens, outputTokens, cachedTokens, inputTokens + createdCacheTokens + cachedTokens + outputTokens, null));
                     yield break;
                 }
             }
@@ -108,7 +136,7 @@ internal static class AnthropicSdkStreamAdapter
             }
         }
 
-        yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
+        yield return ProviderStreamEventFactory.Failed(requestId, clock, "Anthropic stream ended before message_stop.");
     }
 
     private static (string? Text, string? PartialJson) ExtractDeltas(RawContentBlockDelta delta)

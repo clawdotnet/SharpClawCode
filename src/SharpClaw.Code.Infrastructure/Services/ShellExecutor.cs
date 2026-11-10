@@ -8,6 +8,9 @@ namespace SharpClaw.Code.Infrastructure.Services;
 /// </summary>
 public sealed class ShellExecutor(IProcessRunner processRunner) : IShellExecutor
 {
+    /// <summary>Deadline for agent shell commands; long enough for typical builds and test runs.</summary>
+    public static readonly TimeSpan ShellCommandTimeout = TimeSpan.FromMinutes(10);
+
     /// <inheritdoc />
     public Task<ProcessRunResult> ExecuteAsync(
         string command,
@@ -18,8 +21,8 @@ public sealed class ShellExecutor(IProcessRunner processRunner) : IShellExecutor
         ArgumentException.ThrowIfNullOrWhiteSpace(command);
 
         var request = OperatingSystem.IsWindows()
-            ? new ProcessRunRequest("cmd.exe", ["/c", command], workingDirectory, environmentVariables)
-            : new ProcessRunRequest("/bin/sh", ["-lc", command], workingDirectory, environmentVariables);
+            ? new ProcessRunRequest("cmd.exe", ["/c", command], workingDirectory, environmentVariables, ShellCommandTimeout)
+            : new ProcessRunRequest("/bin/sh", ["-lc", command], workingDirectory, environmentVariables, ShellCommandTimeout);
 
         return processRunner.RunAsync(request, cancellationToken);
     }

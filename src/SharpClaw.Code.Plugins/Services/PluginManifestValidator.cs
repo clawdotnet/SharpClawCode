@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SharpClaw.Code.Infrastructure.Services;
 using SharpClaw.Code.Plugins.Models;
 using SharpClaw.Code.Protocol.Enums;
 
@@ -29,12 +30,15 @@ public sealed class PluginManifestValidator
             throw new InvalidOperationException($"Plugin id length cannot exceed {MaxPluginIdLength} characters.");
         }
 
-        if (manifest.Id.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
-            || manifest.Id.Contains('/', StringComparison.Ordinal)
-            || manifest.Id.Contains('\\', StringComparison.Ordinal))
+        // Same rule the package catalog enforces on enable/disable/remove, so an installable plugin is always manageable.
+        try
+        {
+            LocalPackagePath.ValidateId(manifest.Id);
+        }
+        catch (ArgumentException)
         {
             throw new InvalidOperationException(
-                $"Plugin id '{manifest.Id}' contains characters that cannot be used as a local directory name.");
+                $"Plugin id '{manifest.Id}' must contain only letters, digits, dots, hyphens, and underscores.");
         }
 
         ArgumentException.ThrowIfNullOrWhiteSpace(manifest.Name);

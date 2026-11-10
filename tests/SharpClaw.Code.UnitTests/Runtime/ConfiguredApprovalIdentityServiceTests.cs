@@ -32,7 +32,7 @@ public sealed class ConfiguredApprovalIdentityServiceTests : IDisposable
             }
             """);
 
-        var service = new ConfiguredApprovalIdentityService(new SharpClawConfigService(new SharpClaw.Code.Infrastructure.Services.LocalFileSystem(), new SharpClaw.Code.Infrastructure.Services.PathService()));
+        var service = new ConfiguredApprovalIdentityService(new HostConfig());
         var status = await service.GetStatusAsync(workspaceRoot, CancellationToken.None);
         var principal = await service.ResolveAsync(
             workspaceRoot,
@@ -59,6 +59,16 @@ public sealed class ConfiguredApprovalIdentityServiceTests : IDisposable
         principal.Roles.Should().BeEquivalentTo(["approver", "admin"]);
         principal.Scopes.Should().BeEquivalentTo(["approvals:write", "approvals:read"]);
         principal.AuthenticationType.Should().Be("trusted-header");
+    }
+
+    private sealed class HostConfig : SharpClaw.Code.Runtime.Abstractions.ISharpClawConfigService
+    {
+        public async Task<SharpClawConfigSnapshot> GetConfigAsync(string workspace, CancellationToken cancellationToken)
+        {
+            var json = await File.ReadAllTextAsync(Path.Combine(workspace, "sharpclaw.jsonc"), cancellationToken);
+            return new SharpClawConfigSnapshot(workspace, null, null,
+                System.Text.Json.JsonSerializer.Deserialize(json, SharpClaw.Code.Protocol.Serialization.ProtocolJsonContext.Default.SharpClawConfigDocument)!);
+        }
     }
 
     public void Dispose()

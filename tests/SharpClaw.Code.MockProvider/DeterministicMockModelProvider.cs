@@ -89,6 +89,14 @@ public sealed class DeterministicMockModelProvider : IModelProvider
                     yield return CreateTerminal(request, sequence: 2);
                 }
                 yield break;
+            case ParityProviderScenario.ToolCallSilentFinish:
+                if (!HasToolResultInMessages(request))
+                {
+                    yield return CreateToolUse(request, sequence: 1, "toolu_mock_002", "read_file", """{"path":"test.txt"}""");
+                }
+
+                yield return CreateTerminal(request, sequence: 2);
+                yield break;
             case ParityProviderScenario.StreamingText:
             default:
                 yield return CreateDelta(request, sequence: 1, "Hello ");

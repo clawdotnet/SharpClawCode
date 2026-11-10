@@ -96,6 +96,13 @@ internal sealed class ResilientProviderDecorator : IModelProvider
                             break;
                         }
 
+                        if (enumerator.Current.IsTerminal && string.Equals(enumerator.Current.Kind, "failed", StringComparison.OrdinalIgnoreCase))
+                        {
+                            attemptException = ProviderStreamFailureClassifier.ClassifyFailedEvent(enumerator.Current) is ProviderFailureKind.AuthenticationUnavailable
+                                ? new ProviderExecutionException(ProviderName, request.Model, ProviderFailureKind.AuthenticationUnavailable, enumerator.Current.Content ?? "Provider authentication failed.")
+                                : new HttpRequestException(enumerator.Current.Content ?? "Provider stream failed.");
+                            break;
+                        }
                         emittedEvent = true;
                         yield return enumerator.Current;
                     }

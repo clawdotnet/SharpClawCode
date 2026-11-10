@@ -42,7 +42,7 @@ public sealed class GrepSearchTool(IPathService pathService) : SharpClawToolBase
         Regex regex;
         try
         {
-            regex = new Regex(arguments.Pattern, regexOptions);
+            regex = new Regex(arguments.Pattern, regexOptions, TimeSpan.FromMilliseconds(250));
         }
         catch (ArgumentException ex)
         {
@@ -52,7 +52,7 @@ public sealed class GrepSearchTool(IPathService pathService) : SharpClawToolBase
         var pathResolver = new WorkspacePathResolver(pathService);
         var workspaceRoot = pathResolver.ResolveWorkspaceRoot(context);
         var matches = new List<GrepSearchMatch>();
-        foreach (var file in Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories))
+        foreach (var file in WorkspaceSearchFiles.Enumerate(workspaceRoot))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relativePath = pathResolver.ToRelativePath(context, file);
@@ -61,10 +61,16 @@ public sealed class GrepSearchTool(IPathService pathService) : SharpClawToolBase
                 continue;
             }
 
-            var lines = await File.ReadAllLinesAsync(file, cancellationToken).ConfigureAwait(false);
-            for (var index = 0; index < lines.Length; index++)
+            if (new FileInfo(file).Length > 2 * 1024 * 1024) continue;
+            var text = await File.ReadAllTextAsync(file, cancellationToken).ConfigureAwait(false);
+            if (text.Contains('\0')) continue;
+            var lines = SplitLines(text);
+            for (var index = 0; index < lines.Count; index++)
             {
-                if (!regex.IsMatch(lines[index]))
+                bool matched;
+                try { matched = regex.IsMatch(lines[index]); }
+                catch (RegexMatchTimeoutException) { return CreateFailureResult(context, request, "Regex search exceeded its time limit."); }
+                if (!matched)
                 {
                     continue;
                 }
@@ -84,5 +90,18 @@ Done:
             : string.Join(Environment.NewLine, matches.Select(match => $"{match.Path}:{match.LineNumber}:{match.LineText}"));
 
         return CreateSuccessResult(context, request, textOutput, payload);
+    }
+
+    /// <summary>Splits like <see cref="File.ReadAllLines(string)"/>: CR, LF, and CRLF terminate lines; no trailing empty line.</summary>
+    private static List<string> SplitLines(string text)
+    {
+        var lines = new List<string>();
+        using var reader = new StringReader(text);
+        while (reader.ReadLine() is { } line)
+        {
+            lines.Add(line);
+        }
+
+        return lines;
     }
 }

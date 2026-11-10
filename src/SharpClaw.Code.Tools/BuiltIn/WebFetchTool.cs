@@ -19,7 +19,7 @@ public sealed class WebFetchTool(IWebFetchService webFetchService) : SharpClawTo
     public override ToolDefinition Definition { get; } = new(
         Name: ToolName,
         Description: "Fetch a web page and return structured text content.",
-        ApprovalScope: ApprovalScope.ToolExecution,
+        ApprovalScope: ApprovalScope.NetworkAccess,
         IsDestructive: false,
         RequiresApproval: false,
         InputTypeName: nameof(WebFetchToolArguments),

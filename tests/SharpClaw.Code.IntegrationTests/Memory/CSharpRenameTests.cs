@@ -68,7 +68,7 @@ public sealed class CSharpRenameTests
         var conflict = await tools.ExecuteAsync("csharp_rename_symbol", Arguments("IInvoiceService", "InvoiceService"), context, CancellationToken.None);
         conflict.Result.Succeeded.Should().BeFalse();
         File.ReadAllText(Path.Combine(fixture.Root, "Library/Invoice.cs")).Should().Contain("interface IInvoiceService");
-        var success = await tools.ExecuteAsync("csharp_rename_symbol", Arguments("IInvoiceService", "IBillingService"), context with { PermissionMode = PermissionMode.WorkspaceWrite }, CancellationToken.None);
+        var success = await tools.ExecuteAsync("csharp_rename_symbol", Arguments("IInvoiceService", "IBillingService"), context with { PermissionMode = PermissionMode.WorkspaceWrite, ApprovalSettings = new ApprovalSettings([ApprovalScope.FileSystemWrite], null) }, CancellationToken.None);
         success.Result.Succeeded.Should().BeTrue(success.Result.ErrorMessage);
     }
 

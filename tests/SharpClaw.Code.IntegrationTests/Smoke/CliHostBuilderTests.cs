@@ -23,4 +23,16 @@ public sealed class CliHostBuilderTests
 
         rootCommand.Description.Should().Be("SharpClaw Code CLI. Starts interactive mode when no command is supplied.");
     }
+
+    /// <summary>
+    /// Ensures ordinary CLI invocations never start the background prompt scheduler.
+    /// </summary>
+    [Fact]
+    public void BuildHost_should_not_register_the_scheduled_prompt_runner()
+    {
+        using var host = CliHostBuilder.BuildHost();
+
+        host.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+            .Should().NotContain(service => service is SharpClaw.Code.Runtime.Workflow.ScheduledPromptRunner);
+    }
 }

@@ -21,7 +21,7 @@ internal static class ResilientHttpGet
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+                response = await httpClient.GetAsync(requestUri, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException) when (attempt < MaxAttempts)
             {

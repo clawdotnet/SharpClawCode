@@ -115,6 +115,66 @@ public sealed class TelemetryPublisherTests
         usageTracker.TryGetCumulative("s1")!.TotalTokens.Should().Be(5);
     }
 
+    /// <summary>
+    /// Ensures a batch persists in one store call while buffer and sink order match per-event publishing.
+    /// </summary>
+    [Fact]
+    public async Task RuntimeEventPublisher_should_persist_a_batch_once_and_fan_out_in_order()
+    {
+        var persistence = new RecordingPersistence();
+        var sink = new RecordingSink();
+        var publisher = new RuntimeEventPublisher(
+            Options.Create(new TelemetryOptions { RuntimeEventRingBufferCapacity = 100 }),
+            new UsageTracker(),
+            persistence: persistence,
+            sinks: [sink]);
+        var deltas = Enumerable.Range(1, 5)
+            .Select(index => (RuntimeEvent)new ProviderDeltaEvent($"e{index}", "s1", "t1", DateTimeOffset.UtcNow, "p", "m", $"p{index}", "text", $"chunk{index}"))
+            .ToArray();
+
+        await publisher.PublishRangeAsync(deltas, new RuntimeEventPublishOptions("/tmp/ws", "s1", PersistToSessionStore: true), CancellationToken.None);
+
+        persistence.Calls.Should().ContainSingle().Which.Select(e => e.EventId).Should().Equal("e1", "e2", "e3", "e4", "e5");
+        sink.Envelopes.Select(envelope => envelope.Event.EventId).Should().Equal("e1", "e2", "e3", "e4", "e5");
+        publisher.GetRecentEventsSnapshot().Select(e => e.EventId).Should().Equal("e1", "e2", "e3", "e4", "e5");
+    }
+
+    /// <summary>
+    /// Ensures a batched append writes every line once and still repairs a torn trailing record.
+    /// </summary>
+    [Fact]
+    public async Task LocalFileSystem_batched_append_writes_all_lines_after_repairing_a_torn_tail()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"sharpclaw-batch-{Guid.NewGuid():N}.ndjson");
+        try
+        {
+            await File.WriteAllTextAsync(path, "{\"ok\":1}\n{\"torn\":");
+            var files = new SharpClaw.Code.Infrastructure.Services.LocalFileSystem();
+
+            await files.AppendLinesAsync(path, ["{\"a\":1}", "{\"b\":2}"], CancellationToken.None);
+
+            (await File.ReadAllLinesAsync(path)).Should().Equal("{\"ok\":1}", "{\"a\":1}", "{\"b\":2}");
+        }
+        finally { File.Delete(path); }
+    }
+
+    private sealed class RecordingPersistence : SharpClaw.Code.Telemetry.Abstractions.IRuntimeEventPersistence
+    {
+        public List<IReadOnlyList<RuntimeEvent>> Calls { get; } = [];
+
+        public Task PersistAsync(string workspacePath, string sessionId, RuntimeEvent runtimeEvent, CancellationToken cancellationToken)
+        {
+            Calls.Add([runtimeEvent]);
+            return Task.CompletedTask;
+        }
+
+        public Task PersistRangeAsync(string workspacePath, string sessionId, IReadOnlyList<RuntimeEvent> runtimeEvents, CancellationToken cancellationToken)
+        {
+            Calls.Add(runtimeEvents.ToArray());
+            return Task.CompletedTask;
+        }
+    }
+
     private sealed class ThrowingSink : SharpClaw.Code.Telemetry.Abstractions.IRuntimeEventSink
     {
         public Task PublishAsync(RuntimeEventEnvelope envelope, CancellationToken cancellationToken)

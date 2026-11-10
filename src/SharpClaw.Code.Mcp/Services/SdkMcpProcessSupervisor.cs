@@ -165,9 +165,9 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
     /// <inheritdoc />
     public async Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (request.SessionHandle > 0 && Sessions.TryRemove(request.SessionHandle, out var tracked))
         {
-            cancellationToken.ThrowIfCancellationRequested();
             await tracked.DisposeAsync().ConfigureAwait(false);
         }
 

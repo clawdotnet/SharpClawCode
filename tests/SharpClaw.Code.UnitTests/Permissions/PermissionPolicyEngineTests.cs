@@ -112,7 +112,7 @@ public sealed class PermissionPolicyEngineTests
         firstFromA.IsAllowed.Should().BeTrue();
         secondFromA.IsAllowed.Should().BeTrue();
         firstFromB.IsAllowed.Should().BeTrue();
-        approvalService.RequestCount.Should().Be(2);
+        approvalService.RequestCount.Should().Be(3);
     }
 
     /// <summary>
@@ -172,7 +172,7 @@ public sealed class PermissionPolicyEngineTests
     [Theory]
     [InlineData(PluginTrustLevel.WorkspaceTrusted)]
     [InlineData(PluginTrustLevel.DeveloperTrusted)]
-    public async Task EvaluateAsync_should_allow_manifest_trusted_plugin_surfaced_tool_without_approval(PluginTrustLevel manifestTrust)
+    public async Task EvaluateAsync_should_deny_self_trusted_plugin_without_approval(PluginTrustLevel manifestTrust)
     {
         var engine = CreateEngine(new NonInteractiveApprovalService());
         var context = CreateContext(
@@ -190,14 +190,14 @@ public sealed class PermissionPolicyEngineTests
 
         var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
 
-        decision.IsAllowed.Should().BeTrue();
+        decision.IsAllowed.Should().BeFalse();
     }
 
     /// <summary>
     /// Ensures an untrusted manifest tier is waived when the originating plugin id is session-trusted.
     /// </summary>
     [Fact]
-    public async Task EvaluateAsync_should_allow_untrusted_manifest_plugin_tool_when_plugin_is_session_trusted()
+    public async Task EvaluateAsync_should_deny_workspace_session_trust_without_process_approval()
     {
         var engine = CreateEngine(new NonInteractiveApprovalService());
         var context = CreateContext(
@@ -215,7 +215,7 @@ public sealed class PermissionPolicyEngineTests
 
         var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
 
-        decision.IsAllowed.Should().BeTrue();
+        decision.IsAllowed.Should().BeFalse();
     }
 
     /// <summary>
@@ -332,6 +332,66 @@ public sealed class PermissionPolicyEngineTests
         approvalService.RequestCount.Should().Be(1);
     }
 
+    [Theory]
+    [InlineData("sudo ls")]
+    [InlineData("rm -fr /")]
+    [InlineData("find / -delete")]
+    public async Task Read_only_mode_cannot_be_overridden_by_approval_or_auto_approval(string command)
+    {
+        var approvals = new StubApprovalService();
+        var engine = CreateEngine(approvals);
+        var request = CreateRequest("bash", System.Text.Json.JsonSerializer.Serialize(new { command }), ApprovalScope.ShellExecution, true, true);
+        var context = CreateContext(PermissionMode.ReadOnly, approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], null));
+        (await engine.EvaluateAsync(request, context, CancellationToken.None)).IsAllowed.Should().BeFalse();
+        approvals.RequestCount.Should().Be(0);
+    }
+
+    [Theory]
+    [InlineData("rm -rf src", true)]
+    [InlineData("rm -Rf ~/projects", true)]
+    [InlineData("rm -fr build", true)]
+    [InlineData("rm -r build", true)]
+    [InlineData("rm --recursive build", true)]
+    [InlineData("rm -f -r build", true)]
+    [InlineData("find . -name '*.tmp' -delete", true)]
+    [InlineData("rm notes.txt", false)]
+    [InlineData("rm -f notes.txt", false)]
+    [InlineData("rm --force notes.txt", false)]
+    public async Task Recursive_deletions_require_a_fresh_prompt_despite_shell_auto_approval(string command, bool expectPrompt)
+    {
+        var approvals = new StubApprovalService();
+        var engine = CreateEngine(approvals);
+        var request = CreateRequest("bash", System.Text.Json.JsonSerializer.Serialize(new { command }), ApprovalScope.ShellExecution, true, true);
+        var context = CreateContext(PermissionMode.WorkspaceWrite, approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], null));
+
+        (await engine.EvaluateAsync(request, context, CancellationToken.None)).IsAllowed.Should().BeTrue();
+        approvals.RequestCount.Should().Be(expectPrompt ? 1 : 0);
+    }
+
+    [Fact]
+    public async Task Explicit_approval_includes_arguments_and_is_not_reused_for_different_arguments()
+    {
+        var approvals = new StubApprovalService();
+        var engine = CreateEngine(approvals);
+        var context = CreateContext(PermissionMode.WorkspaceWrite);
+        var request = CreateRequest("custom", "{\"path\":\"first.txt\"}", ApprovalScope.ToolExecution, true, false);
+        (await engine.EvaluateAsync(request, context, CancellationToken.None)).IsAllowed.Should().BeTrue();
+        (await engine.EvaluateAsync(request with { ArgumentsJson = "{\"path\":\"second.txt\"}" }, context, CancellationToken.None)).IsAllowed.Should().BeTrue();
+        approvals.RequestCount.Should().Be(2);
+        approvals.LastRequest!.Prompt.Should().Contain("second.txt").And.Contain("/workspace");
+    }
+
+    [Fact]
+    public async Task Dangerous_commands_cannot_use_auto_approval()
+    {
+        var approvals = new StubApprovalService();
+        var engine = CreateEngine(approvals);
+        var request = CreateRequest("bash", "{\"command\":\"sudo ls\"}", ApprovalScope.ShellExecution, true, true);
+        var context = CreateContext(PermissionMode.WorkspaceWrite, approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], null));
+        (await engine.EvaluateAsync(request, context, CancellationToken.None)).IsAllowed.Should().BeTrue();
+        approvals.RequestCount.Should().Be(1);
+    }
+
     private static IPermissionPolicyEngine CreateEngine(IApprovalService approvalService)
         => new PermissionPolicyEngine(
             [
@@ -396,6 +456,7 @@ public sealed class PermissionPolicyEngineTests
     private sealed class StubApprovalService : IApprovalService
     {
         public int RequestCount { get; private set; }
+        public ApprovalRequest? LastRequest { get; private set; }
 
         public Task<ApprovalDecision> RequestApprovalAsync(
             ApprovalRequest request,
@@ -403,6 +464,7 @@ public sealed class PermissionPolicyEngineTests
             CancellationToken cancellationToken)
         {
             RequestCount++;
+            LastRequest = request;
             return Task.FromResult(new ApprovalDecision(
                 Scope: request.Scope,
                 Approved: true,

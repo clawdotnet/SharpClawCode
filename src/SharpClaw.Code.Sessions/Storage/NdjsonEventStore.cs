@@ -22,6 +22,18 @@ public sealed class NdjsonEventStore(IFileSystem fileSystem, IRuntimeStoragePath
     }
 
     /// <inheritdoc />
+    public Task AppendRangeAsync(string workspacePath, string sessionId, IReadOnlyList<RuntimeEvent> runtimeEvents, CancellationToken cancellationToken)
+    {
+        var lines = new string[runtimeEvents.Count];
+        for (var index = 0; index < lines.Length; index++)
+        {
+            lines[index] = JsonSerializer.Serialize(runtimeEvents[index], ProtocolJsonContext.Default.RuntimeEvent);
+        }
+
+        return fileSystem.AppendLinesAsync(storagePathResolver.GetEventsPath(workspacePath, sessionId), lines, cancellationToken);
+    }
+
+    /// <inheritdoc />
     public async Task<IReadOnlyList<RuntimeEvent>> ReadAllAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
     {
         var path = storagePathResolver.GetEventsPath(workspacePath, sessionId);

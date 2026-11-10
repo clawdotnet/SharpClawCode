@@ -15,6 +15,7 @@ namespace SharpClaw.Code.Commands.Models;
 /// <param name="SessionId">Optional explicit session id for prompts and session-scoped commands.</param>
 /// <param name="AgentId">Optional explicit agent id for prompt execution.</param>
 /// <param name="HostContext">Optional embedded-host identity and tenant/storage context.</param>
+/// <param name="PrimaryModeSpecified">Whether a caller explicitly selected a workflow mode.</param>
 /// <param name="ApprovalSettings">Optional bounded auto-approval settings.</param>
 public sealed record CommandExecutionContext(
     string WorkingDirectory,
@@ -25,7 +26,8 @@ public sealed record CommandExecutionContext(
     string? SessionId = null,
     string? AgentId = null,
     RuntimeHostContext? HostContext = null,
-    ApprovalSettings? ApprovalSettings = null)
+    ApprovalSettings? ApprovalSettings = null,
+    bool PrimaryModeSpecified = true)
 {
     /// <summary>
     /// Converts the CLI command context into the runtime invocation context.
@@ -47,7 +49,7 @@ public sealed record CommandExecutionContext(
             Model,
             permissionModeOverride ?? PermissionMode,
             OutputFormat,
-            primaryModeOverride ?? PrimaryMode,
+            primaryModeOverride ?? (PrimaryModeSpecified ? PrimaryMode : null),
             SessionId,
             agentIdOverride ?? AgentId,
             isInteractive,
