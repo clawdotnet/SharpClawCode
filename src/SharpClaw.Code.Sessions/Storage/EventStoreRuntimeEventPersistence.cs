@@ -12,4 +12,8 @@ public sealed class EventStoreRuntimeEventPersistence(IEventStore eventStore) : 
     /// <inheritdoc />
     public Task PersistAsync(string workspacePath, string sessionId, RuntimeEvent runtimeEvent, CancellationToken cancellationToken)
         => eventStore.AppendAsync(workspacePath, sessionId, runtimeEvent, cancellationToken);
+
+    /// <inheritdoc />
+    public Task PersistRangeAsync(string workspacePath, string sessionId, IReadOnlyList<RuntimeEvent> runtimeEvents, CancellationToken cancellationToken)
+        => eventStore.AppendRangeAsync(workspacePath, sessionId, runtimeEvents, cancellationToken);
 }

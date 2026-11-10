@@ -48,41 +48,82 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
     }
 
     /// <inheritdoc />
-    public async ValueTask PublishAsync(
+    public ValueTask PublishAsync(
         RuntimeEvent runtimeEvent,
         RuntimeEventPublishOptions? options = null,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(runtimeEvent);
-        var routing = options ?? new RuntimeEventPublishOptions();
-        AppendToBuffer(runtimeEvent);
-        if (runtimeEvent is UsageUpdatedEvent usageEvt)
+        return PublishRangeAsync([runtimeEvent], options, cancellationToken);
+    }
+
+    /// <inheritdoc />
+    public async ValueTask PublishRangeAsync(
+        IReadOnlyList<RuntimeEvent> runtimeEvents,
+        RuntimeEventPublishOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(runtimeEvents);
+        if (runtimeEvents.Count == 0)
         {
-            usageTracker.ApplyUsage(usageEvt.SessionId, usageEvt.Usage);
+            return;
         }
 
+        var routing = options ?? new RuntimeEventPublishOptions();
+        foreach (var runtimeEvent in runtimeEvents)
+        {
+            ArgumentNullException.ThrowIfNull(runtimeEvent);
+            AppendToBuffer(runtimeEvent);
+            if (runtimeEvent is UsageUpdatedEvent usageEvt)
+            {
+                usageTracker.ApplyUsage(usageEvt.SessionId, usageEvt.Usage);
+            }
+        }
+
+        await PersistAsync(runtimeEvents, routing, cancellationToken).ConfigureAwait(false);
+
+        if (sinks.Length > 0)
+        {
+            foreach (var runtimeEvent in runtimeEvents)
+            {
+                await PublishToSinksAsync(runtimeEvent, routing, cancellationToken).ConfigureAwait(false);
+            }
+        }
+    }
+
+    private async Task PersistAsync(IReadOnlyList<RuntimeEvent> runtimeEvents, RuntimeEventPublishOptions routing, CancellationToken cancellationToken)
+    {
         if (routing.ShouldPersist && persistence is not null)
         {
             if (string.IsNullOrWhiteSpace(routing.WorkspacePath) || string.IsNullOrWhiteSpace(routing.SessionId))
             {
                 this.logger.LogWarning(
                     "Runtime event {EventId} requested persistence but WorkspacePath or SessionId is null.",
-                    runtimeEvent.EventId);
+                    runtimeEvents[0].EventId);
             }
             else
             {
                 try
                 {
-                    await persistence
-                        .PersistAsync(routing.WorkspacePath, routing.SessionId, runtimeEvent, cancellationToken)
-                        .ConfigureAwait(false);
+                    if (runtimeEvents.Count == 1)
+                    {
+                        await persistence
+                            .PersistAsync(routing.WorkspacePath, routing.SessionId, runtimeEvents[0], cancellationToken)
+                            .ConfigureAwait(false);
+                    }
+                    else
+                    {
+                        await persistence
+                            .PersistRangeAsync(routing.WorkspacePath, routing.SessionId, runtimeEvents, cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
                 catch (Exception exception)
                 {
                     this.logger.LogError(
                         exception,
                         "Failed to persist runtime event {EventId} for workspace {WorkspacePath} session {SessionId}.",
-                        runtimeEvent.EventId,
+                        runtimeEvents[0].EventId,
                         routing.WorkspacePath,
                         routing.SessionId);
                     if (routing.ThrowIfPersistenceFails)
@@ -96,38 +137,38 @@ public sealed class RuntimeEventPublisher : IRuntimeEventPublisher
         {
             this.logger.LogDebug(
                 "Runtime event {EventId} requested session persistence but no IRuntimeEventPersistence is registered.",
-                runtimeEvent.EventId);
+                runtimeEvents[0].EventId);
         }
+    }
 
-        if (sinks.Length > 0)
+    private async Task PublishToSinksAsync(RuntimeEvent runtimeEvent, RuntimeEventPublishOptions routing, CancellationToken cancellationToken)
+    {
+        var hostContext = routing.HostContext ?? hostContextAccessor?.Current;
+        var envelope = new RuntimeEventEnvelope(
+            EventType: runtimeEvent.GetType().Name,
+            OccurredAtUtc: runtimeEvent.OccurredAtUtc,
+            Event: runtimeEvent,
+            WorkspacePath: routing.WorkspacePath,
+            SessionId: routing.SessionId ?? runtimeEvent.SessionId,
+            TenantId: hostContext?.TenantId,
+            HostId: hostContext?.HostId);
+        foreach (var sink in sinks)
         {
-            var hostContext = routing.HostContext ?? hostContextAccessor?.Current;
-            var envelope = new RuntimeEventEnvelope(
-                EventType: runtimeEvent.GetType().Name,
-                OccurredAtUtc: runtimeEvent.OccurredAtUtc,
-                Event: runtimeEvent,
-                WorkspacePath: routing.WorkspacePath,
-                SessionId: routing.SessionId ?? runtimeEvent.SessionId,
-                TenantId: hostContext?.TenantId,
-                HostId: hostContext?.HostId);
-            foreach (var sink in sinks)
+            try
             {
-                try
-                {
-                    await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception exception)
-                {
-                    logger.LogWarning(
-                        exception,
-                        "Runtime event {EventId} failed to publish to sink {SinkType}.",
-                        runtimeEvent.EventId,
-                        sink.GetType().Name);
-                }
+                await sink.PublishAsync(envelope, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Runtime event {EventId} failed to publish to sink {SinkType}.",
+                    runtimeEvent.EventId,
+                    sink.GetType().Name);
             }
         }
     }

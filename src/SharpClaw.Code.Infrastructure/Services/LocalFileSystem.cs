@@ -168,8 +168,17 @@ public sealed class LocalFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
-    public async Task AppendLineAsync(string path, string line, CancellationToken cancellationToken)
+    public Task AppendLineAsync(string path, string line, CancellationToken cancellationToken)
+        => AppendLinesAsync(path, [line], cancellationToken);
+
+    /// <inheritdoc />
+    public async Task AppendLinesAsync(string path, IReadOnlyList<string> lines, CancellationToken cancellationToken)
     {
+        if (lines.Count == 0)
+        {
+            return;
+        }
+
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory))
         {
@@ -194,7 +203,13 @@ public sealed class LocalFileSystem : IFileSystem
             }
         }
         stream.Position = stream.Length;
-        var bytes = Encoding.UTF8.GetBytes(line + "\n");
+        var builder = new StringBuilder();
+        foreach (var line in lines)
+        {
+            builder.Append(line).Append('\n');
+        }
+
+        var bytes = Encoding.UTF8.GetBytes(builder.ToString());
         await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
         await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }

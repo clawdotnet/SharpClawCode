@@ -90,6 +90,20 @@ public interface IFileSystem
     Task AppendLineAsync(string path, string line, CancellationToken cancellationToken);
 
     /// <summary>
+    /// Appends several lines to a file in order. Implementations should take one append lock and flush once.
+    /// </summary>
+    /// <param name="path">The file path.</param>
+    /// <param name="lines">The lines to append.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    async Task AppendLinesAsync(string path, IReadOnlyList<string> lines, CancellationToken cancellationToken)
+    {
+        foreach (var line in lines)
+        {
+            await AppendLineAsync(path, line, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>
     /// Deletes a directory and all of its contents if the directory exists.
     /// </summary>
     /// <param name="path">The directory path.</param>

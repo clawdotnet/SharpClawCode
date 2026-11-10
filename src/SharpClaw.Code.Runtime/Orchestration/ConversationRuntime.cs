@@ -1347,29 +1347,27 @@ public sealed class ConversationRuntime(
             collectedEvents,
             cancellationToken).ConfigureAwait(false);
 
+        // Persist each run of streamed deltas in one append; a delta-per-write costs a lock, open, and flush per chunk.
+        var pendingDeltas = new List<RuntimeEvent>();
         foreach (var providerEvent in turnRunResult.ProviderEvents ?? [])
         {
             if (!providerEvent.IsTerminal && !string.IsNullOrEmpty(providerEvent.Content))
             {
-                await AppendEventAsync(
-                    workspacePath,
-                    sessionId,
-                    new ProviderDeltaEvent(
-                        EventId: CreateIdentifier("event"),
-                        SessionId: sessionId,
-                        TurnId: turnId,
-                        OccurredAtUtc: providerEvent.CreatedAtUtc,
-                        ProviderName: providerRequest.ProviderName,
-                        Model: providerRequest.Model,
-                        ProviderEventId: providerEvent.Id,
-                        Kind: providerEvent.Kind,
-                        Content: providerEvent.Content),
-                    collectedEvents,
-                    cancellationToken).ConfigureAwait(false);
+                pendingDeltas.Add(new ProviderDeltaEvent(
+                    EventId: CreateIdentifier("event"),
+                    SessionId: sessionId,
+                    TurnId: turnId,
+                    OccurredAtUtc: providerEvent.CreatedAtUtc,
+                    ProviderName: providerRequest.ProviderName,
+                    Model: providerRequest.Model,
+                    ProviderEventId: providerEvent.Id,
+                    Kind: providerEvent.Kind,
+                    Content: providerEvent.Content));
             }
 
             if (providerEvent.IsTerminal)
             {
+                await FlushDeltaEventsAsync(workspacePath, sessionId, pendingDeltas, collectedEvents, cancellationToken).ConfigureAwait(false);
                 await AppendEventAsync(
                     workspacePath,
                     sessionId,
@@ -1387,6 +1385,30 @@ public sealed class ConversationRuntime(
                     cancellationToken).ConfigureAwait(false);
             }
         }
+
+        await FlushDeltaEventsAsync(workspacePath, sessionId, pendingDeltas, collectedEvents, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>Publishes buffered delta events as one batch. Deltas never trigger hooks, so none are dispatched.</summary>
+    private async Task FlushDeltaEventsAsync(string workspacePath, string sessionId, List<RuntimeEvent> pendingDeltas, List<RuntimeEvent> collectedEvents, CancellationToken cancellationToken)
+    {
+        if (pendingDeltas.Count == 0)
+        {
+            return;
+        }
+
+        await eventPublisher
+            .PublishRangeAsync(
+                pendingDeltas.ToArray(),
+                new RuntimeEventPublishOptions(
+                    workspacePath,
+                    sessionId,
+                    PersistToSessionStore: true,
+                    ThrowIfPersistenceFails: true),
+                cancellationToken)
+            .ConfigureAwait(false);
+        collectedEvents.AddRange(pendingDeltas);
+        pendingDeltas.Clear();
     }
 
     private async Task<ConversationSession> EnsureRecoverableFromFailedForPromptAsync(

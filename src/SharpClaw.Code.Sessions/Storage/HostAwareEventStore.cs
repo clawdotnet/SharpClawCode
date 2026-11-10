@@ -19,6 +19,10 @@ public sealed class HostAwareEventStore(
         => ResolveStore().AppendAsync(workspacePath, sessionId, runtimeEvent, cancellationToken);
 
     /// <inheritdoc />
+    public Task AppendRangeAsync(string workspacePath, string sessionId, IReadOnlyList<RuntimeEvent> runtimeEvents, CancellationToken cancellationToken)
+        => ResolveStore().AppendRangeAsync(workspacePath, sessionId, runtimeEvents, cancellationToken);
+
+    /// <inheritdoc />
     public Task<IReadOnlyList<RuntimeEvent>> ReadAllAsync(string workspacePath, string sessionId, CancellationToken cancellationToken)
         => ResolveStore().ReadAllAsync(workspacePath, sessionId, cancellationToken);
 
