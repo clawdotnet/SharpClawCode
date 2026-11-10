@@ -13,6 +13,9 @@ public abstract class ExternalAgentAdapterBase(
     IProcessRunner processRunner,
     IExternalAgentConfigProvider configProvider) : IExternalAgentAdapter
 {
+    /// <summary>Deadline for one external agent run; delegated agents routinely run far longer than a shell command.</summary>
+    protected static readonly TimeSpan ExternalAgentTimeout = TimeSpan.FromMinutes(30);
+
     /// <inheritdoc />
     public abstract ExternalAgentDescriptor Descriptor { get; }
 
@@ -72,7 +75,8 @@ public abstract class ExternalAgentAdapterBase(
                         executable,
                         MergeArguments(adapterConfig, request),
                         request.WorkspacePath,
-                        request.Environment),
+                        request.Environment,
+                        ExternalAgentTimeout),
                     cancellationToken)
                 .ConfigureAwait(false);
             var output = string.IsNullOrWhiteSpace(result.StandardOutput)

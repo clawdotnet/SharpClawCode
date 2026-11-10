@@ -117,7 +117,7 @@ public sealed class ConversationRuntime(
         var explicitPrimaryMode = request.PrimaryMode;
         request = await ApplyAgentAndConfigDefaultsAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
         var runtimeEvents = new List<RuntimeEvent>();
-        var session = await ResolveSessionAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
+        var session = await ResolveSessionAsync(workspacePath, request.SessionId, cancellationToken).ConfigureAwait(false);
         var isNewSession = false;
 
         if (session is null)
@@ -556,8 +556,16 @@ public sealed class ConversationRuntime(
         metadata[SharpClawWorkflowMetadataKeys.CustomCommandName] = definition.Name;
 
         var permission = ClampPermissionModeForCustomCommand(context.PermissionMode, definition.PermissionMode);
-        var contextPrimary = context.PrimaryMode ?? PrimaryMode.Build;
-        var primary = ClampPrimaryModeForCustomCommand(contextPrimary, definition.PrimaryModeOverride);
+        // With no caller-selected mode and no command override, leave the mode unspecified so the session's saved mode applies.
+        // Otherwise clamp against the caller's mode, falling back to the saved session mode, so markdown cannot leave Plan/Research/Spec.
+        PrimaryMode? primary = null;
+        if (context.PrimaryMode is not null || definition.PrimaryModeOverride is not null)
+        {
+            var baseline = context.PrimaryMode
+                ?? await ResolveSavedPrimaryModeAsync(workspace, context.SessionId, cancellationToken).ConfigureAwait(false)
+                ?? PrimaryMode.Build;
+            primary = ClampPrimaryModeForCustomCommand(baseline, definition.PrimaryModeOverride);
+        }
 
         return await RunPromptAsync(
             new RunPromptRequest(
@@ -1182,14 +1190,24 @@ public sealed class ConversationRuntime(
     private static string FormatProviderFailureReason(ProviderExecutionException exception)
         => $"Provider failure ({exception.Kind}): {exception.Message}";
 
-    private async Task<ConversationSession?> ResolveSessionAsync(string workspacePath, RunPromptRequest request, CancellationToken cancellationToken)
+    private async Task<PrimaryMode?> ResolveSavedPrimaryModeAsync(string workspacePath, string? sessionId, CancellationToken cancellationToken)
     {
-        if (!string.IsNullOrWhiteSpace(request.SessionId))
+        var session = await ResolveSessionAsync(workspacePath, sessionId, cancellationToken).ConfigureAwait(false);
+        return session?.Metadata is not null
+            && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.PrimaryMode, out var savedMode)
+            && Enum.TryParse<PrimaryMode>(savedMode, true, out var persistedMode) && Enum.IsDefined(persistedMode)
+                ? persistedMode
+                : null;
+    }
+
+    private async Task<ConversationSession?> ResolveSessionAsync(string workspacePath, string? sessionId, CancellationToken cancellationToken)
+    {
+        if (!string.IsNullOrWhiteSpace(sessionId))
         {
-            var resolvedSession = await sessionStore.GetByIdAsync(workspacePath, request.SessionId, cancellationToken).ConfigureAwait(false);
+            var resolvedSession = await sessionStore.GetByIdAsync(workspacePath, sessionId, cancellationToken).ConfigureAwait(false);
             if (resolvedSession is null)
             {
-                throw new InvalidOperationException($"Session '{request.SessionId}' was not found in workspace '{workspacePath}'.");
+                throw new InvalidOperationException($"Session '{sessionId}' was not found in workspace '{workspacePath}'.");
             }
 
             return resolvedSession;

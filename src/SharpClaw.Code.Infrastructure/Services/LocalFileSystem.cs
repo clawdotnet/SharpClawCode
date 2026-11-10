@@ -132,9 +132,21 @@ public sealed class LocalFileSystem : IFileSystem
         {
             await File.WriteAllTextAsync(temporaryPath, content, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
+            PreserveUnixFileMode(path, temporaryPath);
             File.Move(temporaryPath, path, overwrite: true);
         }
         finally { TryDeleteFile(temporaryPath); }
+    }
+
+    /// <summary>Carries an existing file's permission bits (for example the executable bit) onto its replacement.</summary>
+    private static void PreserveUnixFileMode(string existingPath, string replacementPath)
+    {
+        if (OperatingSystem.IsWindows() || !File.Exists(existingPath))
+        {
+            return;
+        }
+
+        File.SetUnixFileMode(replacementPath, File.GetUnixFileMode(existingPath));
     }
 
     /// <inheritdoc />

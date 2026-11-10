@@ -143,6 +143,57 @@ public sealed class SpecModeWorkflowTests
         File.Exists(result.SpecArtifacts!.RequirementsPath).Should().BeTrue();
     }
 
+    /// <summary>
+    /// Ensures a custom command without a caller-selected mode cannot switch a saved research session to build.
+    /// </summary>
+    [Theory]
+    [InlineData(null)]
+    [InlineData("build")]
+    public async Task ExecuteCustomCommand_without_caller_mode_should_keep_saved_research_mode(string? commandMode)
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        Directory.CreateDirectory(Path.Combine(workspacePath, ".sharpclaw", "commands"));
+        var frontmatter = commandMode is null ? "" : $"primaryMode: {commandMode}\n";
+        await File.WriteAllTextAsync(
+            Path.Combine(workspacePath, ".sharpclaw", "commands", "summarize.md"),
+            $"---\ndescription: Summarize\n{frontmatter}---\nSummarize $ARGUMENTS\n");
+
+        using var serviceProvider = CreateRuntimeServices(services =>
+        {
+            services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+            services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
+            services.AddSingleton<IModelProviderResolver, SpecModelProviderResolver>();
+        });
+        var conversation = serviceProvider.GetRequiredService<IConversationRuntime>();
+        var commands = serviceProvider.GetRequiredService<IRuntimeCommandService>();
+
+        var researched = await conversation.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "Research the change",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string> { ["provider"] = "spec-provider", ["model"] = "spec-model" },
+                PrimaryMode: PrimaryMode.Research),
+            CancellationToken.None);
+
+        var result = await commands.ExecuteCustomCommandAsync(
+            "summarize",
+            "the plan",
+            new RuntimeCommandContext(
+                WorkingDirectory: workspacePath,
+                Model: "spec-model",
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                PrimaryMode: null,
+                SessionId: researched.Session.Id),
+            CancellationToken.None);
+
+        result.Session.Metadata![SharpClawWorkflowMetadataKeys.PrimaryMode]
+            .Should().BeEquivalentTo(nameof(PrimaryMode.Research));
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-spec-mode-tests", Guid.NewGuid().ToString("N"));

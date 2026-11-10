@@ -346,6 +346,28 @@ public sealed class PermissionPolicyEngineTests
         approvals.RequestCount.Should().Be(0);
     }
 
+    [Theory]
+    [InlineData("rm -rf src", true)]
+    [InlineData("rm -Rf ~/projects", true)]
+    [InlineData("rm -fr build", true)]
+    [InlineData("rm -r build", true)]
+    [InlineData("rm --recursive build", true)]
+    [InlineData("rm -f -r build", true)]
+    [InlineData("find . -name '*.tmp' -delete", true)]
+    [InlineData("rm notes.txt", false)]
+    [InlineData("rm -f notes.txt", false)]
+    [InlineData("rm --force notes.txt", false)]
+    public async Task Recursive_deletions_require_a_fresh_prompt_despite_shell_auto_approval(string command, bool expectPrompt)
+    {
+        var approvals = new StubApprovalService();
+        var engine = CreateEngine(approvals);
+        var request = CreateRequest("bash", System.Text.Json.JsonSerializer.Serialize(new { command }), ApprovalScope.ShellExecution, true, true);
+        var context = CreateContext(PermissionMode.WorkspaceWrite, approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], null));
+
+        (await engine.EvaluateAsync(request, context, CancellationToken.None)).IsAllowed.Should().BeTrue();
+        approvals.RequestCount.Should().Be(expectPrompt ? 1 : 0);
+    }
+
     [Fact]
     public async Task Explicit_approval_includes_arguments_and_is_not_reused_for_different_arguments()
     {

@@ -20,7 +20,7 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
 
         using var response = await FetchPublicAsync(new Uri(url, UriKind.Absolute), cancellationToken).ConfigureAwait(false);
         var contentType = response.Content.Headers.ContentType?.MediaType;
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var body = await ReadBoundedBodyAsync(response.Content, cancellationToken).ConfigureAwait(false);
 
         if (!ShouldTreatBodyAsHtml(contentType, body))
         {
@@ -49,10 +49,33 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
             Content: DecodeAndNormalize(text));
     }
 
-    /// <summary>
-    /// Uses declared media type when present; otherwise sniffs common markup so plain-text responses
-    /// that are actually HTML still parse correctly (typical for minimal <see cref="StringContent"/> in tests/tools).
-    /// </summary>
+    /// <summary>Maximum response bytes read from one fetch; larger bodies are truncated.</summary>
+    public const int MaxBodyBytes = 5 * 1024 * 1024;
+
+    private static async Task<string> ReadBoundedBodyAsync(HttpContent content, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        using var bounded = new MemoryStream();
+        var chunk = new byte[81920];
+        while (bounded.Length < MaxBodyBytes)
+        {
+            var wanted = (int)Math.Min(chunk.Length, MaxBodyBytes - bounded.Length);
+            var read = await stream.ReadAsync(chunk.AsMemory(0, wanted), cancellationToken).ConfigureAwait(false);
+            if (read == 0) break;
+            bounded.Write(chunk, 0, read);
+        }
+
+        var encoding = System.Text.Encoding.UTF8;
+        var charset = content.Headers.ContentType?.CharSet?.Trim('"');
+        if (!string.IsNullOrWhiteSpace(charset))
+        {
+            try { encoding = System.Text.Encoding.GetEncoding(charset); }
+            catch (ArgumentException) { /* Unknown charset: fall back to UTF-8. */ }
+        }
+
+        return encoding.GetString(bounded.GetBuffer(), 0, (int)bounded.Length).TrimStart('\uFEFF');
+    }
+
     private async Task<HttpResponseMessage> FetchPublicAsync(Uri uri, CancellationToken cancellationToken)
     {
         for (var redirects = 0; redirects <= 5; redirects++)
@@ -68,6 +91,10 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
         throw new HttpRequestException("Too many redirects.");
     }
 
+    /// <summary>
+    /// Uses declared media type when present; otherwise sniffs common markup so plain-text responses
+    /// that are actually HTML still parse correctly (typical for minimal <see cref="StringContent"/> in tests/tools).
+    /// </summary>
     private static bool ShouldTreatBodyAsHtml(string? mediaType, string body)
     {
         if (LooksLikeHtmlMediaType(mediaType))

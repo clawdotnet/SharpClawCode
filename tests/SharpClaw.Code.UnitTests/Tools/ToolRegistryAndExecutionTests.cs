@@ -124,6 +124,28 @@ public sealed class ToolRegistryAndExecutionTests
     }
 
     /// <summary>
+    /// Ensures grep treats CRLF line endings like LF: end anchors match and returned lines carry no carriage return.
+    /// </summary>
+    [Fact]
+    public async Task GrepSearch_should_match_line_end_anchors_in_crlf_files()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        await File.WriteAllTextAsync(Path.Combine(workspacePath, "windows.txt"), "alpha needle\r\nbeta\r\nneedle gamma\r\n");
+        var executor = CreateExecutor(CreateRegistryWithStubShell());
+        var context = CreateContext(workspacePath, PermissionMode.WorkspaceWrite);
+
+        var grepResult = await executor.ExecuteAsync(
+            GrepSearchTool.ToolName,
+            JsonSerializer.Serialize(new GrepSearchToolArguments("needle$", null, 20, false)),
+            context,
+            CancellationToken.None);
+
+        grepResult.Result.Succeeded.Should().BeTrue();
+        var payload = JsonSerializer.Deserialize<GrepSearchToolResult>(grepResult.Result.StructuredOutputJson!, JsonOptions);
+        payload!.Matches.Should().ContainSingle().Which.Should().Be(new GrepSearchMatch("windows.txt", 1, "alpha needle"));
+    }
+
+    /// <summary>
     /// Ensures the executor rejects attempts to access files outside the workspace.
     /// </summary>
     [Fact]

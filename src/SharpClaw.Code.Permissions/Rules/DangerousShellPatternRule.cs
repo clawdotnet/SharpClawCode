@@ -54,7 +54,8 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
         return DangerousSubstitutionRegex().IsMatch(normalized);
     }
 
-    [GeneratedRegex(@"\b(?:rm\s+[^;|\r\n]*-[a-z]*r|find\s+[^;|\r\n]*-(?:delete|exec))\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 250)]
+    // Matches rm with any recursive flag token (-r, -rf, -fR, -f -r, --recursive) and find with delete/exec actions.
+    [GeneratedRegex(@"\brm\s(?:[^;|&\r\n]*\s)?(?:-[a-z]*r[a-z]*|--recursive)(?=[\s;|&]|$)|\bfind\s[^;|&\r\n]*\s-(?:delete|exec|execdir|ok|okdir)\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 250)]
     private static partial Regex DangerousDeletionRegex();
 
     [GeneratedRegex(@"\$\(.*(?:rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot)", RegexOptions.Singleline)]

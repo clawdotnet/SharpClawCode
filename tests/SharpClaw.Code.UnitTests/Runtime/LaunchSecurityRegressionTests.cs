@@ -16,6 +16,29 @@ public sealed class LaunchSecurityRegressionTests
     public void Package_ids_cannot_be_paths(string id)
         => FluentActions.Invoking(() => LocalPackagePath.ValidateId(id)).Should().Throw<ArgumentException>();
 
+    [Theory]
+    [InlineData("../other-workspace")]
+    [InlineData("/tmp/elsewhere")]
+    [InlineData("..")]
+    [InlineData("a/b")]
+    [InlineData("a\\b")]
+    [InlineData("C:\\users")]
+    public void Session_ids_cannot_be_paths(string sessionId)
+    {
+        var resolver = SharpClaw.Code.UnitTests.Support.TestRuntimeStorageResolver.Create(Path.GetTempPath());
+        FluentActions.Invoking(() => resolver.GetSessionSnapshotPath(Path.GetTempPath(), sessionId)).Should().Throw<ArgumentException>();
+        FluentActions.Invoking(() => resolver.GetCheckpointPath(Path.GetTempPath(), "session-1", sessionId)).Should().Throw<ArgumentException>();
+    }
+
+    [Fact]
+    public void Generated_session_ids_resolve_inside_the_sessions_root()
+    {
+        var resolver = SharpClaw.Code.UnitTests.Support.TestRuntimeStorageResolver.Create(Path.GetTempPath());
+        var workspace = Path.GetTempPath();
+        resolver.GetSessionSnapshotPath(workspace, $"session-{Guid.NewGuid():N}")
+            .Should().StartWith(resolver.GetSessionsRoot(workspace) + Path.DirectorySeparatorChar);
+    }
+
     [Fact]
     public void Dangling_symlink_cannot_hide_an_outside_write()
     {
@@ -42,12 +65,35 @@ public sealed class LaunchSecurityRegressionTests
     [InlineData("http://10.0.0.1/")]
     [InlineData("http://[::1]/")]
     [InlineData("http://[::ffff:127.0.0.1]/")]
+    [InlineData("http://192.0.2.10/")]
+    [InlineData("http://192.0.0.8/")]
+    [InlineData("http://[2002:c0a8:101::1]/")]
+    [InlineData("http://[2001:0:4136:e378::1]/")]
     [InlineData("file:///etc/passwd")]
     public async Task Web_fetch_rejects_private_destinations_before_sending(string url)
     {
         using var client = new HttpClient(new RejectNetwork());
         var service = new WebFetchService(client);
         await FluentActions.Awaiting(() => service.FetchAsync(url, CancellationToken.None)).Should().ThrowAsync<HttpRequestException>();
+    }
+
+    [Theory]
+    [InlineData("http://192.0.78.9/")]
+    [InlineData("http://93.184.215.14/")]
+    [InlineData("http://[2606:4700::1111]/")]
+    public async Task Web_fetch_allows_public_literal_destinations(string url)
+    {
+        using var client = new HttpClient(new AcceptNetwork());
+        var service = new WebFetchService(client);
+        (await service.FetchAsync(url, CancellationToken.None)).Content.Should().Contain("ok");
+    }
+
+    [Fact]
+    public async Task Web_fetch_truncates_oversized_bodies()
+    {
+        using var client = new HttpClient(new AcceptNetwork(new string('a', WebFetchService.MaxBodyBytes + 4096)));
+        var service = new WebFetchService(client);
+        (await service.FetchAsync("http://192.0.78.9/", CancellationToken.None)).Content.Length.Should().BeLessThanOrEqualTo(WebFetchService.MaxBodyBytes);
     }
 
     [Fact]
@@ -82,20 +128,67 @@ public sealed class LaunchSecurityRegressionTests
     }
 
     [Fact]
-    public async Task Excessive_subprocess_output_is_stopped_and_reported()
+    public async Task Excessive_subprocess_output_is_bounded_and_keeps_head_and_tail()
     {
         if (OperatingSystem.IsWindows()) return;
         var runner = new ProcessRunner(new SystemClock());
         var request = new SharpClaw.Code.Infrastructure.Models.ProcessRunRequest("/bin/sh",
-            ["-c", "yes x | head -c 1200000"], Path.GetTempPath(), null);
-        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await FluentActions.Awaiting(() => runner.RunAsync(request, deadline.Token)).Should().ThrowAsync<IOException>().WithMessage("*output exceeded*");
+            ["-c", "echo FIRST; yes x | head -c 3000000; echo; echo LAST"], Path.GetTempPath(), null);
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(20));
+
+        var result = await runner.RunAsync(request, deadline.Token);
+
+        result.ExitCode.Should().Be(0);
+        result.StandardOutput.Length.Should().BeLessThan(ProcessRunner.MaxRetainedCharacters + 200);
+        result.StandardOutput.Should().StartWith("FIRST").And.Contain("characters of output omitted");
+        result.StandardOutput.TrimEnd().Should().EndWith("LAST");
+    }
+
+    [Fact]
+    public async Task Atomic_rewrite_keeps_the_executable_bit()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var path = Path.Combine(Path.GetTempPath(), $"sharpclaw-mode-{Guid.NewGuid():N}.sh");
+        try
+        {
+            await File.WriteAllTextAsync(path, "#!/bin/sh\necho one\n");
+            var mode = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute | UnixFileMode.GroupRead | UnixFileMode.GroupExecute;
+            File.SetUnixFileMode(path, mode);
+
+            await new LocalFileSystem().WriteAllTextAsync(path, "#!/bin/sh\necho two\n", CancellationToken.None);
+
+            File.GetUnixFileMode(path).Should().Be(mode);
+            (await File.ReadAllTextAsync(path)).Should().Contain("two");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Background_child_holding_the_pipe_does_not_block_completion()
+    {
+        if (OperatingSystem.IsWindows()) return;
+        var runner = new ProcessRunner(new SystemClock());
+        var request = new SharpClaw.Code.Infrastructure.Models.ProcessRunRequest("/bin/sh",
+            ["-c", "echo started; sleep 30 &"], Path.GetTempPath(), null, TimeSpan.FromSeconds(20));
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+        var result = await runner.RunAsync(request, CancellationToken.None);
+
+        stopwatch.Elapsed.Should().BeLessThan(TimeSpan.FromSeconds(10));
+        result.ExitCode.Should().Be(0);
+        result.StandardOutput.Should().Contain("started");
     }
 
     private sealed class RejectNetwork : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
             => throw new InvalidOperationException("Private destinations must be rejected before HTTP.");
+    }
+
+    private sealed class AcceptNetwork(string body = "ok") : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+            => Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK) { Content = new StringContent(body) });
     }
 
     private sealed class RedirectToMetadata : HttpMessageHandler

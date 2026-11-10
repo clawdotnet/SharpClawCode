@@ -250,6 +250,52 @@ public sealed class AcpStdioHostTests
     }
 
     [Theory]
+    [InlineData("""{"sessionId":"one"}""")]
+    [InlineData("""{"sessionId":"one","cwd":"."}""")]
+    public async Task Spec_shaped_cancel_notification_cancels_the_sessions_live_prompt(string cancelParams)
+    {
+        var cancelledBeforeEof = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (request, token) =>
+            {
+                try { await Task.Delay(Timeout.Infinite, token); }
+                catch (OperationCanceledException) { cancelledBeforeEof.TrySetResult(); throw; }
+            }
+        };
+        var host = CreateHost(runtime, controls: new LiveTurnControlService());
+        var input = new GatedLineReader(
+            """{"jsonrpc":"2.0","id":"a","method":"session/prompt","params":{"cwd":".","sessionId":"one","prompt":"work","liveTurnControl":true}}""",
+            $$"""{"jsonrpc":"2.0","method":"session/cancel","params":{{cancelParams}}}""");
+        using var output = new StringWriter();
+
+        var run = host.RunAsync(input, output, CancellationToken.None);
+        var completed = await Task.WhenAny(cancelledBeforeEof.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        completed.Should().BeSameAs(cancelledBeforeEof.Task, "the notification, not EOF, must cancel the prompt");
+        ReadResponseResult(output, "a")["stopReason"]!.GetValue<string>().Should().Be("cancelled");
+        output.ToString().Should().NotContain("\"error\"");
+    }
+
+    /// <summary>Serves fixed lines, then blocks reads until released so EOF cannot be what cancels a prompt.</summary>
+    private sealed class GatedLineReader(params string[] lines) : TextReader
+    {
+        private readonly Queue<string> pending = new(lines);
+        private readonly TaskCompletionSource gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Release() => gate.TrySetResult();
+
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken)
+        {
+            if (pending.TryDequeue(out var line)) return line;
+            await gate.Task.WaitAsync(cancellationToken);
+            return null;
+        }
+    }
+
+    [Theory]
     [InlineData(true)]
     [InlineData(false)]
     public async Task Cancellation_or_EOF_settles_a_pending_approval(bool cancel)

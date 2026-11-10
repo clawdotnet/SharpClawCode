@@ -120,7 +120,14 @@ public sealed class AcpStdioHost(
         {
             if (id is null)
             {
-                if (method == "session/cancel") live.Control(RequireWorkspace(requestObject["params"]), requestObject["params"], cancel: true);
+                if (method == "session/cancel")
+                {
+                    var parameters = requestObject["params"];
+                    if (parameters?["promptRequestId"] is not null)
+                        live.Control(RequireWorkspace(parameters), parameters, cancel: true);
+                    else if (live.CancelSession(parameters, parameters?["cwd"] is null ? null : RequireWorkspace(parameters)) == 0)
+                        logger.LogDebug("ACP session/cancel notification matched no live-controlled prompt.");
+                }
                 return;
             }
             var response = await DispatchAsync(method, id, requestObject["params"], live, stdout, cancellationToken).ConfigureAwait(false);

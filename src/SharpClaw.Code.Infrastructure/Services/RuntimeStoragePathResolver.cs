@@ -35,7 +35,7 @@ public sealed class RuntimeStoragePathResolver(
 
     /// <inheritdoc />
     public string GetSessionRoot(string workspacePath, string sessionId)
-        => pathService.Combine(GetSessionsRoot(workspacePath), sessionId);
+        => pathService.Combine(GetSessionsRoot(workspacePath), RequireSingleSegment(sessionId, nameof(sessionId)));
 
     /// <inheritdoc />
     public string GetSessionSnapshotPath(string workspacePath, string sessionId)
@@ -55,7 +55,7 @@ public sealed class RuntimeStoragePathResolver(
 
     /// <inheritdoc />
     public string GetCheckpointPath(string workspacePath, string sessionId, string checkpointId)
-        => pathService.Combine(GetCheckpointsRoot(workspacePath, sessionId), $"{checkpointId}.json");
+        => pathService.Combine(GetCheckpointsRoot(workspacePath, sessionId), $"{RequireSingleSegment(checkpointId, nameof(checkpointId))}.json");
 
     /// <inheritdoc />
     public string GetMutationsRoot(string workspacePath, string sessionId)
@@ -149,6 +149,21 @@ public sealed class RuntimeStoragePathResolver(
         var slug = string.IsNullOrWhiteSpace(name) ? "workspace" : SanitizeSegment(name);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant()[..12];
         return $"{slug}-{hash}";
+    }
+
+    /// <summary>
+    /// Rejects identifiers that would leave their storage directory (separators, rooted paths, dot segments).
+    /// Session and checkpoint IDs reach this from HTTP routes, ACP parameters, and imported bundles.
+    /// </summary>
+    private static string RequireSingleSegment(string value, string parameterName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(value, parameterName);
+        if (value is "." or ".." || value.Any(c => !char.IsAsciiLetterOrDigit(c) && c is not ('-' or '_' or '.')))
+        {
+            throw new ArgumentException($"'{value}' is not a valid identifier; use letters, digits, dots, hyphens, and underscores.", parameterName);
+        }
+
+        return value;
     }
 
     private static string SanitizeSegment(string value)
