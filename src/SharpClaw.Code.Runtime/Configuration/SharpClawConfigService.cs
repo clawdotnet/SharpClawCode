@@ -14,6 +14,8 @@ public sealed class SharpClawConfigService(
     IFileSystem fileSystem,
     IPathService pathService) : ISharpClawConfigService
 {
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (string Content, SharpClawConfigDocument? Document)> parsedDocuments = new(StringComparer.Ordinal);
+
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNameCaseInsensitive = true,
@@ -63,6 +65,20 @@ public sealed class SharpClawConfigService(
             return null;
         }
 
+        // Config is read on every hook dispatch and many commands; reparse only when the file text changes.
+        // JSONC comments make the source-generated parse throw, so an uncached read costs an exception plus a reflection parse.
+        if (parsedDocuments.TryGetValue(path, out var cached) && string.Equals(cached.Content, content, StringComparison.Ordinal))
+        {
+            return cached.Document;
+        }
+
+        var document = Parse(content);
+        parsedDocuments[path] = (content, document);
+        return document;
+    }
+
+    private static SharpClawConfigDocument? Parse(string content)
+    {
         try
         {
             return JsonSerializer.Deserialize(content, ProtocolJsonContext.Default.SharpClawConfigDocument)

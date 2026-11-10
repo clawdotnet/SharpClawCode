@@ -96,6 +96,28 @@ public sealed class SharpClawConfigServiceTests : IDisposable
         snapshot.Document.Agents.Should().Contain(agent => agent.Id == "shared-agent" && agent.Model == "gpt-workspace" && agent.Name == "Workspace Shared");
     }
 
+    [Fact]
+    public async Task GetConfigAsync_reflects_workspace_edits_between_cached_reads()
+    {
+        var workspace = Path.Combine(tempRoot, "cached-workspace");
+        Directory.CreateDirectory(Path.Combine(workspace, ".sharpclaw"));
+        Environment.SetEnvironmentVariable("HOME", Path.Combine(tempRoot, "empty-home"));
+        Environment.SetEnvironmentVariable("USERPROFILE", Path.Combine(tempRoot, "empty-home"));
+        Environment.SetEnvironmentVariable("APPDATA", Path.Combine(tempRoot, "empty-appdata"));
+        var configPath = Path.Combine(workspace, ".sharpclaw", "config.jsonc");
+        var service = new SharpClawConfigService(new LocalFileSystem(), new PathService());
+
+        await File.WriteAllTextAsync(configPath, "{ // first\n \"defaultAgentId\": \"first\" }");
+        (await service.GetConfigAsync(workspace, CancellationToken.None)).Document.DefaultAgentId.Should().Be("first");
+        (await service.GetConfigAsync(workspace, CancellationToken.None)).Document.DefaultAgentId.Should().Be("first");
+
+        await File.WriteAllTextAsync(configPath, "{ // second\n \"defaultAgentId\": \"second\" }");
+        (await service.GetConfigAsync(workspace, CancellationToken.None)).Document.DefaultAgentId.Should().Be("second");
+
+        File.Delete(configPath);
+        (await service.GetConfigAsync(workspace, CancellationToken.None)).WorkspaceConfigPath.Should().BeNull();
+    }
+
     public void Dispose()
     {
         Environment.SetEnvironmentVariable("HOME", originalHome);
