@@ -406,7 +406,8 @@ public sealed class ProviderBackedAgentKernel(
             }
 
             var output = string.Concat(outputSegments);
-            if (string.IsNullOrWhiteSpace(output))
+            // A turn that ran tools may legitimately end without closing text; only a turn that produced nothing is a failure.
+            if (string.IsNullOrWhiteSpace(output) && allToolResults.Count == 0)
             {
                 throw new ProviderExecutionException(activeProviderName, activeModel, ProviderFailureKind.StreamFailed,
                     $"Provider '{activeProviderName}' returned an empty response.");

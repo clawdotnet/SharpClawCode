@@ -25,4 +25,7 @@ public static class ParityProviderScenario
     /// second call (with tool results in messages) emits a text response.
     /// </summary>
     public const string ToolCallRoundtrip = "tool_call_roundtrip";
+
+    /// <summary>Calls a tool, then finishes the turn with no text after receiving its result.</summary>
+    public const string ToolCallSilentFinish = "tool_call_silent_finish";
 }

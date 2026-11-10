@@ -392,6 +392,29 @@ public sealed class ParityScenarioTests : IAsyncLifetime
         turn.FinalOutput.Should().Contain("Tool result received");
     }
 
+    [Fact]
+    public async Task Tool_call_followed_by_an_empty_final_message_completes_the_turn()
+    {
+        await File.WriteAllTextAsync(Path.Combine(_workspace, "test.txt"), "fixture-content");
+
+        using var provider = ParityTestHost.Create(replaceApprovals: null);
+        var runtime = ParityTestHost.GetConversation(provider);
+        var turn = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "tool then silence",
+                SessionId: null,
+                WorkingDirectory: _workspace,
+                PermissionMode.WorkspaceWrite,
+                OutputFormat.Text,
+                Metadata: new Dictionary<string, string>
+                {
+                    [ParityMetadataKeys.Scenario] = ParityProviderScenario.ToolCallSilentFinish,
+                }),
+            CancellationToken.None);
+
+        turn.ToolResults.Should().ContainSingle(result => result.Succeeded);
+    }
+
     /// <summary>
     /// Documents parity catalog entries for discoverability in test runners.
     /// </summary>

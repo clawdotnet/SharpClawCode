@@ -11,6 +11,23 @@ namespace SharpClaw.Code.UnitTests.McpPlugins;
 public sealed class PluginManifestValidatorTests
 {
     /// <summary>
+    /// Ensures install accepts only IDs the package catalog can later enable, disable, and remove.
+    /// </summary>
+    [Theory]
+    [InlineData("my plugin", false)]
+    [InlineData("plugin@1", false)]
+    [InlineData("acme.tools-v2_beta", true)]
+    public void Validate_should_apply_the_catalog_id_rule(string id, bool valid)
+    {
+        var manifest = new PluginManifest(id, "Plugin", "1.0.0", null, "entry", null, null, [], PluginTrustLevel.Untrusted);
+
+        var act = () => new PluginManifestValidator().Validate(manifest);
+
+        if (valid) act.Should().NotThrow();
+        else act.Should().Throw<InvalidOperationException>().Which.Message.Should().Contain("letters, digits");
+    }
+
+    /// <summary>
     /// Ensures untrusted plugins cannot expose silent destructive tools.
     /// </summary>
     [Fact]
