@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Globalization;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
@@ -57,6 +56,7 @@ public sealed class ConversationRuntime(
     IShareSessionService shareSessionService,
     IConversationCompactionService conversationCompactionService,
     IHookDispatcher hookDispatcher,
+    SessionTurnLock sessionTurnLock,
     ILogger<ConversationRuntime> logger,
     TurnMutationJournal? mutationJournal = null,
     IMutationSetStore? mutationSets = null) : IConversationRuntime, IRuntimeCommandService
@@ -64,11 +64,6 @@ public sealed class ConversationRuntime(
     private const string LastTurnSequenceKey = "lastTurnSequence";
     private const string CanceledTurnReason = "The turn was canceled.";
     private const string FailedTurnReason = "The turn failed.";
-
-    private static readonly ConcurrentDictionary<string, SemaphoreSlim> SessionMutexes = new(StringComparer.Ordinal);
-
-    private static SemaphoreSlim GetSessionMutex(string workspacePath, string sessionId)
-        => SessionMutexes.GetOrAdd($"{workspacePath}\u0000{sessionId}", static _ => new SemaphoreSlim(1, 1));
 
     /// <inheritdoc />
     public async Task<ConversationSession> CreateSessionAsync(string workspacePath, PermissionMode permissionMode, OutputFormat outputFormat, CancellationToken cancellationToken)
@@ -131,21 +126,14 @@ public sealed class ConversationRuntime(
             throw new InvalidOperationException($"Unable to resume session '{request.SessionId}'.");
         }
 
-        var sessionMutex = GetSessionMutex(workspacePath, session.Id);
-        await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var turnLockPath = storagePathResolver.GetSessionTurnLockPath(workspacePath, session.Id);
-            await using var crossProcessTurnLock = await fileSystem
-                .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
-                .ConfigureAwait(false);
+        await using var sessionLock = await sessionTurnLock.AcquireAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
 
-            // Re-read the session inside the lock so the turn sequence read-modify-write is consistent across concurrent prompts.
-            var refreshed = await sessionStore.GetByIdAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
-            if (refreshed is not null)
-            {
-                session = refreshed;
-            }
+        // Re-read the session inside the lock so the turn sequence read-modify-write is consistent across concurrent prompts.
+        var refreshed = await sessionStore.GetByIdAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
+        if (refreshed is not null)
+        {
+            session = refreshed;
+        }
 
         if (explicitPrimaryMode is null && session.Metadata is not null
             && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.PrimaryMode, out var savedMode)
@@ -154,12 +142,12 @@ public sealed class ConversationRuntime(
         session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
         session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
-            session = await EnsureRecoverableFromFailedForPromptAsync(
-                    workspacePath,
-                    session,
-                    runtimeEvents,
-                    cancellationToken)
-                .ConfigureAwait(false);
+        session = await EnsureRecoverableFromFailedForPromptAsync(
+                workspacePath,
+                session,
+                runtimeEvents,
+                cancellationToken)
+            .ConfigureAwait(false);
 
         if (isNewSession)
         {
@@ -496,11 +484,6 @@ public sealed class ConversationRuntime(
         finally
         {
             mutationJournal?.End(session.Id, turnId);
-        }
-        }
-        finally
-        {
-            sessionMutex.Release();
         }
     }
 
@@ -1624,31 +1607,12 @@ public sealed class ConversationRuntime(
     private string NormalizeWorkspacePath(string? workspacePath)
         => pathService.GetFullPath(string.IsNullOrWhiteSpace(workspacePath) ? pathService.GetCurrentDirectory() : workspacePath);
 
-    private async Task<T> ExecuteWithSessionLockAsync<T>(
+    private Task<T> ExecuteWithSessionLockAsync<T>(
         string workspacePath,
         string sessionId,
         Func<CancellationToken, Task<T>> operation,
         CancellationToken cancellationToken)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(workspacePath);
-        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        ArgumentNullException.ThrowIfNull(operation);
-
-        var sessionMutex = GetSessionMutex(workspacePath, sessionId);
-        await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
-        {
-            var turnLockPath = storagePathResolver.GetSessionTurnLockPath(workspacePath, sessionId);
-            await using var crossProcessTurnLock = await fileSystem
-                .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
-                .ConfigureAwait(false);
-            return await operation(cancellationToken).ConfigureAwait(false);
-        }
-        finally
-        {
-            sessionMutex.Release();
-        }
-    }
+        => sessionTurnLock.ExecuteAsync(workspacePath, sessionId, operation, cancellationToken);
 
     private static string CreateIdentifier(string prefix)
         => $"{prefix}-{Guid.NewGuid():N}";
