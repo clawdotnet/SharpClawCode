@@ -101,7 +101,15 @@ public sealed class ReplHost(
                     else terminal.WriteError("The follow-up queue is full (16). Wait for a turn to finish.");
                     continue;
                 }
-                if (trimmed.StartsWith('/')) lastExitCode = await ExecuteSlashAsync(trimmed, context, lifetime.Token).ConfigureAwait(false);
+                if (trimmed.StartsWith('/'))
+                {
+                    try { lastExitCode = await ExecuteSlashAsync(trimmed, context, lifetime.Token).ConfigureAwait(false); }
+                    catch (Exception exception) when (exception is not OperationCanceledException)
+                    {
+                        terminal.WriteError($"Command failed: {exception.Message}");
+                        lastExitCode = 1;
+                    }
+                }
                 else queued.Enqueue(trimmed);
             }
             terminal.WriteInfo("Leaving interactive mode.");
@@ -241,7 +249,7 @@ public sealed class ReplHost(
                             customDef.Name,
                             argLine,
                             context.ToRuntimeCommandContext(
-                                primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
+                                primaryModeOverride: replInteractionState.PrimaryModeOverride ?? (context.PrimaryModeSpecified ? context.PrimaryMode : null),
                                 permissionModeOverride: replInteractionState.PermissionModeOverride ?? context.PermissionMode,
                                 agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId,
                                 approvalSettingsOverride: replInteractionState.ApprovalSettingsOverride),
@@ -297,7 +305,7 @@ public sealed class ReplHost(
             var result = await runtimeCommandService.ExecutePromptAsync(
                 prompt,
                 context.ToRuntimeCommandContext(
-                    primaryModeOverride: replInteractionState.PrimaryModeOverride ?? context.PrimaryMode,
+                    primaryModeOverride: replInteractionState.PrimaryModeOverride ?? (context.PrimaryModeSpecified ? context.PrimaryMode : null),
                     permissionModeOverride: replInteractionState.PermissionModeOverride ?? context.PermissionMode,
                     agentIdOverride: replInteractionState.AgentIdOverride ?? context.AgentId,
                     approvalSettingsOverride: replInteractionState.ApprovalSettingsOverride),

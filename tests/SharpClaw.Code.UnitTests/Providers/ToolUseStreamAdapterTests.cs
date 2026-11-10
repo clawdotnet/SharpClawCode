@@ -63,6 +63,7 @@ public sealed class ToolUseStreamAdapterTests
                 default);
 
             yield return new RawMessageStreamEvent(new RawContentBlockStopEvent { Index = 0 }, default);
+            yield return System.Text.Json.JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}""")!;
             yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
         }
 
@@ -120,6 +121,7 @@ public sealed class ToolUseStreamAdapterTests
                 default);
 
             yield return new RawMessageStreamEvent(new RawContentBlockStopEvent { Index = 1 }, default);
+            yield return System.Text.Json.JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}""")!;
             yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
         }
 

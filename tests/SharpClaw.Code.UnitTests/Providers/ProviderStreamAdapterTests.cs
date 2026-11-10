@@ -16,6 +16,44 @@ namespace SharpClaw.Code.UnitTests.Providers;
 public sealed class ProviderStreamAdapterTests
 {
     [Fact]
+    public async Task OpenAi_drains_tool_calls_and_usage_after_finish_reason()
+    {
+        async IAsyncEnumerable<ChatResponseUpdate> Stream()
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, []) { FinishReason = ChatFinishReason.ToolCalls };
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call-1", "read_file", new Dictionary<string, object?> { ["path"] = "file.cs" })]);
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(new UsageDetails { InputTokenCount = 10, OutputTokenCount = 2 })]);
+        }
+        var events = new List<ProviderEvent>();
+        await foreach (var item in OpenAiMeaiStreamAdapter.AdaptAsync(Stream(), "req", new FixedSystemClock(), CancellationToken.None)) events.Add(item);
+        events.Should().ContainSingle(item => item.ToolName == "read_file");
+        events[^1].Usage!.TotalTokens.Should().Be(12);
+        events[^1].Kind.Should().Be("completed");
+    }
+
+    [Fact]
+    public async Task Anthropic_preserves_usage_and_rejects_truncated_tool_calls()
+    {
+        async IAsyncEnumerable<RawMessageStreamEvent> Stream(string reason)
+        {
+            yield return JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_start","message":{"id":"msg","type":"message","role":"assistant","model":"test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":5,"cache_creation_input_tokens":2}}}""")!;
+            yield return JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"call","name":"bash","input":{}}}""")!;
+            yield return JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{}"}}""")!;
+            yield return JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"content_block_stop","index":0}""")!;
+            yield return JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"STOP","stop_sequence":null},"usage":{"output_tokens":3}}""".Replace("STOP", reason))!;
+            yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
+        }
+        var complete = new List<ProviderEvent>();
+        await foreach (var item in AnthropicSdkStreamAdapter.AdaptAsync(Stream("tool_use"), "req", new FixedSystemClock(), CancellationToken.None)) complete.Add(item);
+        complete[^1].Usage!.InputTokens.Should().Be(17);
+        complete[^1].Usage!.TotalTokens.Should().Be(20);
+        var truncated = new List<ProviderEvent>();
+        await foreach (var item in AnthropicSdkStreamAdapter.AdaptAsync(Stream("max_tokens"), "req", new FixedSystemClock(), CancellationToken.None)) truncated.Add(item);
+        truncated.Should().ContainSingle(item => item.Kind == "failed");
+        truncated.Should().NotContain(item => item.ToolName != null);
+    }
+
+    [Fact]
     public async Task OpenAi_meai_adapter_emits_text_deltas_then_completed()
     {
         var clock = new FixedSystemClock();
@@ -170,6 +208,7 @@ public sealed class ProviderStreamAdapterTests
                 },
                 default);
 
+            yield return System.Text.Json.JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}""")!;
             yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
         }
 
@@ -196,6 +235,7 @@ public sealed class ProviderStreamAdapterTests
             await Task.Yield();
             throw new JsonException("Malformed Anthropic SSE data payload.");
 #pragma warning disable CS0162
+            yield return System.Text.Json.JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}""")!;
             yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
 #pragma warning restore CS0162
         }
@@ -224,6 +264,7 @@ public sealed class ProviderStreamAdapterTests
             await Task.Yield();
             throw new IOException("socket closed while reading Anthropic SSE data.");
 #pragma warning disable CS0162
+            yield return System.Text.Json.JsonSerializer.Deserialize<RawMessageStreamEvent>("""{"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":2}}""")!;
             yield return new RawMessageStreamEvent(new RawMessageStopEvent(), default);
 #pragma warning restore CS0162
         }

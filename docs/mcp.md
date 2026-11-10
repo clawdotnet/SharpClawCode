@@ -3,6 +3,8 @@
 **Project:** `SharpClaw.Code.Mcp`  
 **Registration:** `McpServiceCollectionExtensions.AddSharpClawMcp` (pulled in by **`AddSharpClawRuntime`**)
 
+Outbound workspace registrations currently support connection, discovery counts, diagnostics, and start/stop/restart. Their tools are **not registered with the main coding agent**, so a successful handshake does not mean the agent can call them. Inbound MCP tool hosting is implemented separately in [MCP server](mcp-server.md). The Parallel Search example below has its own direct tool-call path; it does not fill this main-agent gap.
+
 ## Official SDK
 
 MCP sessions use the **[ModelContextProtocol](https://www.nuget.org/packages/ModelContextProtocol)** NuGet package (official MCP C# SDK, version pinned in **`Directory.Packages.props`**). SharpClaw keeps **registry, CLI, Protocol DTOs, and diagnostics** as first-party code; **`SdkMcpProcessSupervisor`** drives:

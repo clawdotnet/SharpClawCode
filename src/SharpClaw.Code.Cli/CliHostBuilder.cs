@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Cli.Composition;
 using SharpClaw.Code.Runtime;
 
@@ -17,9 +20,18 @@ public static class CliHostBuilder
     /// <returns>A configured host instance.</returns>
     public static IHost BuildHost(string[]? args = null)
     {
-        var builder = Host.CreateApplicationBuilder(args ?? []);
+        // Repository appsettings files are untrusted and must never configure credential destinations.
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        {
+            DisableDefaults = true,
+            Args = args ?? [],
+        });
+        builder.Configuration.AddEnvironmentVariables();
         builder.Logging.ClearProviders();
         builder.Services.AddSharpClawRuntime(builder.Configuration);
+        foreach (var descriptor in builder.Services.Where(d => d.ServiceType == typeof(IHostedService)
+            && d.ImplementationType == typeof(ScheduledPromptRunner)).ToArray())
+            builder.Services.Remove(descriptor);
         builder.Services.AddSharpClawCli();
         return builder.Build();
     }

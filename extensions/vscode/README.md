@@ -25,9 +25,9 @@ What it currently does:
 By default the extension runs:
 
 ```bash
-dotnet run --project src/SharpClaw.Code.Cli -- acp
+sharpclaw acp
 ```
 
-Override that command through the `sharpClaw.cliCommand` and `sharpClaw.cliArgs` settings if you want to point the extension at an installed CLI or a different workspace layout.
+Install the .NET tool first (`dotnet tool install --global SharpClaw.Code.Cli --prerelease`). Override `sharpClaw.cliCommand` and `sharpClaw.cliArgs` in user settings to select another installation. Workspace values are ignored, and the extension does not activate in untrusted workspaces. For source development, set the user command to `dotnet` and args to `["run", "--project", "/absolute/path/to/SharpClaw.Code.Cli", "--", "acp"]`.
 
 While a prompt runs, use **Steer Active Turn** to queue a correction or **Cancel Active Turn** to stop it. Commands target the active editor’s workspace folder. The output channel displays corrections that still need to be resubmitted when execution ends. Live controls require a host advertising `liveTurnControl`. Older hosts continue to support ordinary prompts.

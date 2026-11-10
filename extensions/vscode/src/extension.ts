@@ -20,8 +20,9 @@ class AcpClient implements vscode.Disposable {
         context: vscode.ExtensionContext) {
         this.connection = new AcpConnection(() => {
             const config = vscode.workspace.getConfiguration("sharpClaw");
-            const command = config.get<string>("cliCommand", "dotnet");
-            const args = config.get<string[]>("cliArgs", ["run", "--project", "src/SharpClaw.Code.Cli", "--", "acp"]);
+            if (!vscode.workspace.isTrusted) throw new Error("SharpClaw requires a trusted workspace.");
+            const command = config.inspect<string>("cliCommand")?.globalValue ?? "sharpclaw";
+            const args = config.inspect<string[]>("cliArgs")?.globalValue ?? ["acp"];
             const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? context.extensionPath;
             return spawn(command, args, { cwd, stdio: "pipe" });
         }, (params, reply) => this.handleNotification(params, reply), text => this.output.append(text));

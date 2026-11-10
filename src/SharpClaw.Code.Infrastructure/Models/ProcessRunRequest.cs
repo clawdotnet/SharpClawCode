@@ -7,8 +7,10 @@ namespace SharpClaw.Code.Infrastructure.Models;
 /// <param name="Arguments">The command-line arguments.</param>
 /// <param name="WorkingDirectory">The working directory, if any.</param>
 /// <param name="EnvironmentVariables">Optional environment variable overrides.</param>
+/// <param name="ExecutionTimeout">Optional host-controlled deadline; defaults to two minutes.</param>
 public sealed record ProcessRunRequest(
     string FileName,
     string[] Arguments,
     string? WorkingDirectory,
-    IReadOnlyDictionary<string, string?>? EnvironmentVariables);
+    IReadOnlyDictionary<string, string?>? EnvironmentVariables,
+    TimeSpan? ExecutionTimeout = null);

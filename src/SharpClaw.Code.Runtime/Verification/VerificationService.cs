@@ -164,12 +164,12 @@ public sealed class VerificationService(IProcessRunner processes, IFileSystem fi
         timeout.CancelAfter(TimeSpan.FromSeconds(timeoutSeconds));
         try
         {
-            var result = await processes.RunAsync(new ProcessRunRequest("dotnet", arguments.ToArray(), root, new Dictionary<string, string?> { ["DOTNET_NOLOGO"] = "1", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1" }), timeout.Token).ConfigureAwait(false);
+            var result = await processes.RunAsync(new ProcessRunRequest("dotnet", arguments.ToArray(), root, new Dictionary<string, string?> { ["DOTNET_NOLOGO"] = "1", ["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1" }, ExecutionTimeout: TimeSpan.FromSeconds(timeoutSeconds)), timeout.Token).ConfigureAwait(false);
             var parsed = diagnostics.Parse(result.StandardOutput, result.StandardError, root);
             var reason = result.ExitCode == 0 ? VerificationFailureReason.None : Classify(parsed, result.StandardOutput + "\n" + result.StandardError, kind);
             return new(kind, target, result.ExitCode == 0 ? VerificationStatus.Passed : VerificationStatus.Failed, reason, result.ExitCode, started, clock.UtcNow, (long)(clock.UtcNow - started).TotalMilliseconds, DotNetDiagnosticParser.Bound(result.StandardOutput, 16000), DotNetDiagnosticParser.Bound(result.StandardError, 16000), parsed);
         }
-        catch (OperationCanceledException) when (!caller.IsCancellationRequested)
+        catch (Exception error) when (!caller.IsCancellationRequested && error is OperationCanceledException or TimeoutException)
         {
             return Failure(VerificationFailureReason.Timeout, "Verification step timed out.");
         }

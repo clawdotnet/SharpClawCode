@@ -36,7 +36,8 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
     {
         // Collapse whitespace runs so extra spaces don't bypass detection.
         var normalized = CollapseWhitespace().Replace(command.Trim(), " ").ToLowerInvariant();
-        return normalized.Contains("rm -rf /", StringComparison.Ordinal)
+        return DangerousDeletionRegex().IsMatch(normalized)
+               || normalized.Contains("rm -rf /", StringComparison.Ordinal)
                || normalized.Contains("rm -rf .", StringComparison.Ordinal)
                || normalized.Contains("rm -rf ..", StringComparison.Ordinal)
                || normalized.Contains("sudo ", StringComparison.Ordinal)
@@ -52,6 +53,9 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
         // Detect command substitution containing dangerous commands.
         return DangerousSubstitutionRegex().IsMatch(normalized);
     }
+
+    [GeneratedRegex(@"\b(?:rm\s+[^;|\r\n]*-[a-z]*r|find\s+[^;|\r\n]*-(?:delete|exec))\b", RegexOptions.IgnoreCase, matchTimeoutMilliseconds: 250)]
+    private static partial Regex DangerousDeletionRegex();
 
     [GeneratedRegex(@"\$\(.*(?:rm\s+-rf|mkfs|dd\s+if=|shutdown|reboot)", RegexOptions.Singleline)]
     private static partial Regex DangerousSubstitutionRegex();

@@ -61,22 +61,20 @@
       "properties": {
         "sharpClaw.cliCommand": {
           "type": "string",
-          "default": "dotnet",
-          "description": "Command used to launch the SharpClaw ACP host."
+          "default": "sharpclaw",
+          "description": "Command used to launch the SharpClaw ACP host.",
+          "scope": "machine"
         },
         "sharpClaw.cliArgs": {
           "type": "array",
           "default": [
-            "run",
-            "--project",
-            "src/SharpClaw.Code.Cli",
-            "--",
             "acp"
           ],
           "items": {
             "type": "string"
           },
-          "description": "Arguments passed to the SharpClaw CLI command."
+          "description": "Arguments passed to the SharpClaw CLI command.",
+          "scope": "machine"
         }
       }
     }
@@ -90,5 +88,11 @@
     "@types/node": "^26.6.6",
     "@types/vscode": "^1.144.0",
     "typescript": "^7.0.2"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "SharpClaw executes tools and requires a trusted workspace."
+    }
   }
 }

@@ -14,7 +14,7 @@ public sealed class HookDispatcher(
     IProcessRunner processRunner,
     ILogger<HookDispatcher> logger) : IHookDispatcher
 {
-    private readonly Dictionary<string, HookTestResult> lastResults = new(StringComparer.OrdinalIgnoreCase);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, HookTestResult> lastResults = new(StringComparer.OrdinalIgnoreCase);
 
     /// <inheritdoc />
     public async Task DispatchAsync(string workspaceRoot, HookTriggerKind trigger, string payloadJson, CancellationToken cancellationToken)
@@ -78,7 +78,7 @@ public sealed class HookDispatcher(
     {
         try
         {
-            await processRunner.RunAsync(
+            var process = await processRunner.RunAsync(
                 new ProcessRunRequest(
                     hook.Command,
                     hook.Arguments,
@@ -90,6 +90,7 @@ public sealed class HookDispatcher(
                     }),
                 cancellationToken).ConfigureAwait(false);
 
+            if (process.ExitCode != 0) throw new InvalidOperationException($"Hook exited with code {process.ExitCode}: {process.StandardError}");
             var success = new HookTestResult(hook.Name, hook.Trigger, true, "Hook executed successfully.", DateTimeOffset.UtcNow);
             if (recordResult)
             {
@@ -98,6 +99,7 @@ public sealed class HookDispatcher(
 
             return success;
         }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
         catch (Exception ex)
         {
             logger.LogWarning(ex, "Hook '{HookName}' failed for trigger {Trigger}.", hook.Name, hook.Trigger);

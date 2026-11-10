@@ -4,6 +4,8 @@ namespace SharpClaw.Code.Tools.Utilities;
 
 internal static partial class GlobPatternMatcher
 {
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> Patterns = new(StringComparer.Ordinal);
+
     public static bool IsMatch(string pattern, string relativePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(pattern);
@@ -11,7 +13,8 @@ internal static partial class GlobPatternMatcher
 
         var normalizedPattern = NormalizePattern(pattern);
         var normalizedPath = relativePath.Replace('\\', '/');
-        return CreateRegex(normalizedPattern).IsMatch(normalizedPath);
+        if (Patterns.Count > 128) Patterns.Clear();
+        return Patterns.GetOrAdd(normalizedPattern, CreateRegex).IsMatch(normalizedPath);
     }
 
     private static string NormalizePattern(string pattern)
@@ -33,6 +36,6 @@ internal static partial class GlobPatternMatcher
             .Replace(@"\*", @"[^/]*")
             .Replace(@"\?", @"[^/]");
 
-        return new Regex($"^{regexPattern}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        return new Regex($"^{regexPattern}$", RegexOptions.Compiled | RegexOptions.CultureInvariant, TimeSpan.FromMilliseconds(250));
     }
 }

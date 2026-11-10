@@ -83,7 +83,7 @@ public sealed class SharpClawConfigService(
 
         var defaultAgentId = workspace?.DefaultAgentId ?? user?.DefaultAgentId;
         var shareMode = workspace?.ShareMode ?? user?.ShareMode ?? Protocol.Models.ShareMode.Manual;
-        var server = workspace?.Server ?? user?.Server ?? new SharpClawServerOptions("127.0.0.1", 7345, null);
+        var server = user?.Server ?? new SharpClawServerOptions("127.0.0.1", 7345, null);
 
         return new SharpClawConfigDocument(
             shareMode,
@@ -91,7 +91,7 @@ public sealed class SharpClawConfigService(
             defaultAgentId,
             MergeByKey(user?.Agents, workspace?.Agents, static item => item.Id),
             MergeByKey(user?.LspServers, workspace?.LspServers, static item => item.Id),
-            MergeByKey(user?.Hooks, workspace?.Hooks, static item => item.Name),
+            user?.Hooks, // Workspace files cannot authorize process execution.
             MergeByKey(user?.ConnectLinks, workspace?.ConnectLinks, static item => item.Target),
             MergeExternalAgents(user?.ExternalAgents, workspace?.ExternalAgents),
             workspace?.SkillPacks ?? user?.SkillPacks ?? new SkillPacksConfig(),

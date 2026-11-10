@@ -22,6 +22,9 @@ public sealed class AnthropicProvider(
     ILogger<AnthropicProvider> logger) : IModelProvider
 {
     private readonly AnthropicProviderOptions _options = options.Value;
+    private readonly object clientLock = new();
+    private AnthropicClient? cachedClient;
+    private string? cachedApiKey;
 
     /// <inheritdoc />
     public string ProviderName => _options.ProviderName;
@@ -125,7 +128,7 @@ public sealed class AnthropicProvider(
             parameters = parameters with { System = systemPrompt };
         }
 
-        return parameters;
+        return parameters with { CacheControl = new CacheControlEphemeral() };
     }
 
     private AnthropicClient CreateClient(string? resolvedApiKey)
@@ -142,7 +145,15 @@ public sealed class AnthropicProvider(
             clientOptions.BaseUrl = normalized;
         }
 
-        return new AnthropicClient(clientOptions);
+        lock (clientLock)
+        {
+            if (cachedClient is null || !string.Equals(cachedApiKey, apiKey, StringComparison.Ordinal))
+            {
+                cachedClient = new AnthropicClient(clientOptions);
+                cachedApiKey = apiKey;
+            }
+            return cachedClient;
+        }
     }
 
     private async Task<ResolvedProviderCredential> ResolveCredentialAsync(CancellationToken cancellationToken)

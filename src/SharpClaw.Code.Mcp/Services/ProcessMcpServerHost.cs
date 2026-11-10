@@ -71,7 +71,22 @@ public sealed class ProcessMcpServerHost(
             ResourceCount: server.Status.ResourceCount);
 
         await PersistAndEmitAsync(workspaceRoot, server.Status, startingStatus, cancellationToken).ConfigureAwait(false);
-        var processResult = await processSupervisor.StartAsync(server.Definition, workspaceRoot, cancellationToken).ConfigureAwait(false);
+        McpProcessStartResult? processResult = null;
+        try
+        {
+            processResult = await processSupervisor.StartAsync(server.Definition, workspaceRoot, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+        }
+        catch (Exception exception)
+        {
+            if (processResult is { Started: true })
+                await processSupervisor.StopAsync(new McpProcessStopRequest(processResult.Pid, processResult.SessionHandle), CancellationToken.None).ConfigureAwait(false);
+            var faulted = startingStatus with { State = McpLifecycleState.Faulted, IsHealthy = false,
+                StatusMessage = exception is OperationCanceledException ? "MCP startup cancelled." : exception.Message,
+                UpdatedAtUtc = systemClock.UtcNow, FailureKind = McpFailureKind.Startup };
+            await PersistAndEmitAsync(workspaceRoot, startingStatus, faulted, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
 
         var finalStatus = processResult.Started
             ? processResult.HandshakeSucceeded

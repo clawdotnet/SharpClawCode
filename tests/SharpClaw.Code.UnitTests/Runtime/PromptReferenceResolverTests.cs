@@ -178,6 +178,19 @@ public sealed class PromptReferenceResolverTests
         resolution.ExpandedPrompt.Should().NotContain("file-20.txt");
     }
 
+    [Theory]
+    [InlineData("email user@example.com")]
+    [InlineData("Java @Override and @types/node")]
+    public async Task Ordinary_at_mentions_remain_literal(string prompt)
+    {
+        var workspace = Path.GetTempPath();
+        var session = CreateSession(workspace);
+        var resolution = await CreateResolver().ResolveAsync(workspace, workspace, session,
+            CreateTurn(session, prompt), CreateRequest(session, workspace, prompt), PrimaryMode.Build, false, CancellationToken.None);
+        resolution.ExpandedPrompt.Should().Be(prompt);
+        resolution.References.Should().BeEmpty();
+    }
+
     private static PromptReferenceResolver CreateResolver()
     {
         var pathService = new PathService();

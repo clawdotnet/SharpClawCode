@@ -114,6 +114,7 @@ public sealed class ConversationRuntime(
 
         var workspacePath = NormalizeWorkspacePath(request.WorkingDirectory);
         request = EnrichRequestWithEditorIngress(workspacePath, request);
+        var explicitPrimaryMode = request.PrimaryMode;
         request = await ApplyAgentAndConfigDefaultsAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
         var runtimeEvents = new List<RuntimeEvent>();
         var session = await ResolveSessionAsync(workspacePath, request, cancellationToken).ConfigureAwait(false);
@@ -130,9 +131,6 @@ public sealed class ConversationRuntime(
             throw new InvalidOperationException($"Unable to resume session '{request.SessionId}'.");
         }
 
-        session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
-        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
-
         var sessionMutex = GetSessionMutex(workspacePath, session.Id);
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -148,6 +146,13 @@ public sealed class ConversationRuntime(
             {
                 session = refreshed;
             }
+
+        if (explicitPrimaryMode is null && session.Metadata is not null
+            && session.Metadata.TryGetValue(SharpClawWorkflowMetadataKeys.PrimaryMode, out var savedMode)
+            && Enum.TryParse<PrimaryMode>(savedMode, true, out var persistedMode) && Enum.IsDefined(persistedMode))
+            request = request with { PrimaryMode = persistedMode };
+        session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
+        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
             session = await EnsureRecoverableFromFailedForPromptAsync(
                     workspacePath,
@@ -1326,7 +1331,7 @@ public sealed class ConversationRuntime(
 
         foreach (var providerEvent in turnRunResult.ProviderEvents ?? [])
         {
-            if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
+            if (!providerEvent.IsTerminal && !string.IsNullOrEmpty(providerEvent.Content))
             {
                 await AppendEventAsync(
                     workspacePath,
@@ -1672,6 +1677,11 @@ public sealed class ConversationRuntime(
         if (context == PrimaryMode.Plan || effective == PrimaryMode.Plan)
         {
             return PrimaryMode.Plan;
+        }
+
+        if (context == PrimaryMode.Research || effective == PrimaryMode.Research)
+        {
+            return PrimaryMode.Research;
         }
 
         if (context == PrimaryMode.Spec || effective == PrimaryMode.Spec)

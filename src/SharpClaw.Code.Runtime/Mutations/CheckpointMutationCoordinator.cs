@@ -159,6 +159,9 @@ public sealed class CheckpointMutationCoordinator(
                 ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        // After the first mutation, finish and persist the transaction despite caller cancellation.
+        cancellationToken = CancellationToken.None;
         var appliedInverseCount = 0;
         try
         {
@@ -294,6 +297,9 @@ public sealed class CheckpointMutationCoordinator(
                 ThrowIfPersistenceFails: true),
             cancellationToken).ConfigureAwait(false);
 
+        cancellationToken.ThrowIfCancellationRequested();
+        // After the first mutation, finish and persist the transaction despite caller cancellation.
+        cancellationToken = CancellationToken.None;
         var appliedForwardCount = 0;
         try
         {

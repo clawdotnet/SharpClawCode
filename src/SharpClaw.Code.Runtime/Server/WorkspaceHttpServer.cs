@@ -47,6 +47,9 @@ public sealed class WorkspaceHttpServer(
         RuntimeCommandContext context,
         CancellationToken cancellationToken)
     {
+        var serverToken = Environment.GetEnvironmentVariable("SHARPCLAW_SERVER_TOKEN");
+        if (string.IsNullOrWhiteSpace(serverToken) || serverToken.Length < 32 || serverToken.Any(char.IsWhiteSpace))
+            throw new InvalidOperationException("Set SHARPCLAW_SERVER_TOKEN to a secret of at least 32 characters before starting the HTTP server.");
         var config = await sharpClawConfigService.GetConfigAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
         var effectiveHost = string.IsNullOrWhiteSpace(host) ? config.Document.Server?.Host ?? "127.0.0.1" : host!;
         var effectivePort = port is > 0 ? port.Value : config.Document.Server?.Port ?? 7345;
@@ -76,7 +79,7 @@ public sealed class WorkspaceHttpServer(
                 }
 
                 _ = Task.Run(
-                    () => HandleRequestAsync(httpContext, workspaceRoot, context, cancellationToken),
+                    () => HandleRequestAsync(httpContext, workspaceRoot, context, serverToken, effectiveHost, cancellationToken),
                     CancellationToken.None);
             }
         }
@@ -104,9 +107,28 @@ public sealed class WorkspaceHttpServer(
         HttpListenerContext httpContext,
         string workspaceRoot,
         RuntimeCommandContext defaultContext,
+        string serverToken,
+        string listeningHost,
         CancellationToken cancellationToken)
     {
         var request = httpContext.Request;
+        // All endpoints share the host credential. Browser origins and DNS-rebinding hosts are rejected.
+        var expectedHost = httpContext.Request.LocalEndPoint.Address;
+        var hostName = request.Url?.Host.Trim('[', ']');
+        var validHost = string.Equals(hostName, listeningHost, StringComparison.OrdinalIgnoreCase)
+            || string.Equals(hostName, "localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(hostName, out var address) && (IPAddress.IsLoopback(address) || address.Equals(expectedHost)));
+        var supplied = request.Headers["X-SharpClaw-Server-Token"] is { } hostToken
+            ? "Bearer " + hostToken : request.Headers["Authorization"];
+        var expected = "Bearer " + serverToken;
+        if (!validHost || request.Headers["Origin"] is not null
+            || supplied is null || !System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+                Encoding.UTF8.GetBytes(supplied), Encoding.UTF8.GetBytes(expected)))
+        {
+            await WriteJsonAsync(httpContext.Response, 401, new ErrorEnvelope("A valid server bearer token and host are required; browser origins are not accepted."), cancellationToken).ConfigureAwait(false);
+            httpContext.Response.Close();
+            return;
+        }
         var response = httpContext.Response;
         var requestSucceeded = false;
         var statusCode = 500;
@@ -289,9 +311,10 @@ public sealed class WorkspaceHttpServer(
         var commandContext = new RuntimeCommandContext(
             WorkingDirectory: workspaceRoot,
             Model: payload.Model ?? defaultContext.Model,
-            PermissionMode: payload.PermissionMode ?? defaultContext.PermissionMode,
+            PermissionMode: (PermissionMode)Math.Min((int)(payload.PermissionMode ?? defaultContext.PermissionMode), (int)defaultContext.PermissionMode),
             OutputFormat: payload.OutputFormat ?? OutputFormat.Json,
-            PrimaryMode: payload.PrimaryMode ?? defaultContext.PrimaryMode,
+            PrimaryMode: defaultContext.PrimaryMode is PrimaryMode.Plan or PrimaryMode.Research
+                ? defaultContext.PrimaryMode : payload.PrimaryMode ?? defaultContext.PrimaryMode,
             SessionId: payload.SessionId ?? defaultContext.SessionId,
             AgentId: payload.AgentId ?? defaultContext.AgentId,
             IsInteractive: false,
@@ -351,7 +374,7 @@ public sealed class WorkspaceHttpServer(
         var session = await conversationRuntime
             .CreateSessionAsync(
                 workspaceRoot,
-                payload?.PermissionMode ?? context.PermissionMode,
+                (PermissionMode)Math.Min((int)(payload?.PermissionMode ?? context.PermissionMode), (int)context.PermissionMode),
                 payload?.OutputFormat ?? context.OutputFormat,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -589,28 +612,8 @@ public sealed class WorkspaceHttpServer(
         RuntimeHostContext? fallback,
         string? tenantOverride)
     {
-        var hostId = HeaderOrDefault(request, "X-SharpClaw-Host-Id", fallback?.HostId);
-        var tenantId = string.IsNullOrWhiteSpace(tenantOverride)
-            ? HeaderOrDefault(request, "X-SharpClaw-Tenant-Id", fallback?.TenantId)
-            : tenantOverride;
-        var storageRoot = HeaderOrDefault(request, "X-SharpClaw-Storage-Root", fallback?.StorageRoot);
-        var sessionStoreKind = TryParseEnum<SessionStoreKind>(request.Headers["X-SharpClaw-Session-Store"]) ?? fallback?.SessionStoreKind ?? SessionStoreKind.FileSystem;
-        var isEmbeddedHost = fallback?.IsEmbeddedHost ?? false;
-
-        if (string.IsNullOrWhiteSpace(hostId)
-            && string.IsNullOrWhiteSpace(tenantId)
-            && string.IsNullOrWhiteSpace(storageRoot)
-            && fallback is null)
-        {
-            return null;
-        }
-
-        return new RuntimeHostContext(
-            HostId: string.IsNullOrWhiteSpace(hostId) ? "workspace-http-server" : hostId!,
-            TenantId: string.IsNullOrWhiteSpace(tenantId) ? null : tenantId,
-            StorageRoot: string.IsNullOrWhiteSpace(storageRoot) ? null : storageRoot,
-            SessionStoreKind: sessionStoreKind,
-            IsEmbeddedHost: isEmbeddedHost || !string.IsNullOrWhiteSpace(storageRoot) || !string.IsNullOrWhiteSpace(tenantId));
+        // Identity and storage routing belong to the authenticated host, never request headers or JSON.
+        return fallback;
     }
 
     private static bool IsAdminPath(string path)
@@ -634,16 +637,8 @@ public sealed class WorkspaceHttpServer(
             return false;
         }
 
-        if (string.IsNullOrWhiteSpace(hostContext?.TenantId))
-        {
-            return true;
-        }
-
-        return string.Equals(envelope.TenantId, hostContext.TenantId, StringComparison.Ordinal);
+        return string.Equals(envelope.TenantId, hostContext?.TenantId, StringComparison.Ordinal);
     }
-
-    private static string? HeaderOrDefault(HttpListenerRequest request, string headerName, string? fallback)
-        => string.IsNullOrWhiteSpace(request.Headers[headerName]) ? fallback : request.Headers[headerName];
 
     private static TEnum? TryParseEnum<TEnum>(string? value)
         where TEnum : struct, Enum

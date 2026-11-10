@@ -13,7 +13,8 @@ public sealed class PermissionPolicyEngine(
     IEnumerable<IPermissionRule> rules,
     IApprovalService approvalService,
     ISessionApprovalMemory sessionApprovalMemory,
-    IAutoApprovalBudgetTracker autoApprovalBudgetTracker) : IPermissionPolicyEngine
+    IAutoApprovalBudgetTracker autoApprovalBudgetTracker,
+    IApprovalPrincipalAccessor? approvalPrincipalAccessor = null) : IPermissionPolicyEngine
 {
     private readonly IPermissionRule[] orderedRules = rules.ToArray();
 
@@ -26,6 +27,17 @@ public sealed class PermissionPolicyEngine(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
 
+        if (!Enum.IsDefined(context.PermissionMode) || !Enum.IsDefined(context.PrimaryMode))
+            return CreateDecision(request.ApprovalScope, context.PermissionMode, false, "Unknown runtime permission or workflow mode.");
+
+        // A rule may tighten policy, but cannot bypass a mode or a later denial.
+        if (context.PermissionMode == PermissionMode.ReadOnly
+            && (request.IsDestructive || request.ApprovalScope is not (ApprovalScope.ToolExecution or ApprovalScope.PromptOutsideWorkspaceRead)))
+        {
+            return CreateDecision(request.ApprovalScope, context.PermissionMode, false, "Read-only mode blocks destructive or elevated tools.");
+        }
+
+        PermissionRuleResult? approval = null;
         foreach (var rule in orderedRules)
         {
             var result = await rule.EvaluateAsync(request, context, cancellationToken).ConfigureAwait(false);
@@ -34,14 +46,29 @@ public sealed class PermissionPolicyEngine(
                 case PermissionRuleOutcome.Abstain:
                     continue;
                 case PermissionRuleOutcome.Allow:
-                    return CreateDecision(request.ApprovalScope, context.PermissionMode, true, result.Reason);
+                    continue;
                 case PermissionRuleOutcome.Deny:
                     return CreateDecision(request.ApprovalScope, context.PermissionMode, false, result.Reason);
                 case PermissionRuleOutcome.RequireApproval:
-                    return await ResolveApprovalAsync(request, context, result, cancellationToken).ConfigureAwait(false);
+                    approval = approval is null ? result : PermissionRuleResult.RequireApproval(
+                        CombineReasons(approval.Reason, result.Reason) ?? "Approval required.",
+                        approval.CanRememberApproval && result.CanRememberApproval);
+                    break;
                 default:
                     throw new InvalidOperationException($"Unhandled permission rule outcome '{result.Outcome}'.");
             }
+        }
+
+        if (approval is not null)
+        {
+            return await ResolveApprovalAsync(request, context, approval, cancellationToken).ConfigureAwait(false);
+        }
+
+        if (request.RequiresApproval && context.PermissionMode != PermissionMode.DangerFullAccess)
+        {
+            return await ResolveApprovalAsync(request, context,
+                PermissionRuleResult.RequireApproval(request.ApprovalScope == ApprovalScope.PromptOutsideWorkspaceRead
+                    ? "Reading a file outside the workspace for prompt context requires approval." : "The tool requires approval.", canRememberApproval: true), cancellationToken).ConfigureAwait(false);
         }
 
         return await EvaluateByModeAsync(request, context, cancellationToken).ConfigureAwait(false);
@@ -73,7 +100,7 @@ public sealed class PermissionPolicyEngine(
                     => await ResolveApprovalAsync(
                         request,
                         context,
-                        PermissionRuleResult.RequireApproval("Workspace-write mode requires approval for elevated operations."),
+                        PermissionRuleResult.RequireApproval("Workspace-write mode requires approval for elevated operations.", canRememberApproval: true),
                         cancellationToken).ConfigureAwait(false),
                 _ => CreateDecision(request.ApprovalScope, context.PermissionMode, false, "The requested approval scope is not supported.")
             },
@@ -120,7 +147,10 @@ public sealed class PermissionPolicyEngine(
     {
         var approvalKey = CreateApprovalKey(request, context);
         var approvalMemorySessionId = GetApprovalMemorySessionId(context);
-        if (ruleResult.CanRememberApproval && sessionApprovalMemory.TryGet(approvalMemorySessionId, approvalKey) is { } rememberedEntry && rememberedEntry.Decision.Approved)
+        var authenticatedHost = approvalPrincipalAccessor?.CurrentStatus is { Mode: not ApprovalAuthMode.Disabled };
+        if (!authenticatedHost && !string.IsNullOrWhiteSpace(approvalMemorySessionId)
+            && ruleResult.CanRememberApproval && sessionApprovalMemory.TryGet(approvalMemorySessionId, approvalKey) is { } rememberedEntry && rememberedEntry.Decision.Approved
+            && (rememberedEntry.Decision.ExpiresAtUtc is null || rememberedEntry.Decision.ExpiresAtUtc > DateTimeOffset.UtcNow))
         {
             return CreateDecision(
                 request.ApprovalScope,
@@ -129,7 +159,7 @@ public sealed class PermissionPolicyEngine(
                 $"Reused remembered approval for '{request.ToolName}'.");
         }
 
-        if (TryResolveAutoApproval(request, context, out var autoApprovedDecision))
+        if (!authenticatedHost && ruleResult.CanRememberApproval && TryResolveAutoApproval(request, context, out var autoApprovedDecision))
         {
             return autoApprovedDecision;
         }
@@ -137,12 +167,12 @@ public sealed class PermissionPolicyEngine(
         var approvalRequest = new ApprovalRequest(
             Scope: request.ApprovalScope,
             ToolName: request.ToolName,
-            Prompt: ruleResult.Reason ?? $"Approval is required for '{request.ToolName}'.",
+            Prompt: $"{ruleResult.Reason ?? $"Approval is required for '{request.ToolName}'."}\nTool: {request.ToolName}\nDirectory: {request.WorkingDirectory ?? context.WorkingDirectory}\nArguments: {request.ArgumentsJson}",
             RequestedBy: "permission-policy-engine",
             CanRememberDecision: ruleResult.CanRememberApproval);
 
         var approvalDecision = await approvalService.RequestApprovalAsync(approvalRequest, context, cancellationToken).ConfigureAwait(false);
-        if (approvalDecision.Approved && ruleResult.CanRememberApproval && approvalDecision.RememberForSession)
+        if (!authenticatedHost && !string.IsNullOrWhiteSpace(approvalMemorySessionId) && approvalDecision.Approved && ruleResult.CanRememberApproval && approvalDecision.RememberForSession)
         {
             sessionApprovalMemory.Store(approvalMemorySessionId, approvalKey, new ApprovalMemoryEntry(approvalDecision));
         }
@@ -229,7 +259,8 @@ public sealed class PermissionPolicyEngine(
             request.WorkingDirectory ?? string.Empty,
             context.ToolOriginatingPluginId ?? string.Empty,
             trustSegment,
-            pathSegment);
+            pathSegment,
+            request.ArgumentsJson);
     }
 
     private static string GetApprovalMemorySessionId(PermissionEvaluationContext context)

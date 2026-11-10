@@ -72,6 +72,12 @@ public sealed partial class PromptReferenceResolver(
                 ? pathService.GetCanonicalFullPath(pathPart)
                 : pathService.GetCanonicalFullPath(pathService.Combine(workDirFull, pathPart));
 
+            if (!fileSystem.FileExists(resolvedFull) && !fileSystem.DirectoryExists(resolvedFull)
+                && !pathPart.StartsWith('.') && !Path.IsPathRooted(pathPart))
+            {
+                continue; // Email, annotations, and package mentions are ordinary prompt text.
+            }
+
             var outside = !IsWithinWorkspace(workspaceFull, resolvedFull);
             if (outside)
             {
@@ -287,6 +293,8 @@ public sealed partial class PromptReferenceResolver(
                     Uri: resolvedFull));
         }
 
+        if (File.Exists(resolvedFull) && new FileInfo(resolvedFull).Length > MaxDirectoryReferenceBytes)
+            throw new InvalidOperationException($"Referenced file exceeds {FormatBytes(MaxDirectoryReferenceBytes)}: '{display}'.");
         var text = await fileSystem.ReadAllTextIfExistsAsync(resolvedFull, cancellationToken).ConfigureAwait(false);
         if (text is null)
         {
@@ -471,6 +479,6 @@ public sealed partial class PromptReferenceResolver(
             _ => "image/jpeg",
         };
 
-    [GeneratedRegex(@"@([^\s<>""|*?]+)", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<![\w@])@([^\s<>""|*?]+)", RegexOptions.CultureInvariant)]
     private static partial Regex AtPathRegex();
 }

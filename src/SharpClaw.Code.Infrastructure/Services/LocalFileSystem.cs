@@ -119,7 +119,7 @@ public sealed class LocalFileSystem : IFileSystem
     }
 
     /// <inheritdoc />
-    public Task WriteAllTextAsync(string path, string content, CancellationToken cancellationToken)
+    public async Task WriteAllTextAsync(string path, string content, CancellationToken cancellationToken)
     {
         var directory = Path.GetDirectoryName(path);
         if (!string.IsNullOrWhiteSpace(directory))
@@ -127,7 +127,14 @@ public sealed class LocalFileSystem : IFileSystem
             Directory.CreateDirectory(directory);
         }
 
-        return File.WriteAllTextAsync(path, content, cancellationToken);
+        var temporaryPath = path + $".{Guid.NewGuid():N}.tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, content, cancellationToken).ConfigureAwait(false);
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporaryPath, path, overwrite: true);
+        }
+        finally { TryDeleteFile(temporaryPath); }
     }
 
     /// <inheritdoc />
@@ -157,9 +164,27 @@ public sealed class LocalFileSystem : IFileSystem
             Directory.CreateDirectory(directory);
         }
 
-        await using var stream = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous);
-        await using var writer = new StreamWriter(stream, Encoding.UTF8) { NewLine = "\n" };
-        await writer.WriteLineAsync(line.AsMemory(), cancellationToken).ConfigureAwait(false);
+        await using var appendLock = await AcquireExclusiveFileLockAsync(path + ".append.lock", cancellationToken).ConfigureAwait(false);
+        await using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.Read, 4096, FileOptions.Asynchronous);
+        if (stream.Length > 0)
+        {
+            stream.Position = stream.Length - 1;
+            if (stream.ReadByte() != '\n')
+            {
+                var position = stream.Length - 1;
+                while (position >= 0)
+                {
+                    stream.Position = position;
+                    if (stream.ReadByte() == '\n') break;
+                    position--;
+                }
+                stream.SetLength(position + 1);
+            }
+        }
+        stream.Position = stream.Length;
+        var bytes = Encoding.UTF8.GetBytes(line + "\n");
+        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />

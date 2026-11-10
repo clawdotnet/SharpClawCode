@@ -13,6 +13,9 @@ public sealed class ProcessRunner(ISystemClock systemClock) : IProcessRunner
     public async Task<ProcessRunResult> RunAsync(ProcessRunRequest request, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(request.FileName);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(request.ExecutionTimeout ?? TimeSpan.FromMinutes(2));
+        var processToken = timeout.Token;
 
         var startInfo = new ProcessStartInfo
         {
@@ -44,21 +47,49 @@ public sealed class ProcessRunner(ISystemClock systemClock) : IProcessRunner
         var startedAtUtc = systemClock.UtcNow;
         process.Start();
 
+        var standardOutputTask = ReadBoundedAsync(process.StandardOutput, timeout, processToken);
+        var standardErrorTask = ReadBoundedAsync(process.StandardError, timeout, processToken);
         try
         {
-            var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
-            await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
+            await process.WaitForExitAsync(processToken).ConfigureAwait(false);
             var standardOutput = await standardOutputTask.ConfigureAwait(false);
             var standardError = await standardErrorTask.ConfigureAwait(false);
             var completedAtUtc = systemClock.UtcNow;
 
             return new ProcessRunResult(process.ExitCode, standardOutput, standardError, startedAtUtc, completedAtUtc);
         }
-        catch (OperationCanceledException)
+        catch (Exception exception)
         {
+            timeout.Cancel();
             TryKillProcessTree(process);
+            try { await Task.WhenAll(standardOutputTask, standardErrorTask).ConfigureAwait(false); }
+            catch (Exception) { /* Observe both reader failures before disposing the process. */ }
+            if (!cancellationToken.IsCancellationRequested && exception is OperationCanceledException)
+            {
+                var outputFailure = (standardOutputTask.Exception?.InnerExceptions.AsEnumerable() ?? [])
+                    .Concat(standardErrorTask.Exception?.InnerExceptions.AsEnumerable() ?? []).OfType<IOException>().FirstOrDefault();
+                if (outputFailure is not null) throw outputFailure;
+                throw new TimeoutException("Process exceeded its execution deadline.", exception);
+            }
             throw;
+        }
+    }
+
+    private static async Task<string> ReadBoundedAsync(StreamReader reader, CancellationTokenSource timeout, CancellationToken cancellationToken)
+    {
+        const int maxCharacters = 1024 * 1024;
+        var builder = new System.Text.StringBuilder();
+        var buffer = new char[4096];
+        while (true)
+        {
+            var count = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false);
+            if (count == 0) return builder.ToString();
+            if (builder.Length + count > maxCharacters)
+            {
+                timeout.Cancel();
+                throw new IOException("Process output exceeded the 1 MiB character limit.");
+            }
+            builder.Append(buffer, 0, count);
         }
     }
 

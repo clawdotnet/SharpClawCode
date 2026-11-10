@@ -37,7 +37,7 @@ public sealed class GlobSearchTool(IPathService pathService) : SharpClawToolBase
         var pathResolver = new WorkspacePathResolver(pathService);
         var workspaceRoot = pathResolver.ResolveWorkspaceRoot(context);
         cancellationToken.ThrowIfCancellationRequested();
-        var matches = Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories)
+        var matches = WorkspaceSearchFiles.Enumerate(workspaceRoot)
             .TakeWhile(_ => !cancellationToken.IsCancellationRequested)
             .Select(path => pathResolver.ToRelativePath(context, path))
             .Where(path => GlobPatternMatcher.IsMatch(arguments.Pattern, path))

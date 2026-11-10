@@ -35,8 +35,9 @@ io.on("line", line => {
     const vscode = {
         commands: { registerCommand(id, callback) { commands.set(id, callback); return { dispose() {} }; } },
         workspace: {
+            isTrusted: true,
             workspaceFolders: [folder],
-            getConfiguration() { return { get(key) { return key === "cliCommand" ? process.execPath : ["-e", fixture]; } }; }
+            getConfiguration() { return { inspect(key) { return { globalValue: key === "cliCommand" ? process.execPath : ["-e", fixture], workspaceValue: "untrusted-program" }; } }; }
         },
         window: {
             createOutputChannel: () => output,

@@ -20,7 +20,8 @@ internal static class OpenAiMeaiStreamAdapter
         ISystemClock clock,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var completed = false;
+        UsageSnapshot? usage = null;
+        string? finishReason = null;
         IAsyncEnumerator<ChatResponseUpdate>? enumerator = null;
         try
         {
@@ -80,13 +81,8 @@ internal static class OpenAiMeaiStreamAdapter
                     }
                 }
 
-                if (update.FinishReason is { } finish && !string.IsNullOrEmpty(finish.Value))
-                {
-                    var usage = ProviderStreamEventFactory.TryUsageFromUpdate(update);
-                    yield return ProviderStreamEventFactory.Completed(requestId, clock, usage);
-                    completed = true;
-                    yield break;
-                }
+                usage = ProviderStreamEventFactory.TryUsageFromUpdate(update) ?? usage;
+                finishReason = update.FinishReason?.Value ?? finishReason;
             }
         }
         finally
@@ -97,9 +93,8 @@ internal static class OpenAiMeaiStreamAdapter
             }
         }
 
-        if (!completed)
-        {
-            yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
-        }
+        yield return finishReason is "length" or "content_filter"
+            ? ProviderStreamEventFactory.Failed(requestId, clock, $"Provider response stopped with {finishReason}; incomplete tool calls were discarded.")
+            : ProviderStreamEventFactory.Completed(requestId, clock, usage);
     }
 }

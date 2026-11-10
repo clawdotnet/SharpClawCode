@@ -15,7 +15,7 @@ namespace SharpClaw.Code.Plugins.Services;
 /// <summary>
 /// Manages manifest-based plugins under <see cref="PluginLocalStore" />.
 /// Tool descriptors are surfaced only for plugins in the <see cref="PluginLifecycleState.Enabled" /> state; execution goes through <see cref="IPluginLoader" /> (out-of-process by default).
-/// Trust on the manifest flows to permission evaluation via tool metadata.
+/// Manifest trust is advisory metadata; workspace files cannot grant execution approval.
 /// </summary>
 public sealed class PluginManager(
     IPluginLoader pluginLoader,
@@ -46,13 +46,17 @@ public sealed class PluginManager(
         var plugins = new List<LoadedPlugin>();
         foreach (var pluginDirectory in fileSystem.EnumerateDirectories(pluginRoot))
         {
-            var manifest = await LoadManifestAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
-            if (manifest is null)
+            try
             {
-                continue;
+                var manifest = await LoadManifestAsync(pluginDirectory, cancellationToken).ConfigureAwait(false);
+                if (manifest is null) continue;
+                manifestValidator.Validate(manifest);
+                plugins.Add(await LoadPluginStateAsync(pluginDirectory, manifest, cancellationToken).ConfigureAwait(false));
             }
-
-            plugins.Add(await LoadPluginStateAsync(pluginDirectory, manifest, cancellationToken).ConfigureAwait(false));
+            catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidOperationException or IOException)
+            {
+                logger.LogWarning(exception, "Ignoring invalid plugin at {Directory}.", pluginDirectory);
+            }
         }
 
         return plugins
@@ -186,8 +190,10 @@ public sealed class PluginManager(
         var ordered = descriptors
             .OrderBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        ThrowIfDuplicateToolNames(ordered);
-        return ordered;
+        var conflicts = ordered.GroupBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
+            .Where(group => group.Count() > 1).Select(group => group.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var name in conflicts) logger.LogWarning("Ignoring conflicting plugin tool {ToolName}.", name);
+        return ordered.Where(tool => !conflicts.Contains(tool.Name)).ToArray();
     }
 
     /// <inheritdoc />
@@ -255,7 +261,10 @@ public sealed class PluginManager(
             PluginLocalStore.PluginsRelativeDirectoryName);
 
     private string GetPluginDirectory(string workspaceRoot, string pluginId)
-        => pathService.Combine(GetPluginsRoot(workspaceRoot), pluginId);
+    {
+        SharpClaw.Code.Infrastructure.Services.LocalPackagePath.ValidateId(pluginId);
+        return SharpClaw.Code.Infrastructure.Services.LocalPackagePath.Resolve(pathService, GetPluginsRoot(workspaceRoot), pluginId, workspaceRoot);
+    }
 
     private string EnsurePluginDirectory(string workspaceRoot, string pluginId)
     {
@@ -398,18 +407,4 @@ public sealed class PluginManager(
         }
     }
 
-    private static void ThrowIfDuplicateToolNames(PluginToolDescriptor[] descriptors)
-    {
-        var duplicate = descriptors
-            .GroupBy(tool => tool.Name, StringComparer.OrdinalIgnoreCase)
-            .FirstOrDefault(group => group.Count() > 1);
-        if (duplicate is null)
-        {
-            return;
-        }
-
-        var owners = string.Join(", ", duplicate.Select(tool => tool.SourcePluginId ?? "?").Distinct(StringComparer.OrdinalIgnoreCase));
-        throw new InvalidOperationException(
-            $"Multiple enabled plugins expose the tool '{duplicate.Key}' (plugins: {owners}). Rename a tool or disable one plugin.");
-    }
 }

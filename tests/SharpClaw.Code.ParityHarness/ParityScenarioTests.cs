@@ -140,7 +140,8 @@ public sealed class ParityScenarioTests : IAsyncLifetime
     [Fact]
     public async Task Write_file_allowed_under_workspace_write_mode()
     {
-        var tools = ParityTestHost.GetToolExecutor(_provider);
+        using var approvedProvider = ParityTestHost.Create(replaceApprovals: true);
+        var tools = ParityTestHost.GetToolExecutor(approvedProvider);
         var json = JsonSerializer.Serialize(new { path = "out.txt", content = "wrote" });
         var envelope = await tools.ExecuteAsync(
             WriteFileTool.ToolName,
@@ -245,7 +246,8 @@ public sealed class ParityScenarioTests : IAsyncLifetime
     [Fact]
     public async Task Plugin_tool_roundtrip_executes_fixture_plugin_echo()
     {
-        var tools = ParityTestHost.GetToolExecutor(_provider);
+        using var approvedProvider = ParityTestHost.Create(replaceApprovals: true);
+        var tools = ParityTestHost.GetToolExecutor(approvedProvider);
         var json = JsonSerializer.Serialize(new { message = "parity-plugin" });
         var envelope = await tools.ExecuteAsync(
             ParityFixturePluginTool.ToolName,
