@@ -314,7 +314,7 @@ All options are validated at startup via `IValidateOptions` implementations.
 - Operational commands support stable JSON output via `--output-format json`, which makes them suitable for scripts, editors, and automation.
 - Every embedded HTTP endpoint requires a host secret: set `SHARPCLAW_SERVER_TOKEN` to at least 32 non-whitespace characters. Send it as `Authorization: Bearer <secret>`, or use `X-SharpClaw-Server-Token` when `Authorization` carries a separate OIDC approval identity. Browser Origin requests and unexpected Host values are rejected. Share links also require authentication.
 - HTTP requests cannot raise the host permission mode or select tenant/storage roots. Hosts bind identity and storage through `RuntimeCommandContext.HostContext`.
-- `/v1/events/stream` streams runtime envelopes. `/v1/prompt` SSE replays buffered turn events after completion; ACP currently sends final assistant text. Neither promises incremental model-token delivery.
+- `/v1/admin/events/stream` streams runtime envelopes. `/v1/prompt` SSE replays buffered turn events after completion; ACP currently sends final assistant text. Neither promises incremental model-token delivery.
 - See [launch findings review](docs/launch-findings-review.md) for fixes, evidence, and remaining limitations.
 
 ## Contributing

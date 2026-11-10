@@ -79,7 +79,6 @@ Mock provider scenarios: `streaming_text`, `stream_failure`, `stream_slow`, `rea
 ## Known Backlog (ARCHITECTURE-NOTES.md)
 
 - Commands project directly references Mcp/Plugins (should go through abstractions)
-- `McpDoctorService` uses anonymous objects instead of typed DTOs for JSON
 - Plugin manifest parsing uses `JsonSerializerDefaults.Web` instead of `ProtocolJsonContext`
 - Telemetry sinks not yet wired for production (OpenTelemetry, file traces)
 - Runtime directly references Agents (acceptable for now, seam needed if multiple backends appear)

@@ -168,6 +168,56 @@ public sealed class WorkspaceHttpServerAdminTests
         }
     }
 
+    /// <summary>
+    /// Ensures prompt JSON cannot raise the host's permission mode or leave a host-selected research mode.
+    /// </summary>
+    [Fact]
+    public async Task Prompt_requests_cannot_raise_host_permission_or_primary_mode()
+    {
+        Environment.SetEnvironmentVariable("SHARPCLAW_SERVER_TOKEN", "integration-test-server-token-32-characters");
+        var workspaceRoot = CreateTemporaryWorkspace();
+        var services = new ServiceCollection();
+        services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
+        using var serviceProvider = services.BuildServiceProvider();
+        var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
+        var port = FindFreePort();
+        using var serverCts = new CancellationTokenSource();
+        var serverTask = server.RunAsync(
+            workspaceRoot,
+            "127.0.0.1",
+            port,
+            new RuntimeCommandContext(
+                WorkingDirectory: workspaceRoot,
+                Model: "default",
+                PermissionMode: PermissionMode.ReadOnly,
+                OutputFormat: OutputFormat.Json,
+                PrimaryMode: PrimaryMode.Research),
+            serverCts.Token);
+
+        try
+        {
+            using var httpClient = new HttpClient { BaseAddress = new Uri($"http://127.0.0.1:{port}/"), Timeout = TimeSpan.FromSeconds(10) };
+            httpClient.DefaultRequestHeaders.Add("X-SharpClaw-Server-Token", "integration-test-server-token-32-characters");
+            await WaitForServerAsync(httpClient, CancellationToken.None);
+
+            using var promptResponse = await httpClient.PostAsync(
+                "v1/prompt",
+                new StringContent("""{"prompt":"escalate","model":"default","permissionMode":"dangerFullAccess","primaryMode":"build"}""", Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            promptResponse.EnsureSuccessStatusCode();
+            var result = JsonSerializer.Deserialize(await promptResponse.Content.ReadAsStringAsync(), ProtocolJsonContext.Default.TurnExecutionResult)!;
+
+            result.Session.PermissionMode.Should().Be(PermissionMode.ReadOnly);
+            result.Session.Metadata![SharpClawWorkflowMetadataKeys.PrimaryMode].Should().BeEquivalentTo(nameof(PrimaryMode.Research));
+        }
+        finally
+        {
+            serverCts.Cancel();
+            await serverTask;
+        }
+    }
+
     private static async Task WaitForServerAsync(HttpClient httpClient, CancellationToken cancellationToken)
     {
         var attempts = 0;

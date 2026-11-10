@@ -80,7 +80,7 @@ Authenticated approvals are tenant-bound. If the runtime host context carries `T
 
 ### Remembered approvals
 
-**`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust**).
+**`ISessionApprovalMemory`** (**`SessionApprovalMemory`**) stores **approved** decisions in a **process-scoped** dictionary keyed by **`sessionId`** and a composite key (**tool name, scope, source, working directory, originating plugin id/trust, and the exact tool arguments**). Expired entries are ignored, and authenticated hosts revalidate every approval instead of reusing memory.
 
 When a rule returns **`RequireApproval`** with **`CanRememberApproval`**, an approved outcome may be **`Store`**d and reused via **`TryGet`**. In embedded-host flows, the remembered approval remains scoped to the current session and tenant context.
 
