@@ -14,16 +14,10 @@ public sealed class FileToolOutputArtifactStore(IFileSystem files, IPathService 
     {
         var artifact = new ToolOutputArtifact("artifact-" + Guid.NewGuid().ToString("N"), sessionId, turnId, toolName, DateTimeOffset.UtcNow, content);
         var path = Resolve(workspace, sessionId, artifact.Id);
-        var temporary = path + ".tmp";
         files.CreateDirectory(Path.GetDirectoryName(path)!);
-        try
-        {
-            await files.WriteAllTextAsync(temporary, JsonSerializer.Serialize(artifact, ProtocolJsonContext.Default.ToolOutputArtifact), cancellationToken).ConfigureAwait(false);
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, path);
-            return artifact;
-        }
-        finally { files.TryDeleteFile(temporary); }
+        // IFileSystem.WriteAllTextAsync already writes through a same-directory temporary file and atomic replace.
+        await files.WriteAllTextAsync(path, JsonSerializer.Serialize(artifact, ProtocolJsonContext.Default.ToolOutputArtifact), cancellationToken).ConfigureAwait(false);
+        return artifact;
     }
 
     /// <inheritdoc />
