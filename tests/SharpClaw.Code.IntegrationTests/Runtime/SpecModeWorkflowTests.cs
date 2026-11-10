@@ -194,6 +194,26 @@ public sealed class SpecModeWorkflowTests
             .Should().BeEquivalentTo(nameof(PrimaryMode.Research));
     }
 
+    /// <summary>
+    /// Ensures listing sessions succeeds and returns JSON rows (the payload type once failed to cast).
+    /// </summary>
+    [Fact]
+    public async Task ListSessions_should_return_rows_for_created_sessions()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        using var serviceProvider = CreateRuntimeServices(_ => { });
+        var conversation = serviceProvider.GetRequiredService<IConversationRuntime>();
+        var commands = serviceProvider.GetRequiredService<IRuntimeCommandService>();
+        var session = await conversation.CreateSessionAsync(workspacePath, PermissionMode.WorkspaceWrite, OutputFormat.Json, CancellationToken.None);
+
+        var result = await commands.ListSessionsAsync(
+            new RuntimeCommandContext(workspacePath, null, PermissionMode.WorkspaceWrite, OutputFormat.Json),
+            CancellationToken.None);
+
+        result.Succeeded.Should().BeTrue(result.Message);
+        result.DataJson.Should().Contain(session.Id);
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-spec-mode-tests", Guid.NewGuid().ToString("N"));

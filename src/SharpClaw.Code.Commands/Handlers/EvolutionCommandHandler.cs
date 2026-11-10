@@ -100,7 +100,7 @@ public sealed class EvolutionCommandHandler(
     {
         var proposals = await evolutionProposalService.AnalyzeAsync(context.WorkingDirectory, context.SessionId, cancellationToken).ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(
-            new CommandResult(true, 0, context.OutputFormat, $"{proposals.Count} evolution proposal(s).", JsonSerializer.Serialize(proposals, ProtocolJsonContext.Default.ListEvolutionProposal)),
+            new CommandResult(true, 0, context.OutputFormat, $"{proposals.Count} evolution proposal(s).", JsonSerializer.Serialize(proposals.ToList(), ProtocolJsonContext.Default.ListEvolutionProposal)),
             context.OutputFormat,
             cancellationToken).ConfigureAwait(false);
         return 0;
@@ -110,7 +110,7 @@ public sealed class EvolutionCommandHandler(
     {
         var proposals = await evolutionProposalService.ListAsync(context.WorkingDirectory, cancellationToken).ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(
-            new CommandResult(true, 0, context.OutputFormat, $"{proposals.Count} evolution proposal(s).", JsonSerializer.Serialize(proposals, ProtocolJsonContext.Default.ListEvolutionProposal)),
+            new CommandResult(true, 0, context.OutputFormat, $"{proposals.Count} evolution proposal(s).", JsonSerializer.Serialize(proposals.ToList(), ProtocolJsonContext.Default.ListEvolutionProposal)),
             context.OutputFormat,
             cancellationToken).ConfigureAwait(false);
         return 0;

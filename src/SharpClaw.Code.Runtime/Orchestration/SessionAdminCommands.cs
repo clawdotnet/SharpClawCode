@@ -239,7 +239,7 @@ public sealed class SessionAdminCommands(
         {
             var workspace = NormalizeWorkspacePath(context.WorkingDirectory);
             var rows = await sessionCoordinator.ListSessionsAsync(workspace, cancellationToken).ConfigureAwait(false);
-            var payload = JsonSerializer.Serialize(rows, ProtocolJsonContext.Default.ListSessionSummaryRow);
+            var payload = JsonSerializer.Serialize(rows.ToList(), ProtocolJsonContext.Default.ListSessionSummaryRow);
             return new CommandResult(true, 0, context.OutputFormat, $"{rows.Count} session(s).", payload);
         }
         catch (Exception ex)

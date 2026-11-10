@@ -80,6 +80,6 @@ public sealed class FileEvolutionProposalStore(
     private Task SaveAsync(string path, IReadOnlyList<EvolutionProposal> items, CancellationToken cancellationToken)
         => fileSystem.WriteAllTextAsync(
             path,
-            JsonSerializer.Serialize(items, ProtocolJsonContext.Default.ListEvolutionProposal),
+            JsonSerializer.Serialize(items.ToList(), ProtocolJsonContext.Default.ListEvolutionProposal),
             cancellationToken);
 }

@@ -180,7 +180,7 @@ public sealed class ScheduleCommandHandler(
     {
         var schedules = await scheduledPromptService.ListAsync(context.WorkingDirectory, cancellationToken).ConfigureAwait(false);
         await outputRendererDispatcher.RenderCommandResultAsync(
-            new CommandResult(true, 0, context.OutputFormat, $"{schedules.Count} scheduled prompt(s).", JsonSerializer.Serialize(schedules, ProtocolJsonContext.Default.ListScheduledPromptDefinition)),
+            new CommandResult(true, 0, context.OutputFormat, $"{schedules.Count} scheduled prompt(s).", JsonSerializer.Serialize(schedules.ToList(), ProtocolJsonContext.Default.ListScheduledPromptDefinition)),
             context.OutputFormat,
             cancellationToken).ConfigureAwait(false);
         return 0;
