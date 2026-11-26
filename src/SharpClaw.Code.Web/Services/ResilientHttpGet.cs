@@ -13,7 +13,8 @@ internal static class ResilientHttpGet
     public static async Task<HttpResponseMessage> GetAsync(
         HttpClient httpClient,
         string requestUri,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        HttpCompletionOption completionOption = HttpCompletionOption.ResponseContentRead)
     {
         var delay = InitialDelay;
         for (var attempt = 1; ; attempt++)
@@ -21,7 +22,7 @@ internal static class ResilientHttpGet
             HttpResponseMessage response;
             try
             {
-                response = await httpClient.GetAsync(requestUri, cancellationToken).ConfigureAwait(false);
+                response = await httpClient.GetAsync(requestUri, completionOption, cancellationToken).ConfigureAwait(false);
             }
             catch (HttpRequestException) when (attempt < MaxAttempts)
             {

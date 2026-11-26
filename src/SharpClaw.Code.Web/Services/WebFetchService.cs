@@ -3,7 +3,9 @@ using System.Text;
 using System.Text.RegularExpressions;
 using AngleSharp.Dom;
 using AngleSharp.Html.Parser;
+using Microsoft.Extensions.Options;
 using SharpClaw.Code.Web.Abstractions;
+using SharpClaw.Code.Web.Configuration;
 using SharpClaw.Code.Web.Models;
 
 namespace SharpClaw.Code.Web.Services;
@@ -11,16 +13,25 @@ namespace SharpClaw.Code.Web.Services;
 /// <summary>
 /// Fetches web documents and normalizes HTML into simple text content.
 /// </summary>
-public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchService
+public sealed partial class WebFetchService(HttpClient httpClient, IOptions<WebFetchOptions>? options = null) : IWebFetchService
 {
+    private readonly WebFetchOptions fetchOptions = options?.Value ?? new WebFetchOptions();
+
     /// <inheritdoc />
     public async Task<WebFetchDocument> FetchAsync(string url, CancellationToken cancellationToken)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(url);
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+            || (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new ArgumentException($"Only absolute http(s) URLs can be fetched: '{url}'.", nameof(url));
+        }
 
-        using var response = await ResilientHttpGet.GetAsync(httpClient, url, cancellationToken).ConfigureAwait(false);
+        using var response = await ResilientHttpGet
+            .GetAsync(httpClient, url, cancellationToken, HttpCompletionOption.ResponseHeadersRead)
+            .ConfigureAwait(false);
         var contentType = response.Content.Headers.ContentType?.MediaType;
-        var body = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        var body = await ReadBoundedBodyAsync(response.Content, fetchOptions.MaxResponseBytes, cancellationToken).ConfigureAwait(false);
 
         if (!ShouldTreatBodyAsHtml(contentType, body))
         {
@@ -47,6 +58,52 @@ public sealed partial class WebFetchService(HttpClient httpClient) : IWebFetchSe
             ContentType: contentType,
             Title: title,
             Content: DecodeAndNormalize(text));
+    }
+
+    /// <summary>
+    /// Reads at most <paramref name="maxBytes"/> of the body so a huge or endless response cannot exhaust memory.
+    /// </summary>
+    private static async Task<string> ReadBoundedBodyAsync(HttpContent content, int maxBytes, CancellationToken cancellationToken)
+    {
+        await using var stream = await content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        var limit = Math.Max(1, maxBytes);
+        var buffer = new byte[Math.Min(limit, 81920)];
+        using var collected = new MemoryStream();
+        var truncated = false;
+        int read;
+        while ((read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            var remaining = limit - (int)collected.Length;
+            if (read > remaining)
+            {
+                collected.Write(buffer, 0, remaining);
+                truncated = true;
+                break;
+            }
+
+            collected.Write(buffer, 0, read);
+        }
+
+        var encoding = TryGetEncoding(content.Headers.ContentType?.CharSet) ?? Encoding.UTF8;
+        var text = encoding.GetString(collected.GetBuffer(), 0, (int)collected.Length);
+        return truncated ? text + $"\n[Response truncated at {limit} bytes.]" : text;
+    }
+
+    private static Encoding? TryGetEncoding(string? charset)
+    {
+        if (string.IsNullOrWhiteSpace(charset))
+        {
+            return null;
+        }
+
+        try
+        {
+            return Encoding.GetEncoding(charset.Trim('"'));
+        }
+        catch (ArgumentException)
+        {
+            return null;
+        }
     }
 
     /// <summary>

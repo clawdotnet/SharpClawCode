@@ -43,6 +43,20 @@ From **`ToolsServiceCollectionExtensions`**:
 
 Built-ins are registered as **`ISharpClawTool`** singletons; some also expose their concrete type through DI.
 
+### Web fetch safety
+
+`web_fetch` only contacts public unicast addresses. Loopback, private (RFC 1918), carrier-grade NAT, link-local
+(including the `169.254.169.254` cloud metadata endpoint), unique-local IPv6 and multicast targets are refused. The
+check runs when each connection opens and connects to the vetted address, so redirects and DNS rebinding cannot
+bypass it. Only `http`/`https` URLs are accepted, and response bodies are truncated after 5 MB.
+
+Configure under `SharpClaw:Web:Fetch`:
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `AllowPrivateNetworkAccess` | `false` | Allow non-public targets (for example a local dev server). Also re-enables the system proxy. |
+| `MaxResponseBytes` | `5242880` | Maximum body bytes read before truncating. |
+
 ## Authoring a built-in tool
 
 1. Subclass **`SharpClawToolBase`** (`src/SharpClaw.Code.Tools/BuiltIn/SharpClawToolBase.cs`).
