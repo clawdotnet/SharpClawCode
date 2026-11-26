@@ -11,6 +11,35 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
 {
     private sealed record ActivePrompt(string Workspace, string SessionId, LiveTurnHandle Handle);
     private readonly ConcurrentDictionary<string, ActivePrompt> active = new(StringComparer.Ordinal);
+    private sealed record OrdinaryPrompt(string Workspace, string SessionId, CancellationTokenSource Cancellation);
+    private readonly ConcurrentDictionary<string, OrdinaryPrompt> ordinary = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Runs a prompt that did not opt into live turn control. It keeps the ordinary semantics (stdin EOF does not
+    /// cancel it) but is tracked so an id-less <c>session/cancel</c> notification for its session can stop it, in
+    /// which case it completes with <c>stopReason: "cancelled"</c>.
+    /// </summary>
+    internal async Task<JsonObject> RunOrdinaryAsync(JsonNode id, string? workspace, string? sessionId, Func<CancellationToken, Task<JsonObject>> run, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(workspace) || string.IsNullOrEmpty(sessionId))
+            return await run(cancellationToken).ConfigureAwait(false);
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var key = id.ToJsonString();
+        var tracked = ordinary.TryAdd(key, new(Path.TrimEndingDirectorySeparator(workspace), sessionId, cancellation));
+        try
+        {
+            return await run(cancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return new JsonObject { ["stopReason"] = "cancelled" };
+        }
+        finally
+        {
+            if (tracked) ordinary.TryRemove(key, out _);
+        }
+    }
 
     internal async Task<JsonObject> RunAsync(JsonNode id, string workspace, string sessionId, Func<CancellationToken, Task<JsonObject>> run)
     {
@@ -114,6 +143,24 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
                 continue;
             target.Handle.Cancel();
             cancelled++;
+        }
+
+        foreach (var (key, target) in ordinary)
+        {
+            if (target.SessionId != sessionId
+                || (promptRequestId is not null && key != promptRequestId)
+                || (workspace is not null && !string.Equals(target.Workspace, Path.TrimEndingDirectorySeparator(workspace),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+                continue;
+            try
+            {
+                target.Cancellation.Cancel();
+                cancelled++;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The prompt finished concurrently.
+            }
         }
 
         return cancelled;
