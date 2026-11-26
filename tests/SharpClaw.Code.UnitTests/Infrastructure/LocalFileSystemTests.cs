@@ -33,6 +33,20 @@ public sealed class LocalFileSystemTests : IDisposable
     }
 
     [Fact]
+    public async Task WriteAllTextAsync_should_not_publish_an_incomplete_staging_file_for_a_new_target()
+    {
+        var path = Path.Combine(root, "new.json");
+        using var cancelled = new CancellationTokenSource();
+        await cancelled.CancelAsync();
+
+        var write = () => fileSystem.WriteAllTextAsync(path, "content", cancelled.Token);
+
+        await write.Should().ThrowAsync<OperationCanceledException>();
+        File.Exists(path).Should().BeFalse("a write cancelled before its content was staged must not create the target");
+        Directory.GetFiles(root).Should().BeEmpty("the incomplete staging file must be deleted");
+    }
+
+    [Fact]
     public async Task AppendLineAsync_should_terminate_a_torn_line_before_appending()
     {
         var path = Path.Combine(root, "events.ndjson");
