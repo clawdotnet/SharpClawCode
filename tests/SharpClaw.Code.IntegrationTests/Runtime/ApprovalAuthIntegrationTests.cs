@@ -215,11 +215,7 @@ public sealed class ApprovalAuthIntegrationTests
             || exception.ErrorCode == 10048;
 
     private static int FindFreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
+        => SharpClaw.Code.IntegrationTests.Support.LoopbackPorts.Reserve();
 
     private static string CreateTemporaryWorkspace()
     {

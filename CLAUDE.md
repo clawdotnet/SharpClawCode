@@ -68,7 +68,11 @@ dotnet run --project src/SharpClaw.Code.Cli -- [arguments]
 | `SharpClaw.Code.ParityHarness` | End-to-end scenarios via `ParityTestHost` with mock LLM |
 | `SharpClaw.Code.Mcp.FixtureServer` | MCP fixture server for testing |
 
-Mock provider scenarios: `streaming_text`, `stream_failure`, `stream_slow`, `read_file_roundtrip`, `write_file_allowed`, `write_file_denied`, `grep_chunk_assembly`, `bash_stdout_roundtrip`, `permission_prompt_approved`, `permission_prompt_denied`, `plugin_tool_roundtrip`, `mcp_partial_startup`, `recovery_after_timeout`.
+Mock provider scenarios (`ParityProviderScenario`): `streaming_text`, `stream_failure`, `stream_slow`, `tool_call_roundtrip`.
+
+Parity harness scenario ids (`ParityScenarioIds`): `streaming_text`, `tool_call_roundtrip`, `read_file_roundtrip`, `write_file_allowed`, `write_file_denied`, `grep_chunk_assembly`, `bash_stdout_roundtrip`, `permission_prompt_approved`, `permission_prompt_denied`, `plugin_tool_roundtrip`, `mcp_partial_startup`, `recovery_after_timeout`, `verification_build_success`, `verification_build_failure`, `verification_permission_denied`, `semantic_rename_mutation_recorded`, `semantic_symbol_resolution`.
+
+Integration tests that open loopback servers must take ports from `LoopbackPorts.Reserve()` (`tests/SharpClaw.Code.IntegrationTests/Support`) and retry when the server fails to bind.
 
 ## CLI Modes
 

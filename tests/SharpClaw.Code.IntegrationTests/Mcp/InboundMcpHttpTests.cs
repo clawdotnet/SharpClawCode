@@ -163,10 +163,7 @@ public sealed class InboundMcpHttpTests
         }));
 
     private static int FreePort()
-    {
-        using var socket = new TcpListener(IPAddress.Loopback, 0); socket.Start();
-        return ((IPEndPoint)socket.LocalEndpoint).Port;
-    }
+        => SharpClaw.Code.IntegrationTests.Support.LoopbackPorts.Reserve();
 
     private sealed class HttpHost : IAsyncDisposable
     {

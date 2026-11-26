@@ -1,9 +1,10 @@
 using System.Net.Http.Headers;
-using System.Net.Sockets;
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
+using SharpClaw.Code.IntegrationTests.Support;
 using SharpClaw.Code.MockProvider;
 using SharpClaw.Code.Protocol.Commands;
 using SharpClaw.Code.Protocol.Enums;
@@ -34,18 +35,8 @@ public sealed class WorkspaceHttpServerAdminTests
         using var serviceProvider = services.BuildServiceProvider();
 
         var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
-        var port = FindFreePort();
         using var serverCts = new CancellationTokenSource();
-        var serverTask = server.RunAsync(
-            workspaceRoot,
-            "127.0.0.1",
-            port,
-            new SharpClaw.Code.Runtime.Abstractions.RuntimeCommandContext(
-                WorkingDirectory: workspaceRoot,
-                Model: "default",
-                PermissionMode: PermissionMode.WorkspaceWrite,
-                OutputFormat: OutputFormat.Json),
-            serverCts.Token);
+        var (port, serverTask) = await StartServerAsync(server, workspaceRoot, serverCts.Token);
 
         try
         {
@@ -54,7 +45,6 @@ public sealed class WorkspaceHttpServerAdminTests
                 BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                 Timeout = TimeSpan.FromSeconds(10),
             };
-            await WaitForServerAsync(httpClient, CancellationToken.None);
 
             var providersJson = await httpClient.GetStringAsync("v1/admin/providers");
             providersJson.Should().Contain("mock");
@@ -165,18 +155,8 @@ public sealed class WorkspaceHttpServerAdminTests
         using var serviceProvider = services.BuildServiceProvider();
 
         var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
-        var port = FindFreePort();
         using var serverCts = new CancellationTokenSource();
-        var serverTask = server.RunAsync(
-            workspaceRoot,
-            "127.0.0.1",
-            port,
-            new SharpClaw.Code.Runtime.Abstractions.RuntimeCommandContext(
-                WorkingDirectory: workspaceRoot,
-                Model: "default",
-                PermissionMode: PermissionMode.WorkspaceWrite,
-                OutputFormat: OutputFormat.Json),
-            serverCts.Token);
+        var (port, serverTask) = await StartServerAsync(server, workspaceRoot, serverCts.Token);
 
         try
         {
@@ -185,7 +165,6 @@ public sealed class WorkspaceHttpServerAdminTests
                 BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
                 Timeout = TimeSpan.FromSeconds(10),
             };
-            await WaitForServerAsync(httpClient, CancellationToken.None);
 
             using var crossOrigin = new HttpRequestMessage(HttpMethod.Post, "v1/prompt")
             {
@@ -231,34 +210,70 @@ public sealed class WorkspaceHttpServerAdminTests
         }
     }
 
-    private static async Task WaitForServerAsync(HttpClient httpClient, CancellationToken cancellationToken)
+    /// <summary>
+    /// Starts the server on a reserved port and waits until *this* server answers. If it fails to start (for
+    /// example the port was taken by another process), retries on a new port instead of letting the test talk to
+    /// whatever else is listening there.
+    /// </summary>
+    private static async Task<(int Port, Task ServerTask)> StartServerAsync(
+        IWorkspaceHttpServer server,
+        string workspaceRoot,
+        CancellationToken cancellationToken)
     {
-        var attempts = 0;
-        while (attempts++ < 20)
+        Exception? lastFailure = null;
+        for (var attempt = 0; attempt < 5; attempt++)
         {
+            var port = LoopbackPorts.Reserve();
+            var serverTask = server.RunAsync(
+                workspaceRoot,
+                "127.0.0.1",
+                port,
+                new SharpClaw.Code.Runtime.Abstractions.RuntimeCommandContext(
+                    WorkingDirectory: workspaceRoot,
+                    Model: "default",
+                    PermissionMode: PermissionMode.WorkspaceWrite,
+                    OutputFormat: OutputFormat.Json),
+                cancellationToken);
+
+            using var probe = new HttpClient
+            {
+                BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
+                Timeout = TimeSpan.FromMilliseconds(500),
+            };
+            for (var poll = 0; poll < 50 && !serverTask.IsCompleted; poll++)
+            {
+                try
+                {
+                    using var response = await probe.GetAsync("v1/status", cancellationToken).ConfigureAwait(false);
+                    if (response.IsSuccessStatusCode && !serverTask.IsCompleted)
+                    {
+                        return (port, serverTask);
+                    }
+                }
+                catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                }
+
+                await Task.Delay(100, cancellationToken).ConfigureAwait(false);
+            }
+
+            if (!serverTask.IsCompleted)
+            {
+                throw new TimeoutException("Embedded workspace HTTP server did not become ready.");
+            }
+
             try
             {
-                using var response = await httpClient.GetAsync("v1/status", cancellationToken).ConfigureAwait(false);
-                if (response.IsSuccessStatusCode)
-                {
-                    return;
-                }
+                await serverTask.ConfigureAwait(false);
             }
-            catch (HttpRequestException)
+            catch (Exception exception) when (exception is HttpListenerException or InvalidOperationException)
             {
+                // Bind failed (port in use); try another port.
+                lastFailure = exception;
             }
-
-            await Task.Delay(100, cancellationToken).ConfigureAwait(false);
         }
 
-        throw new TimeoutException("Embedded workspace HTTP server did not become ready.");
-    }
-
-    private static int FindFreePort()
-    {
-        using var listener = new TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        return ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
+        throw new InvalidOperationException("The embedded workspace HTTP server could not bind to a free local port.", lastFailure);
     }
 
     private static string CreateTemporaryWorkspace()
