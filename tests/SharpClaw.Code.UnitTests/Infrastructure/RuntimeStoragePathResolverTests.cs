@@ -18,7 +18,9 @@ public sealed class RuntimeStoragePathResolverTests
     public void Distinct_tenant_ids_must_never_share_a_storage_root()
     {
         var resolver = CreateResolver();
-        var roots = new[] { "acme-corp", "acme.corp", "acme/corp", "acme!corp" }
+        var hashedName = "acme-corp~" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("acme.corp"))).ToLowerInvariant()[..12];
+        var legacyGeneratedName = "acme-corp-" + Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("acme.corp"))).ToLowerInvariant()[..12];
+        var roots = new[] { "acme-corp", "acme.corp", "acme/corp", "acme!corp", legacyGeneratedName, hashedName }
             .Select(tenant =>
             {
                 using var scope = accessor.BeginScope(new RuntimeHostContext("test-host", TenantId: tenant));
@@ -35,6 +37,10 @@ public sealed class RuntimeStoragePathResolverTests
     [InlineData("..")]
     [InlineData("a/b")]
     [InlineData("/etc")]
+    [InlineData(".. ")]
+    [InlineData("...")]
+    [InlineData("session.")]
+    [InlineData("session ")]
     public void Session_ids_must_be_a_single_path_segment(string sessionId)
     {
         var resolver = CreateResolver();

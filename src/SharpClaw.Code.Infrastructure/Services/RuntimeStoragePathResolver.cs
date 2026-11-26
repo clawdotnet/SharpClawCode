@@ -165,13 +165,19 @@ public sealed class RuntimeStoragePathResolver(
         }
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tenantId))).ToLowerInvariant()[..12];
-        return $"{sanitized}-{hash}";
+        // '~' can never appear in an id that passes sanitization unchanged, so hashed names live in their own
+        // namespace: no literal tenant id can claim another tenant's generated directory name.
+        return $"{sanitized}~{hash}";
     }
 
     private static string ValidateSessionId(string sessionId)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
-        if (sessionId is "." or ".."
+        // Windows strips trailing dots and spaces, so ids such as ".. " or "a." would resolve to a different
+        // (possibly parent) directory; reject any id that does not survive that normalization unchanged.
+        if (sessionId.Trim(' ', '.').Length == 0
+            || sessionId.EndsWith('.')
+            || sessionId.EndsWith(' ')
             || sessionId.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, ':']) >= 0
             || sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
             || Path.IsPathRooted(sessionId))
