@@ -59,6 +59,7 @@ public sealed class WorkspaceHttpServer(
         }
 
         var allowedHosts = BuildAllowedHosts(effectiveHost, config.Document.Server?.PublicBaseUrl);
+        var allowedOrigins = BuildAllowedOrigins(effectiveHost, effectivePort, config.Document.Server?.PublicBaseUrl);
 
         var listener = new HttpListener();
         try
@@ -84,7 +85,7 @@ public sealed class WorkspaceHttpServer(
                 }
 
                 _ = Task.Run(
-                    () => HandleRequestAsync(httpContext, workspaceRoot, context, allowedHosts, cancellationToken),
+                    () => HandleRequestAsync(httpContext, workspaceRoot, context, allowedHosts, allowedOrigins, cancellationToken),
                     CancellationToken.None);
             }
         }
@@ -113,6 +114,7 @@ public sealed class WorkspaceHttpServer(
         string workspaceRoot,
         RuntimeCommandContext defaultContext,
         IReadOnlySet<string> allowedHosts,
+        IReadOnlySet<string> allowedOrigins,
         CancellationToken cancellationToken)
     {
         var request = httpContext.Request;
@@ -127,7 +129,7 @@ public sealed class WorkspaceHttpServer(
         {
             // Block DNS-rebinding and cross-site browser requests: the Host must be one we bind/publish,
             // and any Origin a browser attaches must be that same host.
-            if (!IsAllowedHostHeader(request, allowedHosts) || !IsAllowedOrigin(request, allowedHosts))
+            if (!IsAllowedHostHeader(request, allowedHosts) || !IsAllowedOrigin(request, allowedOrigins))
             {
                 statusCode = 403;
                 await WriteJsonAsync(response, 403, new ErrorEnvelope("Request host or origin is not allowed."), cancellationToken).ConfigureAwait(false);
@@ -820,7 +822,28 @@ public sealed class WorkspaceHttpServer(
         return allowedHosts.Contains(hostUri.Host.Trim('[', ']')) || IsLoopbackHost(hostUri.Host);
     }
 
-    private static bool IsAllowedOrigin(HttpListenerRequest request, IReadOnlySet<string> allowedHosts)
+    private static IReadOnlySet<string> BuildAllowedOrigins(string bindHost, int port, string? publicBaseUrl)
+    {
+        var origins = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var bindName = bindHost.Trim('[', ']');
+        if (bindName is not ("*" or "+" or "0.0.0.0" or "::") && !IsLoopbackHost(bindName)
+            && Uri.TryCreate($"http://{bindHost}:{port}", UriKind.Absolute, out var bindUri))
+        {
+            origins.Add(NormalizeOrigin(bindUri));
+        }
+
+        if (!string.IsNullOrWhiteSpace(publicBaseUrl) && Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var publicUri))
+        {
+            origins.Add(NormalizeOrigin(publicUri));
+        }
+
+        return origins;
+    }
+
+    private static string NormalizeOrigin(Uri uri)
+        => $"{uri.Scheme}://{uri.Host.Trim('[', ']')}:{uri.Port}".ToLowerInvariant();
+
+    private static bool IsAllowedOrigin(HttpListenerRequest request, IReadOnlySet<string> allowedOrigins)
     {
         var origin = request.Headers["Origin"];
         if (string.IsNullOrWhiteSpace(origin))
@@ -835,15 +858,14 @@ public sealed class WorkspaceHttpServer(
             return false;
         }
 
-        var originHost = originUri.Host.Trim('[', ']');
-        if (!allowedHosts.Contains(originHost) && !IsLoopbackHost(originHost))
+        if (IsLoopbackHost(originUri.Host))
         {
-            return false;
+            // A loopback origin must be this server itself (plain HTTP, same port), not another local web app.
+            return originUri.Scheme == Uri.UriSchemeHttp && originUri.Port == (request.Url?.Port ?? -1);
         }
 
-        // A loopback origin must be the server itself, not some other local web app on a different port.
-        var requestPort = request.Url?.Port ?? -1;
-        return !IsLoopbackHost(originHost) || originUri.Port == requestPort;
+        // Non-loopback origins must match a configured origin exactly: scheme, host, and port.
+        return allowedOrigins.Contains(NormalizeOrigin(originUri));
     }
 
     private static async Task TryWriteJsonAsync(HttpListenerResponse response, int statusCode, object payload, CancellationToken cancellationToken)
