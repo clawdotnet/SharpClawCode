@@ -255,6 +255,88 @@ public sealed class McpAndPluginLifecycleTests
         return workspacePath;
     }
 
+    /// <summary>
+    /// A session whose status cannot be saved and whose stop fails stays recorded, and the next start stops it first.
+    /// </summary>
+    [Fact]
+    public async Task Mcp_host_should_keep_an_unstoppable_session_reachable_and_stop_it_before_restarting()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var inner = new FileBackedMcpRegistry(new LocalFileSystem(), new PathService(), new FixedClock());
+        var registry = new FailingReadyStatusRegistry(inner);
+        var supervisor = new TrackingSupervisor { FailNextStop = true };
+        var host = new ProcessMcpServerHost(registry, supervisor, new FixedClock());
+        await inner.RegisterAsync(
+            workspacePath,
+            new McpServerDefinition("leaky", "Leaky", "stdio", "leaky-mcp", true, null, []),
+            CancellationToken.None);
+
+        var firstStart = async () => await host.StartAsync(workspacePath, "leaky", CancellationToken.None);
+        await firstStart.Should().ThrowAsync<IOException>();
+
+        var recorded = (await inner.GetAsync(workspacePath, "leaky", CancellationToken.None))!.Status;
+        recorded.State.Should().Be(McpLifecycleState.Faulted);
+        recorded.SessionHandle.Should().Be(77, "the still-running session must stay reachable");
+
+        registry.FailReady = false;
+        var restarted = await host.StartAsync(workspacePath, "leaky", CancellationToken.None);
+
+        restarted.State.Should().Be(McpLifecycleState.Ready);
+        supervisor.StoppedHandles.Should().Contain(77, "the leftover session is stopped before a new one starts");
+    }
+
+    private sealed class FailingReadyStatusRegistry(IMcpRegistry inner) : IMcpRegistry
+    {
+        public bool FailReady { get; set; } = true;
+
+        public Task<RegisteredMcpServer> RegisterAsync(string workspaceRoot, McpServerDefinition definition, CancellationToken cancellationToken)
+            => inner.RegisterAsync(workspaceRoot, definition, cancellationToken);
+
+        public Task<IReadOnlyList<RegisteredMcpServer>> ListAsync(string workspaceRoot, CancellationToken cancellationToken)
+            => inner.ListAsync(workspaceRoot, cancellationToken);
+
+        public Task<RegisteredMcpServer?> GetAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
+            => inner.GetAsync(workspaceRoot, serverId, cancellationToken);
+
+        public Task UpdateStatusAsync(string workspaceRoot, McpServerStatus status, CancellationToken cancellationToken)
+            => FailReady && status.State == McpLifecycleState.Ready
+                ? throw new IOException("registry unavailable")
+                : inner.UpdateStatusAsync(workspaceRoot, status, cancellationToken);
+    }
+
+    private sealed class TrackingSupervisor : IMcpProcessSupervisor
+    {
+        private readonly HashSet<long> live = [];
+
+        public bool FailNextStop { get; set; }
+
+        public List<long> StoppedHandles { get; } = [];
+
+        public Task<McpProcessStartResult> StartAsync(McpServerDefinition definition, string workingDirectory, CancellationToken cancellationToken)
+        {
+            var handle = live.Count == 0 && StoppedHandles.Count == 0 ? 77 : 78;
+            live.Add(handle);
+            return Task.FromResult(new McpProcessStartResult(true, 4242, true, null, SessionHandle: handle));
+        }
+
+        public Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken)
+        {
+            if (FailNextStop)
+            {
+                FailNextStop = false;
+                throw new IOException("stop failed");
+            }
+
+            live.Remove(request.SessionHandle);
+            StoppedHandles.Add(request.SessionHandle);
+            return Task.CompletedTask;
+        }
+
+        public bool IsSessionActive(long sessionHandle) => live.Contains(sessionHandle);
+
+        public bool IsSessionActive(long sessionHandle, string serverId) => live.Contains(sessionHandle);
+    }
+
     private sealed class FixedClock : ISystemClock
     {
         public DateTimeOffset UtcNow => DateTimeOffset.Parse("2026-04-06T00:00:00Z");

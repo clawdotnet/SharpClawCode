@@ -342,6 +342,21 @@ public sealed class ResilienceTests
         ProviderStreamFailureClassifier.Describe(exception).Should().StartWith("HTTP 429");
     }
 
+    [Fact]
+    public void Retry_after_hints_beyond_one_day_are_ignored_on_every_path()
+    {
+        var exception = new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests);
+        exception.Data["Retry-After"] = TimeSpan.FromDays(3);
+        ProviderStreamFailureClassifier.TryGetRetryAfter(exception).Should().BeNull();
+
+        var failedEvent = new ProviderEvent("e", FakeRequest.Id, "failed", DateTimeOffset.UtcNow,
+            "HTTP 429 TooManyRequests (retry-after 999999s): slow down", true, null);
+        ProviderStreamFailureClassifier.TryGetRetryAfter(failedEvent).Should().BeNull();
+
+        var usable = failedEvent with { Content = "HTTP 429 TooManyRequests (retry-after 5s): slow down" };
+        ProviderStreamFailureClassifier.TryGetRetryAfter(usable).Should().Be(TimeSpan.FromSeconds(5));
+    }
+
     private static async IAsyncEnumerable<ProviderEvent> FailedEventStream(string message)
     {
         await Task.Yield();

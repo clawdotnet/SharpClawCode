@@ -180,7 +180,12 @@ public sealed class AcpStdioHost(
             "session/load" => await HandleSessionLoadAsync(parameters, cancellationToken).ConfigureAwait(false),
             "session/prompt" when parameters?["liveTurnControl"]?.GetValue<bool>() == true =>
                 await live.RunAsync(id, RequireWorkspace(parameters), RequireSession(parameters), token => HandleSessionPromptAsync(parameters, stdout, token, id)).ConfigureAwait(false),
-            "session/prompt" => await HandleSessionPromptAsync(parameters, stdout, cancellationToken).ConfigureAwait(false),
+            "session/prompt" => await live.RunOrdinaryAsync(
+                id,
+                TryGetWorkspace(parameters),
+                parameters?["sessionId"] is JsonValue promptSession && promptSession.TryGetValue<string>(out var promptSessionId) ? promptSessionId : null,
+                token => HandleSessionPromptAsync(parameters, stdout, token),
+                cancellationToken).ConfigureAwait(false),
             "session/steer" => live.Control(RequireWorkspace(parameters), parameters, cancel: false),
             "session/cancel" => live.Control(RequireWorkspace(parameters), parameters, cancel: true),
             "models/list" => await HandleModelsListAsync(cancellationToken).ConfigureAwait(false),
@@ -417,6 +422,20 @@ public sealed class AcpStdioHost(
         var remember = parameters?["remember"]?.GetValue<bool>() ?? false;
         var resolved = approvalCoordinator.TryResolve(requestId, approved, remember);
         return Task.FromResult<JsonNode?>(new JsonObject { ["resolved"] = resolved });
+    }
+
+    private string? TryGetWorkspace(JsonNode? parameters)
+    {
+        try
+        {
+            return parameters?["cwd"] is JsonValue cwd && cwd.TryGetValue<string>(out var value) && !string.IsNullOrWhiteSpace(value)
+                ? pathService.GetFullPath(value)
+                : null;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return null;
+        }
     }
 
     private string RequireWorkspace(JsonNode? parameters)
