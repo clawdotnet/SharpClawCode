@@ -130,9 +130,6 @@ public sealed class ConversationRuntime(
             throw new InvalidOperationException($"Unable to resume session '{request.SessionId}'.");
         }
 
-        session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
-        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
-
         var sessionMutex = GetSessionMutex(workspacePath, session.Id);
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -148,6 +145,11 @@ public sealed class ConversationRuntime(
             {
                 session = refreshed;
             }
+
+            // Persist settings from the refreshed snapshot, under the lock, so a save cannot overwrite state
+            // (such as undo metadata) that a concurrent prompt recorded while this request waited.
+            session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
+            session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
             session = await EnsureRecoverableFromFailedForPromptAsync(
                     workspacePath,
