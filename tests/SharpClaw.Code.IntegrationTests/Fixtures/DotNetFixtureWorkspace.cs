@@ -55,7 +55,29 @@ internal sealed class DotNetFixtureWorkspace : IDisposable
     public void Dispose()
     {
         Service.Dispose();
-        if (Directory.Exists(Root)) Directory.Delete(Root, recursive: true);
+        DeleteWithRetry(Root);
+    }
+
+    /// <summary>
+    /// Child processes launched by a test (for example a stdio MCP server the client force-killed after its
+    /// shutdown timeout) can keep files such as SQLite databases open for a moment after they exit; on Windows
+    /// that makes an immediate recursive delete fail with a sharing violation. Retry briefly before giving up.
+    /// </summary>
+    private static void DeleteWithRetry(string path)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            try
+            {
+                if (Directory.Exists(path)) Directory.Delete(path, recursive: true);
+                return;
+            }
+            catch (Exception exception) when ((exception is IOException or UnauthorizedAccessException) && attempt < 50)
+            {
+                Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
+                Thread.Sleep(200);
+            }
+        }
     }
 
     internal sealed class RecordingAuthorization : IDotNetWorkspaceEvaluationAuthorization

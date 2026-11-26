@@ -43,6 +43,26 @@ public sealed class LocalFileSystemTests : IDisposable
         (await File.ReadAllLinesAsync(path)).Should().Equal("{\"complete\":1}", "{\"torn\":", "{\"next\":2}");
     }
 
+    [Fact]
+    public async Task AppendLineAsync_should_wait_for_a_writer_in_another_process()
+    {
+        var path = Path.Combine(root, "events.ndjson");
+        await File.WriteAllTextAsync(path, "{\"first\":1}\n");
+
+        // Simulate another process holding the cross-process append lock.
+        var lockPath = Path.Combine(root, ".events.ndjson.lock");
+        var otherProcess = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var append = fileSystem.AppendLineAsync(path, "{\"second\":2}", CancellationToken.None);
+
+        await Task.Delay(300);
+        append.IsCompleted.Should().BeFalse("the append must not interleave with another process's write");
+        (await File.ReadAllLinesAsync(path)).Should().Equal("{\"first\":1}");
+
+        await otherProcess.DisposeAsync();
+        await append.WaitAsync(TimeSpan.FromSeconds(10));
+        (await File.ReadAllLinesAsync(path)).Should().Equal("{\"first\":1}", "{\"second\":2}");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
