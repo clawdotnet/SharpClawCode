@@ -454,6 +454,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 CanceledTurnReason,
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogWarning(
                 exception,
@@ -471,6 +472,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 FormatProviderFailureReason(exception),
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogError(
                 exception,
@@ -489,6 +491,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 string.IsNullOrWhiteSpace(exception.Message) ? FailedTurnReason : exception.Message,
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogError(
                 exception,
@@ -569,13 +572,27 @@ public sealed class ConversationRuntime(
         metadata[SharpClawWorkflowMetadataKeys.CustomCommandName] = definition.Name;
 
         var permission = ClampPermissionModeForCustomCommand(context.PermissionMode, definition.PermissionMode);
-        var contextPrimary = context.PrimaryMode ?? PrimaryMode.Build;
-        var primary = ClampPrimaryModeForCustomCommand(contextPrimary, definition.PrimaryModeOverride);
+        // Without an explicit context mode, the command inherits the target session's persisted mode (as a plain
+        // prompt would), so a command's Build override cannot switch a Plan or Research session out of its mode.
+        var sessionId = context.SessionId;
+        var contextPrimary = context.PrimaryMode;
+        if (contextPrimary is null)
+        {
+            var probe = new RunPromptRequest(expanded, context.SessionId, workspace, permission, context.OutputFormat, Metadata: null);
+            var target = await ResolveSessionAsync(workspace, probe, cancellationToken).ConfigureAwait(false);
+            if (target is not null)
+            {
+                sessionId ??= target.Id; // run in the session whose mode was inherited
+                contextPrimary = PrimaryModeResolver.ResolveEffective(probe, target);
+            }
+        }
+
+        var primary = ClampPrimaryModeForCustomCommand(contextPrimary ?? PrimaryMode.Build, definition.PrimaryModeOverride);
 
         return await RunPromptAsync(
             new RunPromptRequest(
                 Prompt: expanded,
-                SessionId: context.SessionId,
+                SessionId: sessionId,
                 WorkingDirectory: workspace,
                 PermissionMode: permission,
                 OutputFormat: context.OutputFormat,
@@ -1459,6 +1476,7 @@ public sealed class ConversationRuntime(
         string turnId,
         List<RuntimeEvent> collectedEvents,
         string? reason,
+        string? turnCheckpointId,
         CancellationToken cancellationToken)
     {
         if (session.State == SessionLifecycleState.Archived)
@@ -1473,7 +1491,7 @@ public sealed class ConversationRuntime(
         var failedState = stateMachine.Transition(session.State, RuntimeLifecycleTransition.Fail);
         var failedAtUtc = systemClock.UtcNow;
         var stateBeforeFailure = session.State;
-        var updatedSession = await MergeDurableRecoveryStateAsync(workspacePath, session).ConfigureAwait(false) with
+        var updatedSession = await MergeDurableRecoveryStateAsync(workspacePath, session, turnCheckpointId).ConfigureAwait(false) with
         {
             State = failedState,
             UpdatedAtUtc = failedAtUtc,
@@ -1501,9 +1519,11 @@ public sealed class ConversationRuntime(
     /// <summary>
     /// Failure handling may run with an in-memory session that predates recovery data already made durable
     /// (recorded mutation sets, partial-undo markers, checkpoints). Carry that state over from the stored
-    /// snapshot so recording the failure never hides recoverable edits from undo.
+    /// snapshot so recording the failure never hides recoverable edits from undo. A checkpoint this turn
+    /// created (<paramref name="turnCheckpointId"/>) is the newest one and is kept even when the stored snapshot
+    /// still names an older checkpoint; preservation reuses that same id, so the two cannot diverge.
     /// </summary>
-    private async Task<ConversationSession> MergeDurableRecoveryStateAsync(string workspacePath, ConversationSession session)
+    private async Task<ConversationSession> MergeDurableRecoveryStateAsync(string workspacePath, ConversationSession session, string? turnCheckpointId)
     {
         ConversationSession? durable;
         try
@@ -1534,7 +1554,10 @@ public sealed class ConversationRuntime(
         return session with
         {
             Metadata = metadata,
-            LastCheckpointId = durable.LastCheckpointId ?? session.LastCheckpointId,
+            LastCheckpointId = turnCheckpointId is not null
+                && string.Equals(session.LastCheckpointId, turnCheckpointId, StringComparison.Ordinal)
+                    ? session.LastCheckpointId
+                    : durable.LastCheckpointId ?? session.LastCheckpointId,
         };
     }
 

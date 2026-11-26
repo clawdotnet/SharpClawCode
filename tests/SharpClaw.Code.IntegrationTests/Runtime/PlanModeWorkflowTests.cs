@@ -56,6 +56,60 @@ public sealed class PlanModeWorkflowTests
         todos.SessionTodos.Should().ContainSingle(item => item.Title == "PLAN-002: Wire worktree creation into session orchestration" && item.Status == TodoStatus.InProgress);
     }
 
+    /// <summary>
+    /// Ensures a custom command's Build override cannot take a persisted Plan session out of plan mode when the
+    /// caller passes no explicit mode.
+    /// </summary>
+    [Fact]
+    public async Task ExecuteCustomCommand_without_context_mode_should_keep_the_sessions_plan_mode()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        Directory.CreateDirectory(Path.Combine(workspacePath, ".sharpclaw", "commands"));
+        await File.WriteAllTextAsync(
+            Path.Combine(workspacePath, ".sharpclaw", "commands", "ship.md"),
+            """
+            ---
+            description: Try to switch to build mode
+            primaryMode: build
+            ---
+            Implement $ARGUMENTS
+            """);
+        using var serviceProvider = CreateRuntimeServices(services =>
+        {
+            services.AddSingleton<IProviderRequestPreflight, PassthroughPreflight>();
+            services.AddSingleton<IAuthFlowService, AlwaysAuthenticatedAuthFlowService>();
+            services.AddSingleton<IModelProviderResolver, PlanModelProviderResolver>();
+        });
+        var runtime = serviceProvider.GetRequiredService<IConversationRuntime>();
+        var commands = serviceProvider.GetRequiredService<IRuntimeCommandService>();
+
+        var planned = await runtime.RunPromptAsync(
+            new RunPromptRequest(
+                Prompt: "Plan the next slice",
+                SessionId: null,
+                WorkingDirectory: workspacePath,
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                Metadata: new Dictionary<string, string> { ["provider"] = "plan-provider", ["model"] = "plan-model" },
+                PrimaryMode: PrimaryMode.Plan),
+            CancellationToken.None);
+
+        var result = await commands.ExecuteCustomCommandAsync(
+            "ship",
+            "the slice",
+            new RuntimeCommandContext(
+                WorkingDirectory: workspacePath,
+                Model: "plan-model",
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Text,
+                PrimaryMode: null,
+                SessionId: planned.Session.Id),
+            CancellationToken.None);
+
+        result.PlanResult.Should().NotBeNull("the persisted plan mode must survive the command's build override");
+        result.Session.Metadata![SharpClawWorkflowMetadataKeys.PrimaryMode].Should().BeEquivalentTo(nameof(PrimaryMode.Plan));
+    }
+
     private static string CreateTemporaryWorkspace()
     {
         var workspacePath = Path.Combine(Path.GetTempPath(), "sharpclaw-plan-mode-tests", Guid.NewGuid().ToString("N"));
