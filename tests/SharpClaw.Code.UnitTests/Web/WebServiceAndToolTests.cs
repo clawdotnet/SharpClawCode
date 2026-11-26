@@ -72,6 +72,57 @@ public sealed class WebServiceAndToolTests
         document.StatusCode.Should().Be(200);
     }
 
+    [Theory]
+    [InlineData("127.0.0.1", false)]
+    [InlineData("10.1.2.3", false)]
+    [InlineData("172.20.0.1", false)]
+    [InlineData("192.168.1.1", false)]
+    [InlineData("169.254.169.254", false)]
+    [InlineData("100.64.0.1", false)]
+    [InlineData("0.0.0.0", false)]
+    [InlineData("::1", false)]
+    [InlineData("fe80::1", false)]
+    [InlineData("fd00::1", false)]
+    [InlineData("::ffff:127.0.0.1", false)]
+    [InlineData("8.8.8.8", true)]
+    [InlineData("2606:4700:4700::1111", true)]
+    public void WebFetchNetworkPolicy_should_only_allow_public_addresses(string address, bool expected)
+        => SharpClaw.Code.Web.Fetch.WebFetchNetworkPolicy.IsPublicAddress(IPAddress.Parse(address)).Should().Be(expected);
+
+    [Fact]
+    public async Task WebFetch_handler_should_refuse_loopback_and_metadata_targets()
+    {
+        using var client = new HttpClient(SharpClaw.Code.Web.Fetch.WebFetchNetworkPolicy.CreateHandler(allowPrivateNetworkAccess: false));
+        IWebFetchService service = new WebFetchService(client);
+
+        var loopback = async () => await service.FetchAsync("http://127.0.0.1:9/", CancellationToken.None);
+        var metadata = async () => await service.FetchAsync("http://169.254.169.254/latest/meta-data/", CancellationToken.None);
+        var localhost = async () => await service.FetchAsync("http://localhost:9/", CancellationToken.None);
+
+        (await loopback.Should().ThrowAsync<HttpRequestException>()).WithMessage("*non-public*");
+        (await metadata.Should().ThrowAsync<HttpRequestException>()).WithMessage("*non-public*");
+        (await localhost.Should().ThrowAsync<HttpRequestException>()).WithMessage("*non-public*");
+    }
+
+    [Fact]
+    public async Task WebFetchService_should_reject_non_http_schemes_and_truncate_large_bodies()
+    {
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(new string('a', 10_000)),
+        });
+        IWebFetchService service = new WebFetchService(
+            new HttpClient(handler),
+            Options.Create(new WebFetchOptions { MaxResponseBytes = 100 }));
+
+        var file = async () => await service.FetchAsync("file:///etc/passwd", CancellationToken.None);
+        await file.Should().ThrowAsync<ArgumentException>();
+
+        var document = await service.FetchAsync("https://example.com/large", CancellationToken.None);
+        document.Content.Should().Contain("truncated at 100 bytes");
+        document.Content.Length.Should().BeLessThan(200);
+    }
+
     /// <summary>
     /// Ensures the tool system registers and executes the built-in web tools.
     /// </summary>

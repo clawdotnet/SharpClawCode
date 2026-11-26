@@ -3,6 +3,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using SharpClaw.Code.Web.Abstractions;
 using SharpClaw.Code.Web.Configuration;
+using SharpClaw.Code.Web.Fetch;
 using SharpClaw.Code.Web.Services;
 
 namespace SharpClaw.Code.Web;
@@ -25,6 +26,8 @@ public static class WebServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(configuration);
         services.AddOptions<WebSearchOptions>()
             .Bind(configuration.GetSection(WebSectionName));
+        services.AddOptions<WebFetchOptions>()
+            .Bind(configuration.GetSection($"{WebSectionName}:Fetch"));
         return AddSharpClawWebCore(services);
     }
 
@@ -44,8 +47,11 @@ public static class WebServiceCollectionExtensions
         services.AddSingleton<IValidateOptions<WebSearchOptions>, WebSearchOptionsValidator>();
         services.AddHttpClient<IWebSearchService, WebSearchService>()
             .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60));
+        services.AddOptions<WebFetchOptions>();
         services.AddHttpClient<IWebFetchService, WebFetchService>()
-            .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60));
+            .ConfigureHttpClient(client => client.Timeout = TimeSpan.FromSeconds(60))
+            .ConfigurePrimaryHttpMessageHandler(serviceProvider => WebFetchNetworkPolicy.CreateHandler(
+                serviceProvider.GetRequiredService<IOptions<WebFetchOptions>>().Value.AllowPrivateNetworkAccess));
         return services;
     }
 }
