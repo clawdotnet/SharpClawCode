@@ -90,7 +90,9 @@ public static class ProviderStreamFailureClassifier
     {
         var match = RetryAfterHint.Match(providerEvent.Content ?? string.Empty);
         return match.Success
-            ? TimeSpan.FromSeconds(int.Parse(match.Groups["seconds"].Value, CultureInfo.InvariantCulture))
+            && int.TryParse(match.Groups["seconds"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            && seconds > 0
+            ? TimeSpan.FromSeconds(seconds)
             : null;
     }
 
@@ -113,7 +115,7 @@ public static class ProviderStreamFailureClassifier
         {
             switch (exception.Data["Retry-After"])
             {
-                case int seconds when seconds > 0:
+                case int seconds when seconds > 0 && seconds <= MaxRetryAfter.TotalSeconds:
                     return TimeSpan.FromSeconds(seconds);
                 case TimeSpan span when span > TimeSpan.Zero:
                     return span;
@@ -132,19 +134,25 @@ public static class ProviderStreamFailureClassifier
             return null;
         }
 
-        if (double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) && seconds > 0)
+        if (double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
         {
-            return TimeSpan.FromSeconds(seconds);
+            // Reject NaN/infinity/huge values instead of letting TimeSpan.FromSeconds throw and mask the HTTP error.
+            return double.IsFinite(seconds) && seconds > 0 && seconds <= MaxRetryAfter.TotalSeconds
+                ? TimeSpan.FromSeconds(seconds)
+                : null;
         }
 
         if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
         {
             var delta = date - DateTimeOffset.UtcNow;
-            return delta > TimeSpan.Zero ? delta : null;
+            return delta > TimeSpan.Zero && delta <= MaxRetryAfter ? delta : null;
         }
 
         return null;
     }
+
+    /// <summary>Upper bound for a usable retry-after hint; larger values are treated as absent.</summary>
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromDays(1);
 
     private static bool IsTransientStatus(HttpStatusCode statusCode)
         => statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests

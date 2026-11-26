@@ -110,9 +110,34 @@ public sealed class AcpStdioHost(
         var id = requestObject["id"];
         if (!requestObject.ContainsKey("id"))
         {
-            // JSON-RPC 2.0: a message without an id is a notification and must never receive a response.
-            // No ACP method served here is notification-shaped, so unknown notifications are ignored.
-            logger.LogDebug("Ignoring ACP notification {Method}.", requestObject["method"]?.ToJsonString() ?? "<none>");
+            // JSON-RPC 2.0: a well-formed message without an id is a notification and must never receive a
+            // response. A malformed one is still an invalid request, answered with a null id.
+            if (requestObject["jsonrpc"] is not JsonValue notificationVersion
+                || !notificationVersion.TryGetValue<string>(out var notificationProtocol) || notificationProtocol != "2.0"
+                || requestObject["method"] is not JsonValue notificationName
+                || !notificationName.TryGetValue<string>(out var notificationMethod) || string.IsNullOrWhiteSpace(notificationMethod))
+            {
+                await WriteErrorAsync(stdout, null, -32600, "Invalid request.", cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            try
+            {
+                if (notificationMethod == "session/cancel")
+                {
+                    // ACP clients send cancellation as a notification naming the session.
+                    live.CancelSession(requestObject["params"]);
+                }
+                else
+                {
+                    logger.LogDebug("Ignoring ACP notification {Method}.", notificationMethod);
+                }
+            }
+            catch (Exception ex) when (ex is AcpRequestException or InvalidOperationException or FormatException)
+            {
+                logger.LogDebug(ex, "Ignoring malformed ACP notification {Method}.", notificationMethod);
+            }
+
             return;
         }
 
