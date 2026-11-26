@@ -96,6 +96,33 @@ public sealed class AcpStdioHostTests
         output.ToString().Should().NotContain("\"id\":null", "notifications are never answered");
     }
 
+    [Theory]
+    [InlineData("""{"sessionId":"s1","promptRequestId":{}}""")]
+    [InlineData("""{"sessionId":"s1","cwd":""}""")]
+    public async Task Malformed_session_cancel_notification_cancels_nothing_and_does_not_fault(string parameters)
+    {
+        var controls = new LiveTurnControlService();
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (_, token) => await Task.Delay(Timeout.Infinite, token)
+        };
+        var host = CreateHost(runtime, controls: controls);
+        var input = new HeldOpenReader(
+            """{"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}""",
+            """{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{"cwd":".","sessionId":"s1","prompt":"work","liveTurnControl":true}}""",
+            $$"""{"jsonrpc":"2.0","method":"session/cancel","params":{{parameters}}}""");
+        var output = new StringWriter();
+        var run = host.RunAsync(input, output, CancellationToken.None);
+
+        await Task.Delay(500);
+        var cancelledEarly = output.ToString().Contains("\"p\"", StringComparison.Ordinal);
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancelledEarly.Should().BeFalse("a malformed selector must not cancel the session's prompts");
+        output.ToString().Should().NotContain("\"id\":null");
+    }
+
     [Fact]
     public async Task RunAsync_should_return_invalid_request_for_missing_method()
     {
