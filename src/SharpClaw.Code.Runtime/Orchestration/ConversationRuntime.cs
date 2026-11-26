@@ -1473,7 +1473,7 @@ public sealed class ConversationRuntime(
         var failedState = stateMachine.Transition(session.State, RuntimeLifecycleTransition.Fail);
         var failedAtUtc = systemClock.UtcNow;
         var stateBeforeFailure = session.State;
-        var updatedSession = session with
+        var updatedSession = await MergeDurableRecoveryStateAsync(workspacePath, session).ConfigureAwait(false) with
         {
             State = failedState,
             UpdatedAtUtc = failedAtUtc,
@@ -1496,6 +1496,46 @@ public sealed class ConversationRuntime(
 
         await sessionStore.SaveAsync(workspacePath, updatedSession, cancellationToken).ConfigureAwait(false);
         return updatedSession;
+    }
+
+    /// <summary>
+    /// Failure handling may run with an in-memory session that predates recovery data already made durable
+    /// (recorded mutation sets, partial-undo markers, checkpoints). Carry that state over from the stored
+    /// snapshot so recording the failure never hides recoverable edits from undo.
+    /// </summary>
+    private async Task<ConversationSession> MergeDurableRecoveryStateAsync(string workspacePath, ConversationSession session)
+    {
+        ConversationSession? durable;
+        try
+        {
+            using var reread = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            durable = await sessionStore.GetByIdAsync(workspacePath, session.Id, reread.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not re-read session {SessionId} before recording a turn failure.", session.Id);
+            return session;
+        }
+
+        if (durable?.Metadata is null)
+        {
+            return session;
+        }
+
+        var metadata = CloneMetadata(session.Metadata);
+        foreach (var key in new[] { SharpClawWorkflowMetadataKeys.UndoRedoStateJson, CheckpointMutationCoordinator.PartialMutationKey })
+        {
+            if (durable.Metadata.TryGetValue(key, out var value))
+            {
+                metadata[key] = value;
+            }
+        }
+
+        return session with
+        {
+            Metadata = metadata,
+            LastCheckpointId = durable.LastCheckpointId ?? session.LastCheckpointId,
+        };
     }
 
     private async Task<string?> ResolveCommandSessionIdAsync(

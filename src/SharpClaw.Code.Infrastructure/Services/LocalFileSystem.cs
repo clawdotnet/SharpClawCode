@@ -167,7 +167,9 @@ public sealed class LocalFileSystem : IFileSystem
                 options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             }
 
-            await using (var stream = new FileStream(tempPath, options))
+            await using (var stream = OperatingSystem.IsWindows() && existing.Exists
+                ? CreateWithTargetAcl(tempPath, path)
+                : new FileStream(tempPath, options))
             {
                 await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 await writer.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -215,11 +217,20 @@ public sealed class LocalFileSystem : IFileSystem
             {
                 try
                 {
-                    File.Delete(tempPath);
+                    if (File.Exists(path))
+                    {
+                        File.Delete(tempPath);
+                    }
+                    else
+                    {
+                        // A failed replace (or a cancellation during recovery) left no target: the staged file is
+                        // the only complete copy of the new content, so put it in place instead of deleting it.
+                        File.Move(tempPath, path);
+                    }
                 }
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
-                    // Ignore cleanup failures for the temporary file.
+                    // Leave the staged file for manual recovery rather than losing it.
                 }
             }
         }
@@ -271,7 +282,8 @@ public sealed class LocalFileSystem : IFileSystem
         var backupPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".", $".sc-{Guid.NewGuid():N}.bak");
         try
         {
-            File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: true);
+            // Fail rather than silently replacing the target's security descriptor with a broader one.
+            File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: false);
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
@@ -305,6 +317,25 @@ public sealed class LocalFileSystem : IFileSystem
         }
     }
 
+    /// <summary>
+    /// Creates the Windows staging file with the target's effective DACL (inherited entries made explicit) so
+    /// staged content is never more widely readable than the file it replaces.
+    /// </summary>
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static FileStream CreateWithTargetAcl(string tempPath, string targetPath)
+    {
+        var security = new FileInfo(targetPath).GetAccessControl(System.Security.AccessControl.AccessControlSections.Access);
+        security.SetAccessRuleProtection(isProtected: true, preserveInheritance: true);
+        return new FileInfo(tempPath).Create(
+            FileMode.CreateNew,
+            System.Security.AccessControl.FileSystemRights.Write | System.Security.AccessControl.FileSystemRights.ReadAttributes
+                | System.Security.AccessControl.FileSystemRights.Delete | System.Security.AccessControl.FileSystemRights.Synchronize,
+            FileShare.None,
+            4096,
+            FileOptions.Asynchronous,
+            security);
+    }
+
     /// <inheritdoc />
     public async Task CopyFileAsync(string sourcePath, string destinationPath, CancellationToken cancellationToken)
     {
@@ -334,8 +365,13 @@ public sealed class LocalFileSystem : IFileSystem
 
         var gate = AppendGates.GetOrAdd(Path.GetFullPath(path), static _ => new SemaphoreSlim(1, 1));
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+
+        // .NET's FileMode.Append does not use O_APPEND and FileShare is only advisory on Unix, so writers in other
+        // processes are excluded with an exclusive sidecar lock around the torn-line check and the append.
+        IAsyncDisposable? crossProcessLock = null;
         try
         {
+            crossProcessLock = await AcquireExclusiveFileLockAsync(GetAppendLockPath(path), cancellationToken).ConfigureAwait(false);
             var payload = new StringBuilder(line.Length + 2);
             if (await EndsWithPartialLineAsync(path, cancellationToken).ConfigureAwait(false))
             {
@@ -349,6 +385,7 @@ public sealed class LocalFileSystem : IFileSystem
             // Only opening is retried (sharing violations on Windows). Once bytes may have reached the file, a
             // failure propagates instead of being retried, so a record is never written twice.
             await using var stream = await OpenForAppendAsync(path, cancellationToken).ConfigureAwait(false);
+            stream.Seek(0, SeekOrigin.End);
 
             // FileMode.Append opens with O_APPEND on Unix, so each write lands at the current end of file even
             // when other processes append concurrently; on Windows the write handle excludes other writers.
@@ -357,8 +394,19 @@ public sealed class LocalFileSystem : IFileSystem
         }
         finally
         {
+            if (crossProcessLock is not null)
+            {
+                await crossProcessLock.DisposeAsync().ConfigureAwait(false);
+            }
+
             gate.Release();
         }
+    }
+
+    private static string GetAppendLockPath(string path)
+    {
+        var fullPath = Path.GetFullPath(path);
+        return Path.Combine(Path.GetDirectoryName(fullPath) ?? ".", $".{Path.GetFileName(fullPath)}.lock");
     }
 
     private static async Task<FileStream> OpenForAppendAsync(string path, CancellationToken cancellationToken)

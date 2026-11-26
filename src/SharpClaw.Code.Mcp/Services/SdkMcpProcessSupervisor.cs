@@ -22,10 +22,17 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
     // Handles are persisted in the registry and outlive this process. Start each process at a random base so a
     // handle recorded by an earlier process can never match (and be mistaken for, or stop) a live session here.
     private static long _nextSessionId = Random.Shared.NextInt64(1, 1L << 40) << 16;
-    private static readonly ConcurrentDictionary<long, McpClient> Sessions = new();
+    private static readonly ConcurrentDictionary<long, TrackedSession> Sessions = new();
+
+    private sealed record TrackedSession(string ServerId, McpClient Client);
 
     /// <inheritdoc />
     public bool IsSessionActive(long sessionHandle) => Sessions.ContainsKey(sessionHandle);
+
+    /// <inheritdoc />
+    public bool IsSessionActive(long sessionHandle, string serverId)
+        => Sessions.TryGetValue(sessionHandle, out var tracked)
+            && string.Equals(tracked.ServerId, serverId, StringComparison.Ordinal);
     private readonly ILoggerFactory resolvedLoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
     private readonly ILogger logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<SdkMcpProcessSupervisor>();
 
@@ -136,7 +143,7 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
             }
 
             var sessionId = Interlocked.Increment(ref _nextSessionId);
-            if (!Sessions.TryAdd(sessionId, client))
+            if (!Sessions.TryAdd(sessionId, new TrackedSession(definition.Id, client)))
             {
                 await client.DisposeAsync().ConfigureAwait(false);
                 return new McpProcessStartResult(
@@ -170,10 +177,22 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
     /// <inheritdoc />
     public async Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken)
     {
-        if (request.SessionHandle > 0 && Sessions.TryRemove(request.SessionHandle, out var tracked))
+        if (request.SessionHandle > 0
+            && Sessions.TryGetValue(request.SessionHandle, out var tracked)
+            && (request.ServerId is null || string.Equals(tracked.ServerId, request.ServerId, StringComparison.Ordinal))
+            && Sessions.TryRemove(request.SessionHandle, out tracked))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await tracked.DisposeAsync().ConfigureAwait(false);
+            try
+            {
+                await tracked.Client.DisposeAsync().ConfigureAwait(false);
+            }
+            catch
+            {
+                // Keep a session whose shutdown failed reachable so a later stop can retry it.
+                Sessions.TryAdd(request.SessionHandle, tracked);
+                throw;
+            }
         }
 
         if (request.Pid is int pid)

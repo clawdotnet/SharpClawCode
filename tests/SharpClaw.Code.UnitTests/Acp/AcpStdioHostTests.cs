@@ -96,6 +96,36 @@ public sealed class AcpStdioHostTests
         output.ToString().Should().NotContain("\"id\":null", "notifications are never answered");
     }
 
+    [Fact]
+    public async Task Session_cancel_notification_cancels_an_ordinary_prompt_before_eof()
+    {
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (_, token) => await Task.Delay(Timeout.Infinite, token)
+        };
+        var host = CreateHost(runtime, controls: new LiveTurnControlService());
+        var input = new HeldOpenReader(
+            """{"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}""",
+            """{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{"cwd":".","sessionId":"s1","prompt":"work"}}""",
+            """{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}""");
+        var output = new StringWriter();
+        var run = host.RunAsync(input, output, CancellationToken.None);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        var cancelledBeforeEof = output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal);
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancelledBeforeEof.Should().BeTrue("prompts without liveTurnControl must also honor session/cancel notifications");
+        ReadResponseResult(output, "p")["stopReason"]!.GetValue<string>().Should().Be("cancelled");
+        output.ToString().Should().NotContain("\"id\":null");
+    }
+
     [Theory]
     [InlineData("""{"sessionId":"s1","promptRequestId":{}}""")]
     [InlineData("""{"sessionId":"s1","cwd":""}""")]
