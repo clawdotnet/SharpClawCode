@@ -150,6 +150,7 @@ public sealed class LocalFileSystem : IFileSystem
         // Short, independent sibling name: appending to the target name could exceed the 255-char component limit.
         var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
         var tempPath = Path.Combine(directory, $".sc-{Guid.NewGuid():N}.tmp");
+        var staged = false; // true only once the content is fully written, flushed and its mode applied
         try
         {
             var options = new FileStreamOptions
@@ -182,11 +183,14 @@ public sealed class LocalFileSystem : IFileSystem
                 // Restore the target's exact mode once the content is complete, just before the atomic rename.
                 File.SetUnixFileMode(tempPath, existing.UnixFileMode);
             }
-            else if (!OperatingSystem.IsWindows())
+            else if (!OperatingSystem.IsWindows() && TryGetUmask() is { } umask)
             {
-                // New files get the conventional umask-filtered default instead of staying owner-only.
-                File.SetUnixFileMode(tempPath, DefaultNewFileMode & ~CurrentUmask.Value);
+                // New files get the umask-filtered default instead of staying owner-only. If the umask cannot be
+                // determined, the file keeps its owner-only staging mode rather than a guessed, possibly broader one.
+                File.SetUnixFileMode(tempPath, DefaultNewFileMode & ~umask);
             }
+
+            staged = true;
 
             for (var attempt = 0; ; attempt++)
             {
@@ -217,8 +221,10 @@ public sealed class LocalFileSystem : IFileSystem
             {
                 try
                 {
-                    if (File.Exists(path))
+                    if (!staged || File.Exists(path))
                     {
+                        // An incomplete staging file is never published; a complete one is redundant once the
+                        // target exists.
                         File.Delete(tempPath);
                     }
                     else
@@ -240,11 +246,32 @@ public sealed class LocalFileSystem : IFileSystem
         UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite
         | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
 
-    private static readonly Lazy<UnixFileMode> CurrentUmask = new(
-        static () => OperatingSystem.IsWindows() ? UnixFileMode.None : ProbeUmask());
+    // -1 = not yet determined; an int keeps reads and writes atomic across threads.
+    private static int cachedUmask = -1;
+
+    /// <summary>
+    /// Returns the process umask, caching only a successful probe; null when it cannot be determined.
+    /// </summary>
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static UnixFileMode? TryGetUmask()
+    {
+        var known = Volatile.Read(ref cachedUmask);
+        if (known >= 0)
+        {
+            return (UnixFileMode)known;
+        }
+
+        var probed = ProbeUmask();
+        if (probed is { } mode)
+        {
+            Volatile.Write(ref cachedUmask, (int)mode);
+        }
+
+        return probed;
+    }
 
     [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
-    private static UnixFileMode ProbeUmask()
+    private static UnixFileMode? ProbeUmask()
     {
         // .NET exposes no umask API; create a probe file with mode 0666 and read back what the umask left.
         var probe = Path.Combine(Path.GetTempPath(), $".sc-umask-{Guid.NewGuid():N}");
@@ -258,7 +285,7 @@ public sealed class LocalFileSystem : IFileSystem
         }
         catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
         {
-            return UnixFileMode.GroupWrite | UnixFileMode.OtherWrite; // conventional 022
+            return null; // unknown: callers keep the owner-only mode instead of guessing
         }
         finally
         {
