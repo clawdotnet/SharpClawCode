@@ -285,9 +285,56 @@ public sealed class McpAndPluginLifecycleTests
         supervisor.StoppedHandles.Should().Contain(77, "the leftover session is stopped before a new one starts");
     }
 
+    /// <summary>
+    /// If the leftover session still cannot be stopped, a new start is refused and the recorded handle is kept.
+    /// </summary>
+    [Fact]
+    public async Task Mcp_host_should_refuse_to_start_while_a_leftover_session_cannot_be_stopped()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var inner = new FileBackedMcpRegistry(new LocalFileSystem(), new PathService(), new FixedClock());
+        var registry = new FailingReadyStatusRegistry(inner);
+        var supervisor = new TrackingSupervisor { FailStops = 2 };
+        var host = new ProcessMcpServerHost(registry, supervisor, new FixedClock());
+        await inner.RegisterAsync(workspacePath, new McpServerDefinition("stuck", "Stuck", "stdio", "stuck-mcp", true, null, []), CancellationToken.None);
+
+        await FluentActions.Awaiting(() => host.StartAsync(workspacePath, "stuck", CancellationToken.None)).Should().ThrowAsync<IOException>();
+        registry.FailReady = false;
+        await FluentActions.Awaiting(() => host.StartAsync(workspacePath, "stuck", CancellationToken.None)).Should().ThrowAsync<InvalidOperationException>();
+
+        (await inner.GetAsync(workspacePath, "stuck", CancellationToken.None))!.Status.SessionHandle.Should().Be(77);
+        supervisor.StartCount.Should().Be(1, "no second session may be started while the first is still running");
+    }
+
+    /// <summary>
+    /// When neither the status nor the recovery record can be written, the session stays reachable in memory.
+    /// </summary>
+    [Fact]
+    public async Task Mcp_host_should_keep_an_unrecordable_session_reachable_in_memory()
+    {
+        var workspacePath = CreateTemporaryWorkspace();
+        var inner = new FileBackedMcpRegistry(new LocalFileSystem(), new PathService(), new FixedClock());
+        var registry = new FailingReadyStatusRegistry(inner) { FailFaulted = true };
+        var supervisor = new TrackingSupervisor { FailStops = 1 };
+        var host = new ProcessMcpServerHost(registry, supervisor, new FixedClock());
+        await inner.RegisterAsync(workspacePath, new McpServerDefinition("ghost", "Ghost", "stdio", "ghost-mcp", true, null, []), CancellationToken.None);
+
+        await FluentActions.Awaiting(() => host.StartAsync(workspacePath, "ghost", CancellationToken.None)).Should().ThrowAsync<IOException>();
+        (await inner.GetAsync(workspacePath, "ghost", CancellationToken.None))!.Status.SessionHandle.Should().BeNull("nothing could be recorded");
+
+        registry.FailReady = false;
+        registry.FailFaulted = false;
+        var restarted = await host.StartAsync(workspacePath, "ghost", CancellationToken.None);
+
+        restarted.State.Should().Be(McpLifecycleState.Ready);
+        supervisor.StoppedHandles.Should().Contain(77, "the in-memory orphan is stopped before the new start");
+    }
+
     private sealed class FailingReadyStatusRegistry(IMcpRegistry inner) : IMcpRegistry
     {
         public bool FailReady { get; set; } = true;
+
+        public bool FailFaulted { get; set; }
 
         public Task<RegisteredMcpServer> RegisterAsync(string workspaceRoot, McpServerDefinition definition, CancellationToken cancellationToken)
             => inner.RegisterAsync(workspaceRoot, definition, cancellationToken);
@@ -299,7 +346,7 @@ public sealed class McpAndPluginLifecycleTests
             => inner.GetAsync(workspaceRoot, serverId, cancellationToken);
 
         public Task UpdateStatusAsync(string workspaceRoot, McpServerStatus status, CancellationToken cancellationToken)
-            => FailReady && status.State == McpLifecycleState.Ready
+            => (FailReady && status.State == McpLifecycleState.Ready) || (FailFaulted && status.State == McpLifecycleState.Faulted)
                 ? throw new IOException("registry unavailable")
                 : inner.UpdateStatusAsync(workspaceRoot, status, cancellationToken);
     }
@@ -308,22 +355,27 @@ public sealed class McpAndPluginLifecycleTests
     {
         private readonly HashSet<long> live = [];
 
-        public bool FailNextStop { get; set; }
+        public bool FailNextStop { get => FailStops > 0; set => FailStops = value ? 1 : 0; }
+
+        public int FailStops { get; set; }
+
+        public int StartCount { get; private set; }
 
         public List<long> StoppedHandles { get; } = [];
 
         public Task<McpProcessStartResult> StartAsync(McpServerDefinition definition, string workingDirectory, CancellationToken cancellationToken)
         {
-            var handle = live.Count == 0 && StoppedHandles.Count == 0 ? 77 : 78;
+            StartCount++;
+            var handle = StartCount == 1 ? 77 : 78;
             live.Add(handle);
             return Task.FromResult(new McpProcessStartResult(true, 4242, true, null, SessionHandle: handle));
         }
 
         public Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken)
         {
-            if (FailNextStop)
+            if (FailStops > 0)
             {
-                FailNextStop = false;
+                FailStops--;
                 throw new IOException("stop failed");
             }
 
