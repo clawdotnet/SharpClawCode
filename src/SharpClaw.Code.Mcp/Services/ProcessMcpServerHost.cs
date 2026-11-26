@@ -58,6 +58,22 @@ public sealed class ProcessMcpServerHost(
             return server.Status;
         }
 
+        if (server.Status.SessionHandle is long leftover && leftover > 0 && processSupervisor.IsSessionActive(leftover, serverId))
+        {
+            // A previous start left a live session behind (for example its stop failed); shut it down first so
+            // this start does not leak a second session.
+            try
+            {
+                await processSupervisor
+                    .StopAsync(new McpProcessStopRequest(server.Status.Pid, leftover, serverId), cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                logger.LogWarning(exception, "Failed to stop the leftover MCP session for {ServerId} before restarting.", serverId);
+            }
+        }
+
         var startingStatus = new McpServerStatus(
             ServerId: serverId,
             State: McpLifecycleState.Starting,
@@ -140,7 +156,7 @@ public sealed class ProcessMcpServerHost(
                 try
                 {
                     await processSupervisor
-                        .StopAsync(new McpProcessStopRequest(processResult.Pid, processResult.SessionHandle), CancellationToken.None)
+                        .StopAsync(new McpProcessStopRequest(processResult.Pid, processResult.SessionHandle, serverId), CancellationToken.None)
                         .ConfigureAwait(false);
 
                     // The registry may already say Ready (only event publication failed); record that the session
@@ -164,6 +180,30 @@ public sealed class ProcessMcpServerHost(
                 catch (Exception stopException)
                 {
                     logger.LogWarning(stopException, "Failed to stop MCP server {ServerId} after its status could not be saved.", serverId);
+
+                    // Keep the still-running session reachable: record its handle so a later stop (or the next
+                    // start, which stops leftovers first) can shut it down.
+                    try
+                    {
+                        await registry.UpdateStatusAsync(
+                                workspaceRoot,
+                                finalStatus with
+                                {
+                                    State = McpLifecycleState.Faulted,
+                                    UpdatedAtUtc = systemClock.UtcNow,
+                                    StatusMessage = "MCP server status could not be recorded and the server could not be stopped; stop it again to retry.",
+                                    IsHealthy = false,
+                                    FailureKind = McpFailureKind.Startup,
+                                    Pid = processResult.Pid,
+                                    SessionHandle = processResult.SessionHandle == 0 ? null : processResult.SessionHandle,
+                                },
+                                CancellationToken.None)
+                            .ConfigureAwait(false);
+                    }
+                    catch (Exception recordException)
+                    {
+                        logger.LogError(recordException, "Could not record the unreachable MCP session for {ServerId}.", serverId);
+                    }
                 }
             }
 
@@ -185,7 +225,7 @@ public sealed class ProcessMcpServerHost(
         {
             await processSupervisor
                 .StopAsync(
-                    new McpProcessStopRequest(server.Status.Pid, server.Status.SessionHandle ?? 0),
+                    new McpProcessStopRequest(server.Status.Pid, server.Status.SessionHandle ?? 0, serverId),
                     cancellationToken)
                 .ConfigureAwait(false);
         }
@@ -274,7 +314,7 @@ public sealed class ProcessMcpServerHost(
     /// </summary>
     private bool IsStaleActiveStatus(McpServerStatus status)
         => status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting
-            || (status.SessionHandle is long handle && handle > 0 && !processSupervisor.IsSessionActive(handle));
+            || (status.SessionHandle is long handle && handle > 0 && !processSupervisor.IsSessionActive(handle, status.ServerId));
 
     // Key on the same normalized workspace identity the registry uses, so "/repo" and "/repo/." share one gate.
     private static string CreateServerLockKey(string workspaceRoot, string serverId)

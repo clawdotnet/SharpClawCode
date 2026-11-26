@@ -92,6 +92,7 @@ public static class ProviderStreamFailureClassifier
         return match.Success
             && int.TryParse(match.Groups["seconds"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
             && seconds > 0
+            && seconds <= MaxRetryAfter.TotalSeconds
             ? TimeSpan.FromSeconds(seconds)
             : null;
     }
@@ -117,7 +118,7 @@ public static class ProviderStreamFailureClassifier
             {
                 case int seconds when seconds > 0 && seconds <= MaxRetryAfter.TotalSeconds:
                     return TimeSpan.FromSeconds(seconds);
-                case TimeSpan span when span > TimeSpan.Zero:
+                case TimeSpan span when span > TimeSpan.Zero && span <= MaxRetryAfter:
                     return span;
                 case string text when ParseRetryAfter(text) is { } parsed:
                     return parsed;
