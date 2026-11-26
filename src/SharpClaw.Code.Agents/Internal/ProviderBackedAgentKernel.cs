@@ -366,7 +366,8 @@ public sealed class ProviderBackedAgentKernel(
                         null,
                         toolUseEvent.ToolUseId,
                         toolUseEvent.ToolName,
-                        toolUseEvent.ToolInputJson,
+                        // Record exactly what the dispatcher executes; a blank input would round-trip as JSON null.
+                        string.IsNullOrWhiteSpace(toolUseEvent.ToolInputJson) ? "{}" : toolUseEvent.ToolInputJson,
                         null));
                 }
 

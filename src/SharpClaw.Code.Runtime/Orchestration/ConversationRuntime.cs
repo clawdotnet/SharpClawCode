@@ -1305,7 +1305,19 @@ public sealed class ConversationRuntime(
         {
             // Runs inside failure handlers: it must never prevent the turn failure from being persisted.
             logger.LogError(exception, "Failed to preserve interrupted edits for session {SessionId}, turn {TurnId}.", session.Id, turnId);
-            return session;
+
+            // Preservation may have saved recovery metadata (checkpoint, mutation set) before failing, e.g. while
+            // publishing the recorded event. Continue from the durable snapshot so the failure save keeps it.
+            try
+            {
+                using var reread = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                return await sessionStore.GetByIdAsync(workspacePath, session.Id, reread.Token).ConfigureAwait(false) ?? session;
+            }
+            catch (Exception rereadException)
+            {
+                logger.LogDebug(rereadException, "Could not re-read session {SessionId} after a preservation failure.", session.Id);
+                return session;
+            }
         }
     }
 

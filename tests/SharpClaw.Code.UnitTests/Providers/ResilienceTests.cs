@@ -328,6 +328,20 @@ public sealed class ResilienceTests
         await open.Should().ThrowAsync<ProviderExecutionException>().WithMessage("*Circuit breaker is open*");
     }
 
+    [Theory]
+    [InlineData("1e100")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-5")]
+    public void Out_of_range_retry_after_hints_are_ignored(string hint)
+    {
+        var exception = new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests);
+        exception.Data["Retry-After"] = hint;
+
+        ProviderStreamFailureClassifier.TryGetRetryAfter(exception).Should().BeNull();
+        ProviderStreamFailureClassifier.Describe(exception).Should().StartWith("HTTP 429");
+    }
+
     private static async IAsyncEnumerable<ProviderEvent> FailedEventStream(string message)
     {
         await Task.Yield();
