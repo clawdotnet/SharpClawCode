@@ -160,10 +160,11 @@ public sealed class LocalFileSystem : IFileSystem
                 Options = FileOptions.Asynchronous,
                 BufferSize = 4096,
             };
-            if (existing.Exists && !OperatingSystem.IsWindows())
+            if (!OperatingSystem.IsWindows())
             {
-                // Create with the target's own mode so restricted content is never briefly readable by others.
-                options.UnixCreateMode = existing.UnixFileMode;
+                // Stage with owner-only access: the temporary file's group can differ from the target's, so
+                // applying group/other bits before the content is in place could expose it to the wrong group.
+                options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             }
 
             await using (var stream = new FileStream(tempPath, options))
@@ -176,18 +177,23 @@ public sealed class LocalFileSystem : IFileSystem
 
             if (existing.Exists && !OperatingSystem.IsWindows())
             {
-                // The umask can only have narrowed the creation mode; restore the exact original mode.
+                // Restore the target's exact mode once the content is complete, just before the atomic rename.
                 File.SetUnixFileMode(tempPath, existing.UnixFileMode);
+            }
+            else if (!OperatingSystem.IsWindows())
+            {
+                // New files get the conventional umask-filtered default instead of staying owner-only.
+                File.SetUnixFileMode(tempPath, DefaultNewFileMode & ~CurrentUmask.Value);
             }
 
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    if (existing.Exists && OperatingSystem.IsWindows())
+                    // Re-check every attempt: a failed ReplaceFile can leave the target missing.
+                    if (OperatingSystem.IsWindows() && File.Exists(path))
                     {
-                        // ReplaceFile keeps the target's security descriptor (file-specific DACL) and attributes.
-                        File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                        ReplaceWithRecovery(tempPath, path);
                     }
                     else
                     {
@@ -214,6 +220,86 @@ public sealed class LocalFileSystem : IFileSystem
                 catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
                 {
                     // Ignore cleanup failures for the temporary file.
+                }
+            }
+        }
+    }
+
+    private const UnixFileMode DefaultNewFileMode =
+        UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.GroupWrite
+        | UnixFileMode.OtherRead | UnixFileMode.OtherWrite;
+
+    private static readonly Lazy<UnixFileMode> CurrentUmask = new(
+        static () => OperatingSystem.IsWindows() ? UnixFileMode.None : ProbeUmask());
+
+    [System.Runtime.Versioning.UnsupportedOSPlatform("windows")]
+    private static UnixFileMode ProbeUmask()
+    {
+        // .NET exposes no umask API; create a probe file with mode 0666 and read back what the umask left.
+        var probe = Path.Combine(Path.GetTempPath(), $".sc-umask-{Guid.NewGuid():N}");
+        try
+        {
+            using (new FileStream(probe, new FileStreamOptions { Mode = FileMode.CreateNew, Access = FileAccess.Write, UnixCreateMode = DefaultNewFileMode }))
+            {
+            }
+
+            return DefaultNewFileMode & ~File.GetUnixFileMode(probe);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return UnixFileMode.GroupWrite | UnixFileMode.OtherWrite; // conventional 022
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(probe);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+            }
+        }
+    }
+
+    /// <summary>
+    /// Windows replace that keeps the target's security descriptor and recovers ReplaceFile's documented
+    /// partial-failure states: if the target ends up missing, the backup (original) or the staged replacement
+    /// is moved back into place before the error propagates, so content is never lost.
+    /// </summary>
+    private static void ReplaceWithRecovery(string tempPath, string path)
+    {
+        var backupPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".", $".sc-{Guid.NewGuid():N}.bak");
+        try
+        {
+            File.Replace(tempPath, path, backupPath, ignoreMetadataErrors: true);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            if (!File.Exists(path))
+            {
+                if (File.Exists(backupPath))
+                {
+                    File.Move(backupPath, path); // restore the original; the staged file stays for a retry
+                }
+                else if (File.Exists(tempPath))
+                {
+                    File.Move(tempPath, path); // the replacement is the only surviving copy
+                    return;
+                }
+            }
+
+            throw;
+        }
+        finally
+        {
+            if (File.Exists(backupPath) && File.Exists(path))
+            {
+                try
+                {
+                    File.Delete(backupPath);
+                }
+                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+                {
                 }
             }
         }
