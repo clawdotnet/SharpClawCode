@@ -19,7 +19,9 @@ namespace SharpClaw.Code.Mcp.Services;
 /// <param name="loggerFactory">Logger factory for SDK clients; null uses <see cref="NullLoggerFactory"/>.</param>
 public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null) : IMcpProcessSupervisor
 {
-    private static long _nextSessionId;
+    // Handles are persisted in the registry and outlive this process. Start each process at a random base so a
+    // handle recorded by an earlier process can never match (and be mistaken for, or stop) a live session here.
+    private static long _nextSessionId = Random.Shared.NextInt64(1, 1L << 40) << 16;
     private static readonly ConcurrentDictionary<long, McpClient> Sessions = new();
 
     /// <inheritdoc />

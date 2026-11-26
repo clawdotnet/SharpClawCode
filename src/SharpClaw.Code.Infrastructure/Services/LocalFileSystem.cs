@@ -147,10 +147,26 @@ public sealed class LocalFileSystem : IFileSystem
             return;
         }
 
-        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        // Short, independent sibling name: appending to the target name could exceed the 255-char component limit.
+        var directory = Path.GetDirectoryName(Path.GetFullPath(path)) ?? ".";
+        var tempPath = Path.Combine(directory, $".sc-{Guid.NewGuid():N}.tmp");
         try
         {
-            await using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            var options = new FileStreamOptions
+            {
+                Mode = FileMode.CreateNew,
+                Access = FileAccess.Write,
+                Share = FileShare.None,
+                Options = FileOptions.Asynchronous,
+                BufferSize = 4096,
+            };
+            if (existing.Exists && !OperatingSystem.IsWindows())
+            {
+                // Create with the target's own mode so restricted content is never briefly readable by others.
+                options.UnixCreateMode = existing.UnixFileMode;
+            }
+
+            await using (var stream = new FileStream(tempPath, options))
             {
                 await using var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
                 await writer.WriteAsync(content.AsMemory(), cancellationToken).ConfigureAwait(false);
@@ -160,21 +176,24 @@ public sealed class LocalFileSystem : IFileSystem
 
             if (existing.Exists && !OperatingSystem.IsWindows())
             {
-                try
-                {
-                    File.SetUnixFileMode(tempPath, existing.UnixFileMode);
-                }
-                catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
-                {
-                    // Best effort: keep default permissions if the original mode cannot be applied.
-                }
+                // The umask can only have narrowed the creation mode; restore the exact original mode.
+                File.SetUnixFileMode(tempPath, existing.UnixFileMode);
             }
 
             for (var attempt = 0; ; attempt++)
             {
                 try
                 {
-                    File.Move(tempPath, path, overwrite: true);
+                    if (existing.Exists && OperatingSystem.IsWindows())
+                    {
+                        // ReplaceFile keeps the target's security descriptor (file-specific DACL) and attributes.
+                        File.Replace(tempPath, path, destinationBackupFileName: null, ignoreMetadataErrors: true);
+                    }
+                    else
+                    {
+                        File.Move(tempPath, path, overwrite: true);
+                    }
+
                     return;
                 }
                 catch (Exception exception) when ((exception is IOException or UnauthorizedAccessException) && attempt < MaxLockRetries)
@@ -231,20 +250,24 @@ public sealed class LocalFileSystem : IFileSystem
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            for (var attempt = 0; ; attempt++)
+            var payload = new StringBuilder(line.Length + 2);
+            if (await EndsWithPartialLineAsync(path, cancellationToken).ConfigureAwait(false))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                try
-                {
-                    await AppendLineCoreAsync(path, line, cancellationToken).ConfigureAwait(false);
-                    return;
-                }
-                catch (IOException) when (attempt < MaxLockRetries)
-                {
-                    // Another process may briefly hold the file (sharing violation on Windows).
-                    await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
-                }
+                // A previous writer crashed mid-line: terminate that fragment so this record stays parseable.
+                payload.Append('\n');
             }
+
+            payload.Append(line).Append('\n');
+            var bytes = Utf8NoBom.GetBytes(payload.ToString());
+
+            // Only opening is retried (sharing violations on Windows). Once bytes may have reached the file, a
+            // failure propagates instead of being retried, so a record is never written twice.
+            await using var stream = await OpenForAppendAsync(path, cancellationToken).ConfigureAwait(false);
+
+            // FileMode.Append opens with O_APPEND on Unix, so each write lands at the current end of file even
+            // when other processes append concurrently; on Windows the write handle excludes other writers.
+            await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
+            await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
         }
         finally
         {
@@ -252,27 +275,44 @@ public sealed class LocalFileSystem : IFileSystem
         }
     }
 
-    private static async Task AppendLineCoreAsync(string path, string line, CancellationToken cancellationToken)
+    private static async Task<FileStream> OpenForAppendAsync(string path, CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite, 4096, FileOptions.Asynchronous);
-        var payload = new StringBuilder(line.Length + 2);
-        if (stream.Length > 0)
+        for (var attempt = 0; ; attempt++)
         {
-            // If a previous writer crashed mid-line, terminate that fragment so this record stays parseable.
-            stream.Seek(-1, SeekOrigin.End);
-            var lastByte = new byte[1];
-            var read = await stream.ReadAsync(lastByte, cancellationToken).ConfigureAwait(false);
-            if (read == 1 && lastByte[0] != (byte)'\n')
+            cancellationToken.ThrowIfCancellationRequested();
+            try
             {
-                payload.Append('\n');
+                return new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.Read, 4096, FileOptions.Asynchronous);
+            }
+            catch (IOException) when (attempt < MaxLockRetries)
+            {
+                await Task.Delay(LockRetryDelay, cancellationToken).ConfigureAwait(false);
             }
         }
+    }
 
-        stream.Seek(0, SeekOrigin.End);
-        payload.Append(line).Append('\n');
-        var bytes = Utf8NoBom.GetBytes(payload.ToString());
-        await stream.WriteAsync(bytes, cancellationToken).ConfigureAwait(false);
-        await stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+    private static async Task<bool> EndsWithPartialLineAsync(string path, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await using var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1, FileOptions.Asynchronous);
+            if (reader.Length == 0)
+            {
+                return false;
+            }
+
+            reader.Seek(-1, SeekOrigin.End);
+            var lastByte = new byte[1];
+            return await reader.ReadAsync(lastByte, cancellationToken).ConfigureAwait(false) == 1 && lastByte[0] != (byte)'\n';
+        }
+        catch (FileNotFoundException)
+        {
+            return false;
+        }
+        catch (DirectoryNotFoundException)
+        {
+            return false;
+        }
     }
 
     /// <inheritdoc />

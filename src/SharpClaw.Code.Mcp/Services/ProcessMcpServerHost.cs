@@ -127,7 +127,31 @@ public sealed class ProcessMcpServerHost(
                 HandshakeSucceeded = false
             };
 
-        await PersistAndEmitAsync(workspaceRoot, startingStatus, finalStatus, cancellationToken).ConfigureAwait(false);
+        try
+        {
+            await PersistAndEmitAsync(workspaceRoot, startingStatus, finalStatus, cancellationToken).ConfigureAwait(false);
+        }
+        catch
+        {
+            // The started session would be unreachable: the registry still says "Starting" with no handle.
+            // Stop it before propagating so a later start does not leak a second session.
+            if (processResult.Started && (processResult.SessionHandle > 0 || processResult.Pid is not null))
+            {
+                try
+                {
+                    await processSupervisor
+                        .StopAsync(new McpProcessStopRequest(processResult.Pid, processResult.SessionHandle), CancellationToken.None)
+                        .ConfigureAwait(false);
+                }
+                catch (Exception stopException)
+                {
+                    logger.LogWarning(stopException, "Failed to stop MCP server {ServerId} after its status could not be saved.", serverId);
+                }
+            }
+
+            throw;
+        }
+
         return finalStatus;
     }
 
