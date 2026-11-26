@@ -108,6 +108,14 @@ public sealed class AcpStdioHost(
     private async Task ProcessRequestAsync(JsonObject requestObject, AcpLiveTurns live, TextWriter stdout, CancellationToken cancellationToken)
     {
         var id = requestObject["id"];
+        if (!requestObject.ContainsKey("id"))
+        {
+            // JSON-RPC 2.0: a message without an id is a notification and must never receive a response.
+            // No ACP method served here is notification-shaped, so unknown notifications are ignored.
+            logger.LogDebug("Ignoring ACP notification {Method}.", requestObject["method"]?.ToJsonString() ?? "<none>");
+            return;
+        }
+
         if (requestObject["jsonrpc"] is not JsonValue version || !version.TryGetValue<string>(out var protocol) || protocol != "2.0"
             || requestObject["method"] is not JsonValue name || !name.TryGetValue<string>(out var method) || string.IsNullOrWhiteSpace(method)
             || id is not JsonValue)

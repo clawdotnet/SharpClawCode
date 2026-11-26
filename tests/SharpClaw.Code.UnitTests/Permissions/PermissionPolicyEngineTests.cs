@@ -332,6 +332,80 @@ public sealed class PermissionPolicyEngineTests
         approvalService.RequestCount.Should().Be(1);
     }
 
+    /// <summary>
+    /// A rule requesting approval (dangerous shell pattern) must not unlock what read-only mode denies outright.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_deny_dangerous_shell_in_read_only_mode_without_prompting()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(permissionMode: PermissionMode.ReadOnly);
+        var request = CreateRequest("bash", """{"command":"sudo rm -rf ./build"}""", ApprovalScope.ShellExecution, requiresApproval: true, isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeFalse();
+        approvalService.RequestCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// An untrusted plugin's destructive tool must stay blocked in read-only mode, like a trusted one.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_deny_untrusted_plugin_destructive_tool_in_read_only_mode()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(
+            permissionMode: PermissionMode.ReadOnly,
+            sourceKind: PermissionRequestSourceKind.Plugin,
+            sourceName: "sample-plugin",
+            trustedPlugins: []);
+        var request = CreateRequest("plugin_delete", "{}", ApprovalScope.ToolExecution, requiresApproval: true, isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeFalse();
+        approvalService.RequestCount.Should().Be(0);
+    }
+
+    /// <summary>
+    /// Session shell auto-approval must not silently approve commands matching a dangerous pattern.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_prompt_for_dangerous_shell_even_with_shell_auto_approval()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(
+            permissionMode: PermissionMode.WorkspaceWrite,
+            approvalSettings: new ApprovalSettings([ApprovalScope.ShellExecution], null));
+        var request = CreateRequest("bash", """{"command":"sudo rm -rf ./build"}""", ApprovalScope.ShellExecution, requiresApproval: true, isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeTrue();
+        approvalService.RequestCount.Should().Be(1);
+    }
+
+    /// <summary>
+    /// Plugin tools that declare approval/destructive flags must prompt in workspace-write mode.
+    /// </summary>
+    [Fact]
+    public async Task EvaluateAsync_should_prompt_for_destructive_tool_execution_in_workspace_write_mode()
+    {
+        var approvalService = new StubApprovalService();
+        var engine = CreateEngine(approvalService);
+        var context = CreateContext(permissionMode: PermissionMode.WorkspaceWrite);
+        var request = CreateRequest("plugin_delete", "{}", ApprovalScope.ToolExecution, requiresApproval: true, isDestructive: true);
+
+        var decision = await engine.EvaluateAsync(request, context, CancellationToken.None);
+
+        decision.IsAllowed.Should().BeTrue();
+        approvalService.RequestCount.Should().Be(1);
+    }
+
     private static IPermissionPolicyEngine CreateEngine(IApprovalService approvalService)
         => new PermissionPolicyEngine(
             [

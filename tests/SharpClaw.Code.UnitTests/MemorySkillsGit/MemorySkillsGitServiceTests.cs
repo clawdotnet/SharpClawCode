@@ -98,6 +98,8 @@ public sealed class MemorySkillsGitServiceTests
         snapshot.BranchFreshness.AheadBy.Should().Be(2);
         snapshot.BranchFreshness.BehindBy.Should().Be(1);
         snapshot.StatusEntries.Should().ContainSingle(entry => entry.Path == "src/Changed.cs");
+        snapshot.StatusEntries.Should().ContainSingle(entry => entry.Path == "src/New Name.cs" && entry.IndexStatus == "R");
+        snapshot.StatusEntries.Should().HaveCount(2, "the rename's original-path field must not become its own entry");
         snapshot.DiffSummary.Should().Contain("1 file changed");
         snapshot.WorktreeCount.Should().Be(2);
         snapshot.IsLinkedWorktree.Should().BeFalse();
@@ -167,7 +169,7 @@ public sealed class MemorySkillsGitServiceTests
                 ["rev-parse", "--path-format=absolute", "--git-common-dir"] => "/repo/.git\n",
                 ["branch", "--show-current"] => "main\n",
                 ["rev-parse", "HEAD"] => "abc123\n",
-                ["status", "--porcelain=v1", "--branch"] => "## main...origin/main\n M src/Changed.cs\n",
+                ["status", "--porcelain=v1", "-z", "--branch"] => "## main...origin/main\0 M src/Changed.cs\0R  src/New Name.cs\0src/Old.cs\0",
                 ["diff", "--no-ext-diff", "--stat"] => " src/Changed.cs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)\n",
                 ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"] => "1\t2\n",
                 ["worktree", "list", "--porcelain"] => RenderWorktreeList(),
@@ -229,7 +231,7 @@ public sealed class MemorySkillsGitServiceTests
                 ["rev-parse", "--path-format=absolute", "--git-common-dir"] => "/repo/.git/worktrees/repo-linked\n",
                 ["branch", "--show-current"] => "feature/worktrees\n",
                 ["rev-parse", "HEAD"] => "def456\n",
-                ["status", "--porcelain=v1", "--branch"] => "## feature/worktrees\n",
+                ["status", "--porcelain=v1", "-z", "--branch"] => "## feature/worktrees\0",
                 ["diff", "--no-ext-diff", "--stat"] => string.Empty,
                 ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"] => "0\t0\n",
                 ["worktree", "list", "--porcelain"] => """

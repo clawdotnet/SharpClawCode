@@ -20,7 +20,9 @@ internal static class OpenAiMeaiStreamAdapter
         ISystemClock clock,
         [EnumeratorCancellation] CancellationToken cancellationToken)
     {
-        var completed = false;
+        // MEAI keeps FinishReason set on every update after the finish chunk, and delivers UsageContent and the
+        // aggregated FunctionCallContent in later updates, so the whole stream must be consumed before completing.
+        UsageSnapshot? usage = null;
         IAsyncEnumerator<ChatResponseUpdate>? enumerator = null;
         try
         {
@@ -68,7 +70,7 @@ internal static class OpenAiMeaiStreamAdapter
                     {
                         if (content is FunctionCallContent functionCall)
                         {
-                            var argsJson = functionCall.Arguments is not null
+                            var argsJson = functionCall.Arguments is { Count: > 0 }
                                 ? System.Text.Json.JsonSerializer.Serialize(functionCall.Arguments)
                                 : "{}";
                             yield return ProviderStreamEventFactory.ToolUse(
@@ -80,13 +82,7 @@ internal static class OpenAiMeaiStreamAdapter
                     }
                 }
 
-                if (update.FinishReason is { } finish && !string.IsNullOrEmpty(finish.Value))
-                {
-                    var usage = ProviderStreamEventFactory.TryUsageFromUpdate(update);
-                    yield return ProviderStreamEventFactory.Completed(requestId, clock, usage);
-                    completed = true;
-                    yield break;
-                }
+                usage = ProviderStreamEventFactory.TryUsageFromUpdate(update) ?? usage;
             }
         }
         finally
@@ -97,9 +93,6 @@ internal static class OpenAiMeaiStreamAdapter
             }
         }
 
-        if (!completed)
-        {
-            yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
-        }
+        yield return ProviderStreamEventFactory.Completed(requestId, clock, usage);
     }
 }

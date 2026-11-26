@@ -90,8 +90,8 @@ public sealed class ApprovalAuthIntegrationTests
             using var wrongTenantPromptRequest = BuildPromptRequest(outsideFile, tenantId: "tenant-b");
             wrongTenantPromptRequest.Headers.Authorization = new AuthenticationHeaderValue("Bearer", authority.CreateToken("alice", "tenant-a"));
             using var wrongTenantPromptResponse = await httpClient.SendAsync(wrongTenantPromptRequest, CancellationToken.None);
-            wrongTenantPromptResponse.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
-            (await ReadErrorAsync(wrongTenantPromptResponse)).Should().Contain("does not match runtime tenant");
+            wrongTenantPromptResponse.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+            (await ReadErrorAsync(wrongTenantPromptResponse)).Should().Contain("does not match");
         }
         finally
         {

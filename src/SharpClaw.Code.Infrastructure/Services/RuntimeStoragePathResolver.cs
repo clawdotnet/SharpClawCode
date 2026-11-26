@@ -26,7 +26,7 @@ public sealed class RuntimeStoragePathResolver(
         var sharpClawRoot = pathService.Combine(baseRoot, ".sharpclaw");
         return string.IsNullOrWhiteSpace(hostContext?.TenantId)
             ? sharpClawRoot
-            : pathService.Combine(sharpClawRoot, "tenants", SanitizeSegment(hostContext!.TenantId!));
+            : pathService.Combine(sharpClawRoot, "tenants", BuildTenantSegment(hostContext!.TenantId!));
     }
 
     /// <inheritdoc />
@@ -35,7 +35,7 @@ public sealed class RuntimeStoragePathResolver(
 
     /// <inheritdoc />
     public string GetSessionRoot(string workspacePath, string sessionId)
-        => pathService.Combine(GetSessionsRoot(workspacePath), sessionId);
+        => pathService.Combine(GetSessionsRoot(workspacePath), ValidateSessionId(sessionId));
 
     /// <inheritdoc />
     public string GetSessionSnapshotPath(string workspacePath, string sessionId)
@@ -139,7 +139,7 @@ public sealed class RuntimeStoragePathResolver(
         var hostContext = hostContextAccessor.Current;
         return string.IsNullOrWhiteSpace(hostContext?.TenantId)
             ? root
-            : pathService.Combine(root, "tenants", SanitizeSegment(hostContext!.TenantId!));
+            : pathService.Combine(root, "tenants", BuildTenantSegment(hostContext!.TenantId!));
     }
 
     private string BuildWorkspaceKey(string workspacePath)
@@ -149,6 +149,37 @@ public sealed class RuntimeStoragePathResolver(
         var slug = string.IsNullOrWhiteSpace(name) ? "workspace" : SanitizeSegment(name);
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant()[..12];
         return $"{slug}-{hash}";
+    }
+
+    /// <summary>
+    /// Maps a tenant id to a directory name. Ids that survive sanitization unchanged keep their readable name;
+    /// any id that sanitization alters gets a hash suffix so distinct tenants (for example "acme.corp" and
+    /// "acme/corp") can never share a storage directory.
+    /// </summary>
+    private static string BuildTenantSegment(string tenantId)
+    {
+        var sanitized = SanitizeSegment(tenantId);
+        if (string.Equals(sanitized, tenantId, StringComparison.Ordinal))
+        {
+            return sanitized;
+        }
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tenantId))).ToLowerInvariant()[..12];
+        return $"{sanitized}-{hash}";
+    }
+
+    private static string ValidateSessionId(string sessionId)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(sessionId);
+        if (sessionId is "." or ".."
+            || sessionId.IndexOfAny([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar, ':']) >= 0
+            || sessionId.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0
+            || Path.IsPathRooted(sessionId))
+        {
+            throw new ArgumentException($"Session id '{sessionId}' is not a valid single path segment.", nameof(sessionId));
+        }
+
+        return sessionId;
     }
 
     private static string SanitizeSegment(string value)

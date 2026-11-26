@@ -301,8 +301,6 @@ public sealed class ConversationRuntime(
                 Usage = turnRunResult.Usage,
                 Verification = turnRunResult.Verification,
             };
-            ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
-
             await AppendRuntimeEventsAsync(
                 workspacePath,
                 session.Id,
@@ -398,6 +396,10 @@ public sealed class ConversationRuntime(
                     Summary: turnRunResult.Summary),
                 runtimeEvents,
                 cancellationToken).ConfigureAwait(false);
+
+            // Only cache the turn for history once its completion is durably recorded, so the in-process cache
+            // never diverges from the persisted log when a later step fails.
+            ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
 
             await sessionStore.SaveAsync(workspacePath, session, cancellationToken).ConfigureAwait(false);
             logger.LogInformation("Completed prompt turn {TurnId} for session {SessionId}.", turnId, session.Id);
@@ -1010,6 +1012,10 @@ public sealed class ConversationRuntime(
         var md = CloneMetadata(parent.Metadata);
         md.Remove(SharpClawWorkflowMetadataKeys.UndoRedoStateJson);
         md.Remove(CheckpointMutationCoordinator.PartialMutationKey);
+        // A fork is a new transcript: it must not reuse (and later overwrite or delete) the parent's public share.
+        md.Remove(SharpClawWorkflowMetadataKeys.ShareId);
+        md.Remove(SharpClawWorkflowMetadataKeys.ShareUrl);
+        md.Remove(SharpClawWorkflowMetadataKeys.SharedAtUtc);
         md[SharpClawWorkflowMetadataKeys.ParentSessionId] = parent.Id;
         md[SharpClawWorkflowMetadataKeys.ForkedAtUtc] = systemClock.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         md[SharpClawWorkflowMetadataKeys.ForkHistorySummary] = summary;
@@ -1275,6 +1281,20 @@ public sealed class ConversationRuntime(
     private async Task<ConversationSession> PreserveInterruptedMutationsAsync(string workspacePath, ConversationSession session, string turnId, IReadOnlyList<FileMutationOperation> operations, string? checkpointId)
     {
         if (operations.Count == 0) return session;
+        try
+        {
+            return await PreserveInterruptedMutationsCoreAsync(workspacePath, session, turnId, operations, checkpointId).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // Runs inside failure handlers: it must never prevent the turn failure from being persisted.
+            logger.LogError(exception, "Failed to preserve interrupted edits for session {SessionId}, turn {TurnId}.", session.Id, turnId);
+            return session;
+        }
+    }
+
+    private async Task<ConversationSession> PreserveInterruptedMutationsCoreAsync(string workspacePath, ConversationSession session, string turnId, IReadOnlyList<FileMutationOperation> operations, string? checkpointId)
+    {
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var latest = await sessionStore.GetByIdAsync(workspacePath, session.Id, cleanup.Token).ConfigureAwait(false) ?? session;
         var id = checkpointId ?? CreateIdentifier("checkpoint");
@@ -1664,7 +1684,8 @@ public sealed class ConversationRuntime(
     }
 
     /// <summary>
-    /// Workspace markdown cannot disable plan mode: if either side is <see cref="PrimaryMode.Plan"/>, plan wins.
+    /// Workspace markdown cannot disable read-only modes: if either side is <see cref="PrimaryMode.Plan"/> or
+    /// <see cref="PrimaryMode.Research"/>, that read-only mode wins (Plan first).
     /// </summary>
     private static PrimaryMode ClampPrimaryModeForCustomCommand(PrimaryMode context, PrimaryMode? commandOverride)
     {
@@ -1672,6 +1693,11 @@ public sealed class ConversationRuntime(
         if (context == PrimaryMode.Plan || effective == PrimaryMode.Plan)
         {
             return PrimaryMode.Plan;
+        }
+
+        if (context == PrimaryMode.Research || effective == PrimaryMode.Research)
+        {
+            return PrimaryMode.Research;
         }
 
         if (context == PrimaryMode.Spec || effective == PrimaryMode.Spec)

@@ -78,6 +78,37 @@ public sealed class ProviderStreamAdapterTests
     }
 
     [Fact]
+    public async Task OpenAi_meai_adapter_keeps_reading_after_finish_reason_for_tool_calls_and_usage()
+    {
+        // MEAI emits the finish chunk first, then usage, then the aggregated function call after the SSE ends.
+        var clock = new FixedSystemClock();
+        async IAsyncEnumerable<ChatResponseUpdate> Stream()
+        {
+            yield return new ChatResponseUpdate(ChatRole.Assistant, []) { FinishReason = ChatFinishReason.ToolCalls };
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [new UsageContent(new UsageDetails { InputTokenCount = 7, OutputTokenCount = 3, TotalTokenCount = 10 })])
+            {
+                FinishReason = ChatFinishReason.ToolCalls,
+            };
+            yield return new ChatResponseUpdate(ChatRole.Assistant, [new FunctionCallContent("call-1", "read_file", new Dictionary<string, object?> { ["path"] = "a.txt" })])
+            {
+                FinishReason = ChatFinishReason.ToolCalls,
+            };
+            await Task.CompletedTask;
+        }
+
+        var events = new List<ProviderEvent>();
+        await foreach (var e in OpenAiMeaiStreamAdapter.AdaptAsync(Stream(), "req-tools", clock, CancellationToken.None))
+        {
+            events.Add(e);
+        }
+
+        events.Should().ContainSingle(e => e.Kind == "tool_use" && e.ToolUseId == "call-1" && e.ToolName == "read_file");
+        events.Count(e => e.IsTerminal).Should().Be(1);
+        events[^1].Kind.Should().Be("completed");
+        events[^1].Usage!.TotalTokens.Should().Be(10);
+    }
+
+    [Fact]
     public async Task OpenAi_meai_adapter_emits_failed_event_when_sse_data_is_malformed()
     {
         var clock = new FixedSystemClock();

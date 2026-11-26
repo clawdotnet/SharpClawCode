@@ -48,7 +48,8 @@ public sealed class ProcessMcpServerHost(
     private async Task<McpServerStatus> StartCoreAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
     {
         var server = await GetRequiredServerAsync(workspaceRoot, serverId, cancellationToken).ConfigureAwait(false);
-        if (server.Status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting or McpLifecycleState.Ready or McpLifecycleState.Degraded)
+        if (server.Status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting or McpLifecycleState.Ready or McpLifecycleState.Degraded
+            && !IsStaleActiveStatus(server.Status))
         {
             logger.LogInformation(
                 "MCP server {ServerId} is already active with state {State}; skipping duplicate start.",
@@ -71,7 +72,26 @@ public sealed class ProcessMcpServerHost(
             ResourceCount: server.Status.ResourceCount);
 
         await PersistAndEmitAsync(workspaceRoot, server.Status, startingStatus, cancellationToken).ConfigureAwait(false);
-        var processResult = await processSupervisor.StartAsync(server.Definition, workspaceRoot, cancellationToken).ConfigureAwait(false);
+        McpProcessStartResult processResult;
+        try
+        {
+            processResult = await processSupervisor.StartAsync(server.Definition, workspaceRoot, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // Never leave the persisted status stuck in "Starting": later starts would be skipped forever.
+            var faulted = startingStatus with
+            {
+                State = McpLifecycleState.Faulted,
+                UpdatedAtUtc = systemClock.UtcNow,
+                StatusMessage = exception is OperationCanceledException ? "MCP server start was canceled." : exception.Message,
+                FailureKind = McpFailureKind.Startup,
+                Pid = null,
+                HandshakeSucceeded = false
+            };
+            await PersistAndEmitAsync(workspaceRoot, startingStatus, faulted, CancellationToken.None).ConfigureAwait(false);
+            throw;
+        }
 
         var finalStatus = processResult.Started
             ? processResult.HandshakeSucceeded
@@ -204,6 +224,15 @@ public sealed class ProcessMcpServerHost(
                 .ConfigureAwait(false);
         }
     }
+
+    /// <summary>
+    /// An "active" status is stale when it cannot belong to a live session in this process: a transitional
+    /// Starting/Connecting state seen while holding the server lock was left behind by an interrupted start,
+    /// and a Ready/Degraded session handle that the supervisor no longer tracks outlived its host process.
+    /// </summary>
+    private bool IsStaleActiveStatus(McpServerStatus status)
+        => status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting
+            || (status.SessionHandle is long handle && handle > 0 && !processSupervisor.IsSessionActive(handle));
 
     private static string CreateServerLockKey(string workspaceRoot, string serverId)
         => $"{workspaceRoot}\u0000{serverId}";

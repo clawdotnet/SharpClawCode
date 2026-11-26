@@ -23,4 +23,12 @@ public interface IMcpProcessSupervisor
     /// <param name="request">How to locate the running session.</param>
     /// <param name="cancellationToken">The cancellation token.</param>
     Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken);
+
+    /// <summary>
+    /// Reports whether a session handle returned by <see cref="StartAsync"/> is still live in this process.
+    /// Used to detect persisted "ready" statuses that outlived the process that created them.
+    /// </summary>
+    /// <param name="sessionHandle">The session handle.</param>
+    /// <returns><see langword="true"/> when the session is tracked and usable.</returns>
+    bool IsSessionActive(long sessionHandle) => true;
 }

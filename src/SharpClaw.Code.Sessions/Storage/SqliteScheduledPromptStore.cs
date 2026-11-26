@@ -77,9 +77,9 @@ public sealed class SqliteScheduledPromptStore(
                 payload_json = excluded.payload_json;
             """;
         command.Parameters.AddWithValue("$scheduleId", definition.Id);
-        command.Parameters.AddWithValue("$updatedAtUtc", (definition.LastOutcome?.OccurredAtUtc ?? definition.LastRunUtc ?? DateTimeOffset.UtcNow).ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", (definition.LastOutcome?.OccurredAtUtc ?? definition.LastRunUtc ?? DateTimeOffset.UtcNow).ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$enabled", definition.Enabled ? 1 : 0);
-        command.Parameters.AddWithValue("$nextRunUtc", definition.NextRunUtc?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("$nextRunUtc", definition.NextRunUtc?.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture) ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("$payloadJson", JsonSerializer.Serialize(definition, ProtocolJsonContext.Default.ScheduledPromptDefinition));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }

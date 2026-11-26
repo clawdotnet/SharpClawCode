@@ -20,6 +20,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
     private int _consecutiveFailures;
     private DateTimeOffset _circuitOpenedAt;
     private bool _circuitOpen;
+    private DateTimeOffset? _halfOpenProbeStartedAt;
 
     public ResilientProviderDecorator(IModelProvider inner, ProviderResilienceOptions options, ILogger logger)
     {
@@ -60,6 +61,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
             using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(callerCancellationToken, timeoutCts.Token);
             var emittedEvent = false;
             Exception? attemptException = null;
+            ProviderEvent? failedEvent = null;
             IAsyncEnumerator<ProviderEvent>? enumerator = null;
 
             try
@@ -96,8 +98,18 @@ internal sealed class ResilientProviderDecorator : IModelProvider
                             break;
                         }
 
+                        var current = enumerator.Current;
+                        if (current.IsTerminal && string.Equals(current.Kind, "failed", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // SDK adapters convert HTTP errors into a terminal failed event rather than throwing,
+                            // so a failed event is a failed attempt: it must count toward the circuit and be retried.
+                            failedEvent = current;
+                            attemptException = new ProviderStreamFailedEventException(current);
+                            break;
+                        }
+
                         emittedEvent = true;
-                        yield return enumerator.Current;
+                        yield return current;
                     }
                 }
                 finally
@@ -129,6 +141,15 @@ internal sealed class ResilientProviderDecorator : IModelProvider
                 throw new InvalidOperationException("Provider execution failed without an exception.");
             }
 
+            if (failedEvent is not null && (emittedEvent || !ProviderStreamFailureClassifier.IsTransientFailedEvent(failedEvent)))
+            {
+                // Partial output was already streamed (cannot replay) or the failure is not retryable:
+                // surface the original failed event so callers can classify it (auth, context overflow, ...).
+                RecordFailureAndOpenCircuitIfNeeded();
+                yield return failedEvent;
+                yield break;
+            }
+
             if (!IsTransient(attemptException))
             {
                 RecordFailureAndOpenCircuitIfNeeded();
@@ -144,6 +165,12 @@ internal sealed class ResilientProviderDecorator : IModelProvider
             RecordFailureAndOpenCircuitIfNeeded();
             if (emittedEvent || attempt >= _options.MaxRetries || IsCircuitOpen())
             {
+                if (failedEvent is not null)
+                {
+                    yield return failedEvent;
+                    yield break;
+                }
+
                 break;
             }
 
@@ -175,14 +202,28 @@ internal sealed class ResilientProviderDecorator : IModelProvider
                 return;
             }
 
-            var elapsed = DateTimeOffset.UtcNow - _circuitOpenedAt;
+            var now = DateTimeOffset.UtcNow;
+            var elapsed = now - _circuitOpenedAt;
             if (elapsed >= _options.CircuitBreakerBreakDuration)
             {
-                _circuitOpen = false;
-                _logger.LogInformation(
-                    "Circuit breaker entering half-open state for provider {Provider}. Allowing probe request.",
-                    ProviderName);
-                return;
+                // Half-open: admit exactly one probe at a time. A probe that never reports back (stream never
+                // enumerated) expires after the request timeout so the breaker cannot wedge.
+                var probeInFlight = _halfOpenProbeStartedAt is { } probeStartedAt
+                    && now - probeStartedAt < _options.RequestTimeout;
+                if (!probeInFlight)
+                {
+                    _halfOpenProbeStartedAt = now;
+                    _logger.LogInformation(
+                        "Circuit breaker entering half-open state for provider {Provider}. Allowing probe request.",
+                        ProviderName);
+                    return;
+                }
+
+                throw new ProviderExecutionException(
+                    ProviderName,
+                    request.Model,
+                    ProviderFailureKind.StreamFailed,
+                    $"Circuit breaker for provider '{ProviderName}' is half-open and a probe request is already in flight.");
             }
 
             var remaining = _options.CircuitBreakerBreakDuration - elapsed;
@@ -200,24 +241,29 @@ internal sealed class ResilientProviderDecorator : IModelProvider
 
     private static bool IsTransient(Exception exception)
     {
+        if (exception is ProviderStreamFailedEventException failedEventException)
+        {
+            return ProviderStreamFailureClassifier.IsTransientFailedEvent(failedEventException.FailedEvent);
+        }
+
         if (exception is ProviderExecutionException providerException
-            && providerException.Kind is ProviderFailureKind.AuthenticationUnavailable or ProviderFailureKind.MissingProvider)
+            && providerException.Kind is ProviderFailureKind.AuthenticationUnavailable or ProviderFailureKind.MissingProvider or ProviderFailureKind.ContextWindowExceeded)
         {
             return false;
         }
 
         return exception is not ArgumentException
-            && exception is HttpRequestException or OperationCanceledException or TimeoutException or IOException;
+            && (exception is OperationCanceledException || ProviderStreamFailureClassifier.IsTransient(exception));
     }
 
     private TimeSpan ComputeDelay(int attempt, Exception exception)
     {
-        if (exception is HttpRequestException { StatusCode: HttpStatusCode.TooManyRequests } httpException
-            && httpException.Data.Contains("Retry-After")
-            && httpException.Data["Retry-After"] is int retryAfterSeconds and > 0)
+        var retryAfter = exception is ProviderStreamFailedEventException failedEventException
+            ? ProviderStreamFailureClassifier.TryGetRetryAfter(failedEventException.FailedEvent)
+            : ProviderStreamFailureClassifier.TryGetRetryAfter(exception);
+        if (retryAfter is { } hinted && hinted > TimeSpan.Zero)
         {
-            var retryAfter = TimeSpan.FromSeconds(retryAfterSeconds);
-            return retryAfter <= _options.MaxRetryDelay ? retryAfter : _options.MaxRetryDelay;
+            return hinted <= _options.MaxRetryDelay ? hinted : _options.MaxRetryDelay;
         }
 
         var exponential = _options.InitialRetryDelay.TotalMilliseconds * Math.Pow(2, attempt);
@@ -236,6 +282,7 @@ internal sealed class ResilientProviderDecorator : IModelProvider
 
             _consecutiveFailures = 0;
             _circuitOpen = false;
+            _halfOpenProbeStartedAt = null;
         }
     }
 
@@ -259,10 +306,17 @@ internal sealed class ResilientProviderDecorator : IModelProvider
 
             _circuitOpen = true;
             _circuitOpenedAt = DateTimeOffset.UtcNow;
+            _halfOpenProbeStartedAt = null;
             _logger.LogError(
                 "Circuit breaker opened for provider {Provider} after {Failures} consecutive failures.",
                 ProviderName,
                 _consecutiveFailures);
         }
+    }
+
+    private sealed class ProviderStreamFailedEventException(ProviderEvent failedEvent)
+        : Exception(failedEvent.Content ?? "Provider stream reported a failure.")
+    {
+        public ProviderEvent FailedEvent { get; } = failedEvent;
     }
 }

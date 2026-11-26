@@ -42,6 +42,18 @@ public sealed class AcpStdioHostTests
     }
 
     [Fact]
+    public async Task RunAsync_should_not_answer_notifications()
+    {
+        var host = CreateHost();
+        using var input = new StringReader("""{"jsonrpc":"2.0","method":"session/cancel","params":{}}""");
+        using var output = new StringWriter(new StringBuilder());
+
+        await host.RunAsync(input, output, CancellationToken.None);
+
+        output.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task RunAsync_should_return_invalid_request_for_missing_method()
     {
         var host = CreateHost();

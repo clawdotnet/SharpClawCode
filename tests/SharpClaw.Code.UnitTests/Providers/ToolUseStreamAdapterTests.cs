@@ -294,8 +294,9 @@ public sealed class ToolUseStreamAdapterTests
 
         var result = OpenAiMessageBuilder.BuildMessages(messages);
 
+        // OpenAI-compatible APIs require tool results in tool-role messages; MEAI drops them from user messages.
         result.Should().HaveCount(1);
-        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.User);
+        result[0].Role.Should().Be(Microsoft.Extensions.AI.ChatRole.Tool);
         result[0].Contents.Should().HaveCount(1);
 
         var resultItem = result[0].Contents[0];

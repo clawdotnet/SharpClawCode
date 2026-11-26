@@ -27,7 +27,7 @@ public sealed class SqliteEventStore(
             VALUES ($sessionId, $occurredAtUtc, $eventType, $payloadJson);
             """;
         command.Parameters.AddWithValue("$sessionId", sessionId);
-        command.Parameters.AddWithValue("$occurredAtUtc", runtimeEvent.OccurredAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$occurredAtUtc", runtimeEvent.OccurredAtUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$eventType", runtimeEvent.GetType().Name);
         command.Parameters.AddWithValue("$payloadJson", JsonSerializer.Serialize(runtimeEvent, ProtocolJsonContext.Default.RuntimeEvent));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

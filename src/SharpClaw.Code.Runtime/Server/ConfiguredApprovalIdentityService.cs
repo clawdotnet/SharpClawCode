@@ -211,8 +211,13 @@ public sealed class ConfiguredApprovalIdentityService(
                 new OpenIdConnectConfigurationRetriever(),
                 new HttpDocumentRetriever
                 {
-                    RequireHttps = false,
+                    // Signing keys fetched over plain HTTP could be substituted by a network attacker and used to
+                    // forge approval principals; only loopback authorities (local IdPs, tests) may skip TLS.
+                    RequireHttps = !IsLoopbackAuthority(key),
                 }));
+
+    private static bool IsLoopbackAuthority(string authority)
+        => Uri.TryCreate(authority, UriKind.Absolute, out var uri) && uri.IsLoopback;
 
     private static string[]? ReadDelimitedHeader(IReadOnlyDictionary<string, string> headers, string headerName)
     {

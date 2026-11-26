@@ -28,7 +28,7 @@ public sealed partial class DangerousShellPatternRule : IPermissionRule
         }
 
         return IsDangerous(command)
-            ? Task.FromResult(PermissionRuleResult.RequireApproval($"The shell command '{command}' matches a dangerous command pattern.", canRememberApproval: false))
+            ? Task.FromResult(PermissionRuleResult.RequireApproval($"The shell command '{command}' matches a dangerous command pattern.", canRememberApproval: false, allowAutoApproval: false))
             : Task.FromResult(PermissionRuleResult.Abstain());
     }
 

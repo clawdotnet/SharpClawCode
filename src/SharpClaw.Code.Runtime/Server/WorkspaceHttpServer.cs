@@ -51,6 +51,14 @@ public sealed class WorkspaceHttpServer(
         var effectiveHost = string.IsNullOrWhiteSpace(host) ? config.Document.Server?.Host ?? "127.0.0.1" : host!;
         var effectivePort = port is > 0 ? port.Value : config.Document.Server?.Port ?? 7345;
         var prefix = $"http://{effectiveHost}:{effectivePort}/";
+        if (!IsLoopbackHost(effectiveHost) && config.Document.Server?.ApprovalAuth is not { Mode: not ApprovalAuthMode.Disabled })
+        {
+            throw new InvalidOperationException(
+                $"Refusing to bind the SharpClaw server to non-loopback host '{effectiveHost}' without approval auth configured. "
+                + "Bind to 127.0.0.1/localhost or configure server.approvalAuth.");
+        }
+
+        var allowedHosts = BuildAllowedHosts(effectiveHost, config.Document.Server?.PublicBaseUrl);
 
         var listener = new HttpListener();
         try
@@ -76,7 +84,7 @@ public sealed class WorkspaceHttpServer(
                 }
 
                 _ = Task.Run(
-                    () => HandleRequestAsync(httpContext, workspaceRoot, context, cancellationToken),
+                    () => HandleRequestAsync(httpContext, workspaceRoot, context, allowedHosts, cancellationToken),
                     CancellationToken.None);
             }
         }
@@ -104,6 +112,7 @@ public sealed class WorkspaceHttpServer(
         HttpListenerContext httpContext,
         string workspaceRoot,
         RuntimeCommandContext defaultContext,
+        IReadOnlySet<string> allowedHosts,
         CancellationToken cancellationToken)
     {
         var request = httpContext.Request;
@@ -111,17 +120,46 @@ public sealed class WorkspaceHttpServer(
         var requestSucceeded = false;
         var statusCode = 500;
         var path = request.Url?.AbsolutePath ?? "/";
-        var requestHostContext = ResolveRequestHostContext(request, defaultContext.HostContext, tenantOverride: null);
-        var approvalAuthStatus = await approvalIdentityService.GetStatusAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        var approvalPrincipal = await approvalIdentityService
-            .ResolveAsync(workspaceRoot, CreateApprovalIdentityRequest(request), requestHostContext, cancellationToken)
-            .ConfigureAwait(false);
-        using var hostScope = hostContextAccessor.BeginScope(requestHostContext);
-        using var approvalScope = approvalPrincipalAccessor.BeginScope(approvalPrincipal, approvalAuthStatus);
-        var requestContext = defaultContext with { HostContext = requestHostContext };
+        IDisposable? hostScope = null;
+        IDisposable? approvalScope = null;
 
         try
         {
+            // Block DNS-rebinding and cross-site browser requests: the Host must be one we bind/publish,
+            // and any Origin a browser attaches must be that same host.
+            if (!IsAllowedHostHeader(request, allowedHosts) || !IsAllowedOrigin(request, allowedHosts))
+            {
+                statusCode = 403;
+                await WriteJsonAsync(response, 403, new ErrorEnvelope("Request host or origin is not allowed."), cancellationToken).ConfigureAwait(false);
+                requestSucceeded = true;
+                return;
+            }
+
+            if (request.HasEntityBody
+                && request.ContentLength64 != 0
+                && !IsJsonContentType(request.ContentType))
+            {
+                statusCode = 415;
+                await WriteJsonAsync(response, 415, new ErrorEnvelope("Request bodies must use Content-Type: application/json."), cancellationToken).ConfigureAwait(false);
+                requestSucceeded = true;
+                return;
+            }
+
+            var requestHostContext = ResolveRequestHostContext(request, defaultContext.HostContext, tenantOverride: null);
+            var approvalAuthStatus = await approvalIdentityService.GetStatusAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
+            var approvalPrincipal = await approvalIdentityService
+                .ResolveAsync(workspaceRoot, CreateApprovalIdentityRequest(request), requestHostContext, cancellationToken)
+                .ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(approvalPrincipal?.TenantId))
+            {
+                // An authenticated principal is bound to its tenant; never let a header pick another one.
+                requestHostContext = (requestHostContext ?? CreateDefaultHostContext()) with { TenantId = approvalPrincipal.TenantId, IsEmbeddedHost = true };
+            }
+
+            hostScope = hostContextAccessor.BeginScope(requestHostContext);
+            approvalScope = approvalPrincipalAccessor.BeginScope(approvalPrincipal, approvalAuthStatus);
+            var requestContext = defaultContext with { HostContext = requestHostContext };
+
             if (IsAdminPath(path)
                 && approvalAuthStatus.RequireForAdmin
                 && approvalPrincipal is null)
@@ -155,7 +193,7 @@ public sealed class WorkspaceHttpServer(
             }
             else if (request.HttpMethod == "POST" && path == "/v1/prompt")
             {
-                statusCode = await HandlePromptAsync(request, response, workspaceRoot, requestContext, cancellationToken).ConfigureAwait(false);
+                statusCode = await HandlePromptAsync(request, response, workspaceRoot, requestContext, approvalPrincipal, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "POST" && path.StartsWith("/v1/share/", StringComparison.Ordinal))
             {
@@ -229,11 +267,11 @@ public sealed class WorkspaceHttpServer(
             }
             else if (request.HttpMethod == "GET" && path == "/v1/admin/usage/summary")
             {
-                statusCode = await HandleUsageSummaryAsync(request, response, workspaceRoot, cancellationToken).ConfigureAwait(false);
+                statusCode = await HandleUsageSummaryAsync(request, response, workspaceRoot, approvalPrincipal, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path == "/v1/admin/usage/detail")
             {
-                statusCode = await HandleUsageDetailAsync(request, response, workspaceRoot, cancellationToken).ConfigureAwait(false);
+                statusCode = await HandleUsageDetailAsync(request, response, workspaceRoot, approvalPrincipal, cancellationToken).ConfigureAwait(false);
             }
             else if (request.HttpMethod == "GET" && path.StartsWith("/s/", StringComparison.Ordinal))
             {
@@ -258,16 +296,45 @@ public sealed class WorkspaceHttpServer(
 
             requestSucceeded = statusCode < 500;
         }
+        catch (BadRequestException exception)
+        {
+            statusCode = exception.StatusCode;
+            requestSucceeded = true;
+            await TryWriteJsonAsync(response, exception.StatusCode, new ErrorEnvelope(exception.Message), cancellationToken).ConfigureAwait(false);
+        }
+        catch (JsonException exception)
+        {
+            statusCode = 400;
+            requestSucceeded = true;
+            await TryWriteJsonAsync(response, 400, new ErrorEnvelope($"Malformed JSON request body: {exception.Message}"), cancellationToken).ConfigureAwait(false);
+        }
         catch (Exception exception)
         {
             logger.LogError(exception, "Embedded server request handling failed for {Method} {Path}.", request.HttpMethod, path);
             statusCode = 500;
-            await WriteJsonAsync(response, 500, new ErrorEnvelope(exception.Message), cancellationToken).ConfigureAwait(false);
+            await TryWriteJsonAsync(response, 500, new ErrorEnvelope(exception.Message), cancellationToken).ConfigureAwait(false);
         }
         finally
         {
-            await DispatchServerHookAsync(workspaceRoot, request, path, statusCode, requestSucceeded).ConfigureAwait(false);
-            response.Close();
+            approvalScope?.Dispose();
+            hostScope?.Dispose();
+            try
+            {
+                await DispatchServerHookAsync(workspaceRoot, request, path, statusCode, requestSucceeded).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(exception, "Server request hook dispatch failed for {Method} {Path}.", request.HttpMethod, path);
+            }
+
+            try
+            {
+                response.Close();
+            }
+            catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException or InvalidOperationException)
+            {
+                // Client disconnected; nothing more to do.
+            }
         }
     }
 
@@ -276,26 +343,35 @@ public sealed class WorkspaceHttpServer(
         HttpListenerResponse response,
         string workspaceRoot,
         RuntimeCommandContext defaultContext,
+        ApprovalPrincipal? approvalPrincipal,
         CancellationToken cancellationToken)
     {
-        await using var body = request.InputStream;
-        var payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.ServerPromptRequest, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("Request body is required.");
+        var payload = await ReadJsonBodyAsync(request, ProtocolJsonContext.Default.ServerPromptRequest, cancellationToken).ConfigureAwait(false)
+            ?? throw new BadRequestException("Request body is required.");
         if (string.IsNullOrWhiteSpace(payload.Prompt))
         {
-            throw new InvalidOperationException("The 'prompt' field is required.");
+            throw new BadRequestException("The 'prompt' field is required.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(approvalPrincipal?.TenantId)
+            && !string.IsNullOrWhiteSpace(payload.TenantId)
+            && !string.Equals(payload.TenantId, approvalPrincipal.TenantId, StringComparison.Ordinal))
+        {
+            throw new BadRequestException("The requested tenant does not match the authenticated principal.", 403);
         }
 
         var commandContext = new RuntimeCommandContext(
             WorkingDirectory: workspaceRoot,
             Model: payload.Model ?? defaultContext.Model,
-            PermissionMode: payload.PermissionMode ?? defaultContext.PermissionMode,
+            PermissionMode: ClampPermissionMode(payload.PermissionMode, defaultContext.PermissionMode),
             OutputFormat: payload.OutputFormat ?? OutputFormat.Json,
             PrimaryMode: payload.PrimaryMode ?? defaultContext.PrimaryMode,
             SessionId: payload.SessionId ?? defaultContext.SessionId,
             AgentId: payload.AgentId ?? defaultContext.AgentId,
             IsInteractive: false,
-            HostContext: ResolveRequestHostContext(request, defaultContext.HostContext, payload.TenantId));
+            HostContext: string.IsNullOrWhiteSpace(approvalPrincipal?.TenantId)
+                ? ResolveRequestHostContext(request, defaultContext.HostContext, payload.TenantId)
+                : defaultContext.HostContext);
 
         TurnExecutionResult result;
         using (hostContextAccessor.BeginScope(commandContext.HostContext))
@@ -342,16 +418,15 @@ public sealed class WorkspaceHttpServer(
         CancellationToken cancellationToken)
     {
         AdminCreateSessionRequest? payload = null;
-        if (request.HasEntityBody)
+        if (request.HasEntityBody && request.ContentLength64 != 0)
         {
-            await using var body = request.InputStream;
-            payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.AdminCreateSessionRequest, cancellationToken).ConfigureAwait(false);
+            payload = await ReadJsonBodyAsync(request, ProtocolJsonContext.Default.AdminCreateSessionRequest, cancellationToken).ConfigureAwait(false);
         }
 
         var session = await conversationRuntime
             .CreateSessionAsync(
                 workspaceRoot,
-                payload?.PermissionMode ?? context.PermissionMode,
+                ClampPermissionMode(payload?.PermissionMode, context.PermissionMode),
                 payload?.OutputFormat ?? context.OutputFormat,
                 cancellationToken)
             .ConfigureAwait(false);
@@ -378,9 +453,8 @@ public sealed class WorkspaceHttpServer(
         string workspaceRoot,
         CancellationToken cancellationToken)
     {
-        await using var body = request.InputStream;
-        var payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.WorkspaceSearchRequest, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("Request body is required.");
+        var payload = await ReadJsonBodyAsync(request, ProtocolJsonContext.Default.WorkspaceSearchRequest, cancellationToken).ConfigureAwait(false)
+            ?? throw new BadRequestException("Request body is required.");
         var result = await workspaceSearchService.SearchAsync(workspaceRoot, payload, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(response, 200, result, cancellationToken).ConfigureAwait(false);
         return 200;
@@ -451,9 +525,8 @@ public sealed class WorkspaceHttpServer(
         string workspaceRoot,
         CancellationToken cancellationToken)
     {
-        await using var body = request.InputStream;
-        var payload = await JsonSerializer.DeserializeAsync(body, ProtocolJsonContext.Default.ToolPackageInstallRequest, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException("Request body is required.");
+        var payload = await ReadJsonBodyAsync(request, ProtocolJsonContext.Default.ToolPackageInstallRequest, cancellationToken).ConfigureAwait(false)
+            ?? throw new BadRequestException("Request body is required.");
         var result = await toolPackageService.InstallAsync(workspaceRoot, payload, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(response, 200, result, cancellationToken).ConfigureAwait(false);
         return 200;
@@ -463,9 +536,10 @@ public sealed class WorkspaceHttpServer(
         HttpListenerRequest request,
         HttpListenerResponse response,
         string workspaceRoot,
+        ApprovalPrincipal? approvalPrincipal,
         CancellationToken cancellationToken)
     {
-        var query = ParseUsageQuery(request, workspaceRoot);
+        var query = ParseUsageQuery(request, workspaceRoot, approvalPrincipal);
         var report = await usageMeteringService.GetSummaryAsync(workspaceRoot, query, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(response, 200, report, cancellationToken).ConfigureAwait(false);
         return 200;
@@ -475,9 +549,10 @@ public sealed class WorkspaceHttpServer(
         HttpListenerRequest request,
         HttpListenerResponse response,
         string workspaceRoot,
+        ApprovalPrincipal? approvalPrincipal,
         CancellationToken cancellationToken)
     {
-        var query = ParseUsageQuery(request, workspaceRoot);
+        var query = ParseUsageQuery(request, workspaceRoot, approvalPrincipal);
         var limit = ParseInt(request.QueryString["limit"], 100, 1, 1000);
         var report = await usageMeteringService.GetDetailAsync(workspaceRoot, query, limit, cancellationToken).ConfigureAwait(false);
         await WriteJsonAsync(response, 200, report, cancellationToken).ConfigureAwait(false);
@@ -575,11 +650,12 @@ public sealed class WorkspaceHttpServer(
         return new ApprovalIdentityRequest(request.Headers["Authorization"], headers);
     }
 
-    private static UsageMeteringQuery ParseUsageQuery(HttpListenerRequest request, string workspaceRoot)
+    private static UsageMeteringQuery ParseUsageQuery(HttpListenerRequest request, string workspaceRoot, ApprovalPrincipal? approvalPrincipal)
         => new(
             FromUtc: TryParseDateTimeOffset(request.QueryString["fromUtc"] ?? request.QueryString["from"]),
             ToUtc: TryParseDateTimeOffset(request.QueryString["toUtc"] ?? request.QueryString["to"]),
-            TenantId: request.QueryString["tenantId"],
+            // Authenticated principals may only query their own tenant.
+            TenantId: string.IsNullOrWhiteSpace(approvalPrincipal?.TenantId) ? request.QueryString["tenantId"] : approvalPrincipal.TenantId,
             HostId: request.QueryString["hostId"],
             WorkspaceRoot: workspaceRoot,
             SessionId: request.QueryString["sessionId"]);
@@ -593,8 +669,10 @@ public sealed class WorkspaceHttpServer(
         var tenantId = string.IsNullOrWhiteSpace(tenantOverride)
             ? HeaderOrDefault(request, "X-SharpClaw-Tenant-Id", fallback?.TenantId)
             : tenantOverride;
-        var storageRoot = HeaderOrDefault(request, "X-SharpClaw-Storage-Root", fallback?.StorageRoot);
-        var sessionStoreKind = TryParseEnum<SessionStoreKind>(request.Headers["X-SharpClaw-Session-Store"]) ?? fallback?.SessionStoreKind ?? SessionStoreKind.FileSystem;
+        // Storage root and session store are server configuration; HTTP callers must not be able to redirect
+        // persistence to arbitrary directories, so request headers for them are ignored.
+        var storageRoot = fallback?.StorageRoot;
+        var sessionStoreKind = fallback?.SessionStoreKind ?? SessionStoreKind.FileSystem;
         var isEmbeddedHost = fallback?.IsEmbeddedHost ?? false;
 
         if (string.IsNullOrWhiteSpace(hostId)
@@ -653,7 +731,137 @@ public sealed class WorkspaceHttpServer(
         => int.TryParse(value, out var parsed) ? Math.Clamp(parsed, min, max) : fallback;
 
     private static DateTimeOffset? TryParseDateTimeOffset(string? value)
-        => DateTimeOffset.TryParse(value, out var parsed) ? parsed : null;
+        => DateTimeOffset.TryParse(value, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed.ToUniversalTime()
+            : null;
+
+    private const long MaxRequestBodyBytes = 8 * 1024 * 1024;
+
+    private static async Task<T?> ReadJsonBodyAsync<T>(HttpListenerRequest request, JsonTypeInfo<T> typeInfo, CancellationToken cancellationToken)
+    {
+        if (request.ContentLength64 > MaxRequestBodyBytes)
+        {
+            throw new BadRequestException($"Request body exceeds the {MaxRequestBodyBytes} byte limit.", 413);
+        }
+
+        await using var body = request.InputStream;
+        using var buffer = new MemoryStream();
+        var chunk = new byte[81920];
+        int read;
+        while ((read = await body.ReadAsync(chunk, cancellationToken).ConfigureAwait(false)) > 0)
+        {
+            if (buffer.Length + read > MaxRequestBodyBytes)
+            {
+                throw new BadRequestException($"Request body exceeds the {MaxRequestBodyBytes} byte limit.", 413);
+            }
+
+            buffer.Write(chunk, 0, read);
+        }
+
+        if (buffer.Length == 0)
+        {
+            return default;
+        }
+
+        buffer.Position = 0;
+        return await JsonSerializer.DeserializeAsync(buffer, typeInfo, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static PermissionMode ClampPermissionMode(PermissionMode? requested, PermissionMode serverDefault)
+        => requested is { } value && value < serverDefault ? value : serverDefault;
+
+    private static RuntimeHostContext CreateDefaultHostContext()
+        => new(HostId: "workspace-http-server", TenantId: null, StorageRoot: null, SessionStoreKind: SessionStoreKind.FileSystem, IsEmbeddedHost: false);
+
+    private static bool IsJsonContentType(string? contentType)
+    {
+        if (string.IsNullOrWhiteSpace(contentType))
+        {
+            return false;
+        }
+
+        var mediaType = contentType.Split(';', 2)[0].Trim();
+        return mediaType.Equals("application/json", StringComparison.OrdinalIgnoreCase)
+            || (mediaType.StartsWith("application/", StringComparison.OrdinalIgnoreCase) && mediaType.EndsWith("+json", StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool IsLoopbackHost(string host)
+    {
+        var name = host.Trim('[', ']');
+        return name.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || (IPAddress.TryParse(name, out var address) && IPAddress.IsLoopback(address));
+    }
+
+    private static IReadOnlySet<string> BuildAllowedHosts(string bindHost, string? publicBaseUrl)
+    {
+        var hosts = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "localhost", "127.0.0.1", "::1" };
+        var bindName = bindHost.Trim('[', ']');
+        if (bindName is not ("*" or "+" or "0.0.0.0" or "::"))
+        {
+            hosts.Add(bindName);
+        }
+
+        if (!string.IsNullOrWhiteSpace(publicBaseUrl) && Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var publicUri))
+        {
+            hosts.Add(publicUri.Host.Trim('[', ']'));
+        }
+
+        return hosts;
+    }
+
+    private static bool IsAllowedHostHeader(HttpListenerRequest request, IReadOnlySet<string> allowedHosts)
+    {
+        var hostHeader = request.Headers["Host"];
+        if (string.IsNullOrWhiteSpace(hostHeader) || !Uri.TryCreate($"http://{hostHeader}", UriKind.Absolute, out var hostUri))
+        {
+            return false;
+        }
+
+        return allowedHosts.Contains(hostUri.Host.Trim('[', ']')) || IsLoopbackHost(hostUri.Host);
+    }
+
+    private static bool IsAllowedOrigin(HttpListenerRequest request, IReadOnlySet<string> allowedHosts)
+    {
+        var origin = request.Headers["Origin"];
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            // Non-browser clients (CLI, SDK, editors) do not send Origin.
+            return true;
+        }
+
+        if (!Uri.TryCreate(origin, UriKind.Absolute, out var originUri)
+            || (originUri.Scheme != Uri.UriSchemeHttp && originUri.Scheme != Uri.UriSchemeHttps))
+        {
+            return false;
+        }
+
+        var originHost = originUri.Host.Trim('[', ']');
+        if (!allowedHosts.Contains(originHost) && !IsLoopbackHost(originHost))
+        {
+            return false;
+        }
+
+        // A loopback origin must be the server itself, not some other local web app on a different port.
+        var requestPort = request.Url?.Port ?? -1;
+        return !IsLoopbackHost(originHost) || originUri.Port == requestPort;
+    }
+
+    private static async Task TryWriteJsonAsync(HttpListenerResponse response, int statusCode, object payload, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await WriteJsonAsync(response, statusCode, payload, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception) when (exception is HttpListenerException or ObjectDisposedException or InvalidOperationException or IOException or OperationCanceledException)
+        {
+            // Headers may already be sent (SSE) or the client disconnected.
+        }
+    }
+
+    private sealed class BadRequestException(string message, int statusCode = 400) : Exception(message)
+    {
+        public int StatusCode { get; } = statusCode;
+    }
 
     private sealed record ServerCommandEnvelope(
         bool Succeeded,

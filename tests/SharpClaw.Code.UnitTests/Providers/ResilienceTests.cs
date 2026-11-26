@@ -269,6 +269,78 @@ public sealed class ResilienceTests
         mock.CallCount.Should().Be(2);
     }
 
+    [Fact]
+    public async Task Retries_transient_failed_event_before_any_output()
+    {
+        // SDK adapters surface HTTP errors as a terminal failed event instead of throwing.
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 503 ServiceUnavailable: overloaded"))));
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, SingleEvent())));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        var events = await CollectAsync(stream.Events);
+
+        mock.CallCount.Should().Be(2);
+        events.Should().ContainSingle().Which.Kind.Should().Be("completed");
+    }
+
+    [Fact]
+    public async Task Does_not_retry_non_transient_failed_event_and_surfaces_it()
+    {
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 400 BadRequest: invalid request"))));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        var events = await CollectAsync(stream.Events);
+
+        mock.CallCount.Should().Be(1);
+        events.Should().ContainSingle().Which.Kind.Should().Be("failed");
+    }
+
+    [Fact]
+    public async Task Failed_events_count_toward_the_circuit_breaker()
+    {
+        var mock = new CountingMockProvider();
+        for (var i = 0; i < 3; i++)
+        {
+            mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 400 BadRequest: invalid"))));
+        }
+
+        var decorator = BuildDecorator(mock, new ProviderResilienceOptions
+        {
+            MaxRetries = 0,
+            InitialRetryDelay = TimeSpan.Zero,
+            MaxRetryDelay = TimeSpan.Zero,
+            RequestTimeout = TimeSpan.FromSeconds(30),
+            CircuitBreakerFailureThreshold = 2,
+            CircuitBreakerBreakDuration = TimeSpan.FromMinutes(5),
+        });
+
+        for (var i = 0; i < 2; i++)
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        }
+
+        var open = async () => await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await open.Should().ThrowAsync<ProviderExecutionException>().WithMessage("*Circuit breaker is open*");
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> FailedEventStream(string message)
+    {
+        await Task.Yield();
+        yield return new ProviderEvent(
+            Id: Guid.NewGuid().ToString("N"),
+            RequestId: FakeRequest.Id,
+            Kind: "failed",
+            CreatedAtUtc: DateTimeOffset.UtcNow,
+            Content: message,
+            IsTerminal: true,
+            Usage: null);
+    }
+
     private static async Task DrainAsync(IAsyncEnumerable<ProviderEvent> events)
         => _ = await CollectAsync(events);
 

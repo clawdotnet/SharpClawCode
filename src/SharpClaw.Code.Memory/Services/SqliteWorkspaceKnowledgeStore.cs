@@ -129,15 +129,16 @@ public sealed class SqliteWorkspaceKnowledgeStore(
         var sql = """
             SELECT path, name, kind, container, line, column_number
             FROM indexed_symbols
-            WHERE name LIKE $pattern OR COALESCE(container, '') LIKE $pattern
-            ORDER BY CASE WHEN name = $exact THEN 0 WHEN name LIKE $prefix THEN 1 ELSE 2 END, name
+            WHERE name LIKE $pattern ESCAPE '\' OR COALESCE(container, '') LIKE $pattern ESCAPE '\'
+            ORDER BY CASE WHEN name = $exact THEN 0 WHEN name LIKE $prefix ESCAPE '\' THEN 1 ELSE 2 END, name
             LIMIT $limit;
             """;
         await using var command = connection.CreateCommand();
         command.CommandText = sql;
-        command.Parameters.AddWithValue("$pattern", $"%{query}%");
+        var escapedQuery = EscapeLikePattern(query);
+        command.Parameters.AddWithValue("$pattern", $"%{escapedQuery}%");
         command.Parameters.AddWithValue("$exact", query);
-        command.Parameters.AddWithValue("$prefix", $"{query}%");
+        command.Parameters.AddWithValue("$prefix", $"{escapedQuery}%");
         command.Parameters.AddWithValue("$limit", limit);
 
         await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
@@ -470,7 +471,10 @@ public sealed class SqliteWorkspaceKnowledgeStore(
         {
             DataSource = dbPath,
             Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
+            // Private cache: shared-cache mode surfaces SQLITE_LOCKED immediately (busy timeout does not apply),
+            // which breaks concurrent reads during long index-write transactions.
+            Cache = SqliteCacheMode.Private,
+            DefaultTimeout = 30,
         }.ToString();
         connectionPools.TryAdd(connectionString, 0);
         var connection = new SqliteConnection(connectionString);
@@ -666,6 +670,11 @@ public sealed class SqliteWorkspaceKnowledgeStore(
             WorkspaceKnowledgeDirectoryName,
             UserMemoryFileName);
 
+    private static string EscapeLikePattern(string value)
+        => value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal);
+
     private static string NormalizeFtsQuery(string query)
     {
         if (string.IsNullOrWhiteSpace(query))
@@ -677,7 +686,8 @@ public sealed class SqliteWorkspaceKnowledgeStore(
             .Split([' ', '\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries)
             .Select(static token => new string(token.Where(static character => char.IsLetterOrDigit(character) || character == '_').ToArray()))
             .Where(static token => !string.IsNullOrWhiteSpace(token))
-            .Select(static token => token.EndsWith('*') ? token : $"{token}*");
+            // Quote every token so FTS5 operators (AND, OR, NOT, NEAR) are treated as literal terms.
+            .Select(static token => $"\"{token}\"*");
 
         return string.Join(" ", tokens);
     }

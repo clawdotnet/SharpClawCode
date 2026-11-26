@@ -25,6 +25,10 @@ internal static class AnthropicSdkStreamAdapter
         string? pendingToolName = null;
         System.Text.StringBuilder? pendingToolInputBuilder = null;
 
+        // message_start carries input/cache usage; message_delta carries cumulative output usage.
+        long inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheCreationTokens = 0;
+        var sawUsage = false;
+
         IAsyncEnumerator<RawMessageStreamEvent>? enumerator = null;
         try
         {
@@ -61,7 +65,25 @@ internal static class AnthropicSdkStreamAdapter
 
                 var ev = enumerator.Current;
 
-                if (ev.TryPickContentBlockStart(out var blockStart))
+                if (ev.TryPickStart(out var messageStart))
+                {
+                    var startUsage = messageStart.Message.Usage;
+                    inputTokens = Tokens(startUsage.InputTokens);
+                    outputTokens = Tokens(startUsage.OutputTokens);
+                    cacheReadTokens = Tokens(startUsage.CacheReadInputTokens);
+                    cacheCreationTokens = Tokens(startUsage.CacheCreationInputTokens);
+                    sawUsage = true;
+                }
+                else if (ev.TryPickDelta(out var messageDelta))
+                {
+                    var deltaUsage = messageDelta.Usage;
+                    outputTokens = Math.Max(outputTokens, Tokens(deltaUsage.OutputTokens));
+                    inputTokens = Math.Max(inputTokens, Tokens(deltaUsage.InputTokens));
+                    cacheReadTokens = Math.Max(cacheReadTokens, Tokens(deltaUsage.CacheReadInputTokens));
+                    cacheCreationTokens = Math.Max(cacheCreationTokens, Tokens(deltaUsage.CacheCreationInputTokens));
+                    sawUsage = true;
+                }
+                else if (ev.TryPickContentBlockStart(out var blockStart))
                 {
                     if (blockStart.ContentBlock.TryPickToolUse(out var toolUse))
                     {
@@ -87,6 +109,12 @@ internal static class AnthropicSdkStreamAdapter
                     if (pendingToolUseId is not null && pendingToolName is not null && pendingToolInputBuilder is not null)
                     {
                         var toolInputJson = pendingToolInputBuilder.ToString();
+                        if (string.IsNullOrWhiteSpace(toolInputJson))
+                        {
+                            // Zero-argument tool calls stream no input_json_delta; normalize to an empty object.
+                            toolInputJson = "{}";
+                        }
+
                         yield return ProviderStreamEventFactory.ToolUse(requestId, clock, pendingToolUseId, pendingToolName, toolInputJson);
                         pendingToolUseId = null;
                         pendingToolName = null;
@@ -95,7 +123,7 @@ internal static class AnthropicSdkStreamAdapter
                 }
                 else if (ev.TryPickStop(out _))
                 {
-                    yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
+                    yield return ProviderStreamEventFactory.Completed(requestId, clock, BuildUsage());
                     yield break;
                 }
             }
@@ -108,8 +136,27 @@ internal static class AnthropicSdkStreamAdapter
             }
         }
 
-        yield return ProviderStreamEventFactory.Completed(requestId, clock, null);
+        yield return ProviderStreamEventFactory.Completed(requestId, clock, BuildUsage());
+
+        UsageSnapshot? BuildUsage()
+        {
+            if (!sawUsage)
+            {
+                return null;
+            }
+
+            // Anthropic reports cache reads/writes separately from input_tokens; fold them into total input.
+            var totalInput = inputTokens + cacheReadTokens + cacheCreationTokens;
+            return new UsageSnapshot(
+                InputTokens: totalInput,
+                OutputTokens: outputTokens,
+                CachedInputTokens: cacheReadTokens,
+                TotalTokens: totalInput + outputTokens,
+                EstimatedCostUsd: null);
+        }
     }
+
+    private static long Tokens(long? value) => value ?? 0L;
 
     private static (string? Text, string? PartialJson) ExtractDeltas(RawContentBlockDelta delta)
     {

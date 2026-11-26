@@ -21,6 +21,9 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
 {
     private static long _nextSessionId;
     private static readonly ConcurrentDictionary<long, McpClient> Sessions = new();
+
+    /// <inheritdoc />
+    public bool IsSessionActive(long sessionHandle) => Sessions.ContainsKey(sessionHandle);
     private readonly ILoggerFactory resolvedLoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
     private readonly ILogger logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<SdkMcpProcessSupervisor>();
 
