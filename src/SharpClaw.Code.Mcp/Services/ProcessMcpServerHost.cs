@@ -24,6 +24,7 @@ public sealed class ProcessMcpServerHost(
 {
     private readonly ILogger<ProcessMcpServerHost> logger = logger ?? NullLogger<ProcessMcpServerHost>.Instance;
     private static readonly ConcurrentDictionary<string, SemaphoreSlim> ServerLocks = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, (int? Pid, long Handle)> OrphanedSessions = new(StringComparer.Ordinal);
 
     /// <inheritdoc />
     public async Task<McpServerStatus> StartAsync(string workspaceRoot, string serverId, CancellationToken cancellationToken)
@@ -58,21 +59,41 @@ public sealed class ProcessMcpServerHost(
             return server.Status;
         }
 
-        if (server.Status.SessionHandle is long leftover && leftover > 0 && processSupervisor.IsSessionActive(leftover, serverId))
+        // A previous start can have left a live session behind: recorded in the registry (its stop failed) or,
+        // if even that record could not be written, only in this host's in-memory orphan list. Stop it before
+        // starting a new one; if it still cannot be stopped, refuse to start so the old handle is never dropped.
+        var orphanKey = CreateServerLockKey(workspaceRoot, serverId);
+        var leftovers = new List<(int? Pid, long Handle)>();
+        if (server.Status.SessionHandle is long recorded && recorded > 0 && processSupervisor.IsSessionActive(recorded, serverId))
         {
-            // A previous start left a live session behind (for example its stop failed); shut it down first so
-            // this start does not leak a second session.
+            leftovers.Add((server.Status.Pid, recorded));
+        }
+
+        if (OrphanedSessions.TryGetValue(orphanKey, out var orphan)
+            && processSupervisor.IsSessionActive(orphan.Handle, serverId)
+            && !leftovers.Exists(item => item.Handle == orphan.Handle))
+        {
+            leftovers.Add(orphan);
+        }
+
+        foreach (var leftover in leftovers)
+        {
             try
             {
                 await processSupervisor
-                    .StopAsync(new McpProcessStopRequest(server.Status.Pid, leftover, serverId), cancellationToken)
+                    .StopAsync(new McpProcessStopRequest(leftover.Pid, leftover.Handle, serverId), cancellationToken)
                     .ConfigureAwait(false);
             }
             catch (Exception exception) when (exception is not OperationCanceledException)
             {
-                logger.LogWarning(exception, "Failed to stop the leftover MCP session for {ServerId} before restarting.", serverId);
+                logger.LogWarning(exception, "Failed to stop the leftover MCP session for {ServerId}; not starting another.", serverId);
+                throw new InvalidOperationException(
+                    $"MCP server '{serverId}' still has a running session that could not be stopped; stop it before starting again.",
+                    exception);
             }
         }
+
+        OrphanedSessions.TryRemove(orphanKey, out _);
 
         var startingStatus = new McpServerStatus(
             ServerId: serverId,
@@ -202,6 +223,9 @@ public sealed class ProcessMcpServerHost(
                     }
                     catch (Exception recordException)
                     {
+                        // Nothing durable could be written: keep the session in memory so the next start or stop
+                        // in this process can still reach it.
+                        OrphanedSessions[CreateServerLockKey(workspaceRoot, serverId)] = (processResult.Pid, processResult.SessionHandle);
                         logger.LogError(recordException, "Could not record the unreachable MCP session for {ServerId}.", serverId);
                     }
                 }
@@ -243,6 +267,15 @@ public sealed class ProcessMcpServerHost(
 
             await PersistAndEmitAsync(workspaceRoot, server.Status, faulted, cancellationToken).ConfigureAwait(false);
             return faulted;
+        }
+
+        if (OrphanedSessions.TryGetValue(CreateServerLockKey(workspaceRoot, serverId), out var orphan))
+        {
+            // A session that could not even be recorded is only known in memory; stop it as part of this stop.
+            await processSupervisor
+                .StopAsync(new McpProcessStopRequest(orphan.Pid, orphan.Handle, serverId), cancellationToken)
+                .ConfigureAwait(false);
+            OrphanedSessions.TryRemove(CreateServerLockKey(workspaceRoot, serverId), out _);
         }
 
         var stoppedStatus = server.Status with

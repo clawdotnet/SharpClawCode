@@ -63,6 +63,39 @@ public sealed class LocalFileSystemTests : IDisposable
         (await File.ReadAllLinesAsync(path)).Should().Equal("{\"first\":1}", "{\"second\":2}");
     }
 
+    [Fact]
+    public async Task WriteAllTextAsync_should_keep_a_restrictive_windows_dacl()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            await AssertRestrictiveDaclIsKeptAsync();
+        }
+    }
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private async Task AssertRestrictiveDaclIsKeptAsync()
+    {
+        var path = Path.Combine(root, "secret.json");
+        await File.WriteAllTextAsync(path, "old");
+        var currentUser = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var restrictive = new System.Security.AccessControl.FileSecurity();
+        restrictive.SetAccessRuleProtection(isProtected: true, preserveInheritance: false);
+        restrictive.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+            currentUser, System.Security.AccessControl.FileSystemRights.FullControl, System.Security.AccessControl.AccessControlType.Allow));
+        new FileInfo(path).SetAccessControl(restrictive);
+
+        await fileSystem.WriteAllTextAsync(path, "new", CancellationToken.None);
+
+        (await File.ReadAllTextAsync(path)).Should().Be("new");
+        var rules = new FileInfo(path)
+            .GetAccessControl()
+            .GetAccessRules(includeExplicit: true, includeInherited: true, typeof(System.Security.Principal.SecurityIdentifier))
+            .Cast<System.Security.AccessControl.FileSystemAccessRule>()
+            .ToArray();
+        rules.Should().OnlyContain(rule => rule.IdentityReference.Equals(currentUser), "the broader parent DACL must not leak onto the file");
+        Directory.GetFiles(root).Should().ContainSingle("no staging or backup file may be left behind");
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(root))
