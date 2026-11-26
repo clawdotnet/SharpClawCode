@@ -52,7 +52,17 @@ public sealed class GrepSearchTool(IPathService pathService) : SharpClawToolBase
         var pathResolver = new WorkspacePathResolver(pathService);
         var workspaceRoot = pathResolver.ResolveWorkspaceRoot(context);
         var matches = new List<GrepSearchMatch>();
-        foreach (var file in Directory.EnumerateFiles(workspaceRoot, "*", SearchOption.AllDirectories))
+        foreach (var file in Directory.EnumerateFiles(
+            workspaceRoot,
+            "*",
+            new EnumerationOptions
+            {
+                RecurseSubdirectories = true,
+                // Never follow symlinks/junctions: they can point outside the workspace boundary or form loops.
+                AttributesToSkip = FileAttributes.ReparsePoint,
+                IgnoreInaccessible = true,
+                MatchType = MatchType.Win32,
+            }))
         {
             cancellationToken.ThrowIfCancellationRequested();
             var relativePath = pathResolver.ToRelativePath(context, file);

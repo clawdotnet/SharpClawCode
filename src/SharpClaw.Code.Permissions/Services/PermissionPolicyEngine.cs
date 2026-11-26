@@ -26,6 +26,8 @@ public sealed class PermissionPolicyEngine(
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(context);
 
+        // Evaluate every rule so that a later Deny always beats an earlier RequireApproval.
+        PermissionRuleResult? pendingApproval = null;
         foreach (var rule in orderedRules)
         {
             var result = await rule.EvaluateAsync(request, context, cancellationToken).ConfigureAwait(false);
@@ -34,17 +36,60 @@ public sealed class PermissionPolicyEngine(
                 case PermissionRuleOutcome.Abstain:
                     continue;
                 case PermissionRuleOutcome.Allow:
-                    return CreateDecision(request.ApprovalScope, context.PermissionMode, true, result.Reason);
+                    if (pendingApproval is null)
+                    {
+                        return CreateDecision(request.ApprovalScope, context.PermissionMode, true, result.Reason);
+                    }
+
+                    continue;
                 case PermissionRuleOutcome.Deny:
                     return CreateDecision(request.ApprovalScope, context.PermissionMode, false, result.Reason);
                 case PermissionRuleOutcome.RequireApproval:
-                    return await ResolveApprovalAsync(request, context, result, cancellationToken).ConfigureAwait(false);
+                    pendingApproval = pendingApproval is null ? result : MergeApprovals(pendingApproval, result);
+                    continue;
                 default:
                     throw new InvalidOperationException($"Unhandled permission rule outcome '{result.Outcome}'.");
             }
         }
 
+        if (pendingApproval is not null)
+        {
+            // A rule asking for approval must never make a request more permissive than the mode alone would be:
+            // if the permission mode blocks the request outright, approval cannot unlock it.
+            if (TryGetModeHardDenial(request, context) is { } modeDenial)
+            {
+                return modeDenial;
+            }
+
+            return await ResolveApprovalAsync(request, context, pendingApproval, cancellationToken).ConfigureAwait(false);
+        }
+
         return await EvaluateByModeAsync(request, context, cancellationToken).ConfigureAwait(false);
+    }
+
+    private static PermissionRuleResult MergeApprovals(PermissionRuleResult first, PermissionRuleResult second)
+        => new(
+            PermissionRuleOutcome.RequireApproval,
+            CombineReasons(first.Reason, second.Reason),
+            CanRememberApproval: first.CanRememberApproval && second.CanRememberApproval,
+            AllowAutoApproval: first.AllowAutoApproval && second.AllowAutoApproval);
+
+    private static PermissionDecision? TryGetModeHardDenial(ToolExecutionRequest request, PermissionEvaluationContext context)
+    {
+        if (context.PermissionMode != PermissionMode.ReadOnly
+            || request.ApprovalScope == ApprovalScope.PromptOutsideWorkspaceRead)
+        {
+            return null;
+        }
+
+        var allowedInReadOnly = !request.IsDestructive && request.ApprovalScope is ApprovalScope.ToolExecution;
+        return allowedInReadOnly
+            ? null
+            : CreateDecision(
+                request.ApprovalScope,
+                context.PermissionMode,
+                false,
+                $"Permission mode '{context.PermissionMode}' blocks destructive or elevated tools.");
     }
 
     private async Task<PermissionDecision> EvaluateByModeAsync(
@@ -57,6 +102,13 @@ public sealed class PermissionPolicyEngine(
             PermissionMode.ReadOnly => await EvaluateReadOnlyModeAsync(request, context, cancellationToken).ConfigureAwait(false),
             PermissionMode.WorkspaceWrite => request.ApprovalScope switch
             {
+                ApprovalScope.ToolExecution when request.RequiresApproval || request.IsDestructive => await ResolveApprovalAsync(
+                    request,
+                    context,
+                    PermissionRuleResult.RequireApproval(
+                        $"Tool '{request.ToolName}' is marked as requiring approval or destructive.",
+                        canRememberApproval: true),
+                    cancellationToken).ConfigureAwait(false),
                 ApprovalScope.ToolExecution or ApprovalScope.FileSystemWrite => CreateDecision(
                     request.ApprovalScope,
                     context.PermissionMode,
@@ -129,7 +181,7 @@ public sealed class PermissionPolicyEngine(
                 $"Reused remembered approval for '{request.ToolName}'.");
         }
 
-        if (TryResolveAutoApproval(request, context, out var autoApprovedDecision))
+        if (ruleResult.AllowAutoApproval && TryResolveAutoApproval(request, context, out var autoApprovedDecision))
         {
             return autoApprovedDecision;
         }

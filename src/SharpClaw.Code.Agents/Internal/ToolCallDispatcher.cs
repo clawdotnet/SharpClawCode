@@ -39,7 +39,7 @@ public sealed class ToolCallDispatcher(
         }
 
         var toolName = toolUseEvent.ToolName;
-        var toolInputJson = toolUseEvent.ToolInputJson ?? "{}";
+        var toolInputJson = string.IsNullOrWhiteSpace(toolUseEvent.ToolInputJson) ? "{}" : toolUseEvent.ToolInputJson;
         var toolUseId = toolUseEvent.ToolUseId;
 
         if (string.Equals(toolName, SubAgentToolContract.ToolName, StringComparison.OrdinalIgnoreCase))

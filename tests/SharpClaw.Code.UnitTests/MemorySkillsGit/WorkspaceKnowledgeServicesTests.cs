@@ -99,6 +99,41 @@ public sealed class WorkspaceKnowledgeServicesTests : IDisposable
         recalled.Should().Contain(entry => entry.Id == "user-memory-1");
     }
 
+    [Fact]
+    public async Task Search_should_treat_fts_operators_and_like_wildcards_as_literal_text()
+    {
+        Directory.CreateDirectory(Path.Combine(workspaceRoot, "src"));
+        await File.WriteAllTextAsync(
+            Path.Combine(workspaceRoot, "src", "RetryPolicy.cs"),
+            """
+            namespace Sample.App;
+
+            public sealed class RetryPolicy
+            {
+                public int Backoff(int attempt) => attempt * 2;
+            }
+            """);
+
+        var store = CreateStore();
+        var indexService = new WorkspaceIndexService(fileSystem, pathService, store);
+        var searchService = new WorkspaceSearchService(store);
+        await indexService.RefreshAsync(workspaceRoot, CancellationToken.None);
+
+        // Bare AND/OR/NOT/NEAR used to become FTS5 syntax errors.
+        var operators = await searchService.SearchAsync(
+            workspaceRoot,
+            new WorkspaceSearchRequest("retry OR backoff NOT found", 10),
+            CancellationToken.None);
+        operators.Should().NotBeNull();
+
+        // '_' must not act as a single-character LIKE wildcard in symbol search.
+        var wildcard = await searchService.SearchAsync(
+            workspaceRoot,
+            new WorkspaceSearchRequest("Retry_olicy", 10),
+            CancellationToken.None);
+        wildcard.Hits.Should().NotContain(hit => hit.Kind == WorkspaceSearchHitKind.Symbol && hit.SymbolName == "RetryPolicy");
+    }
+
     public void Dispose()
     {
         TestDirectoryCleanup.DeleteIfExists(workspaceRoot, clearSqlitePools: true);

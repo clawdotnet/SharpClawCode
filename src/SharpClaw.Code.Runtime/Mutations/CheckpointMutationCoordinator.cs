@@ -172,6 +172,14 @@ public sealed class CheckpointMutationCoordinator(
         }
         catch (OperationCanceledException)
         {
+            // Cancelled mid-way: the workspace is partially changed, so record that before propagating.
+            if (appliedInverseCount > 0 && appliedInverseCount < doc.Operations.Count)
+            {
+                md[PartialMutationKey] = mutationId;
+                var partialSession = session with { Metadata = md, UpdatedAtUtc = DateTimeOffset.UtcNow };
+                await sessionStore.SaveAsync(workspacePath, partialSession, CancellationToken.None).ConfigureAwait(false);
+            }
+
             throw;
         }
         catch (Exception ex)
@@ -208,7 +216,8 @@ public sealed class CheckpointMutationCoordinator(
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
 
-        await sessionStore.SaveAsync(workspacePath, saved, cancellationToken).ConfigureAwait(false);
+        // Files are already changed; the state save must not be abandoned on cancellation.
+        await sessionStore.SaveAsync(workspacePath, saved, CancellationToken.None).ConfigureAwait(false);
 
         await eventPublisher.PublishAsync(
             new UndoCompletedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),
@@ -305,6 +314,14 @@ public sealed class CheckpointMutationCoordinator(
         }
         catch (OperationCanceledException)
         {
+            // Cancelled mid-way: the workspace is partially changed, so record that before propagating.
+            if (appliedForwardCount > 0 && appliedForwardCount < doc.Operations.Count)
+            {
+                md[PartialMutationKey] = mutationId;
+                var partialSession = session with { Metadata = md, UpdatedAtUtc = DateTimeOffset.UtcNow };
+                await sessionStore.SaveAsync(workspacePath, partialSession, CancellationToken.None).ConfigureAwait(false);
+            }
+
             throw;
         }
         catch (Exception ex)
@@ -341,7 +358,8 @@ public sealed class CheckpointMutationCoordinator(
             UpdatedAtUtc = DateTimeOffset.UtcNow,
         };
 
-        await sessionStore.SaveAsync(workspacePath, saved, cancellationToken).ConfigureAwait(false);
+        // Files are already changed; the state save must not be abandoned on cancellation.
+        await sessionStore.SaveAsync(workspacePath, saved, CancellationToken.None).ConfigureAwait(false);
 
         await eventPublisher.PublishAsync(
             new RedoCompletedEvent(CreateEventId(), session.Id, null, DateTimeOffset.UtcNow, mutationId),

@@ -64,16 +64,19 @@ public sealed class SqliteUsageMeteringStore(
         return new UsageMeteringSummaryReport(
             query,
             new UsageSnapshot(
-                checked((int)reader.GetInt64(0)),
-                checked((int)reader.GetInt64(1)),
-                checked((int)reader.GetInt64(2)),
-                checked((int)reader.GetInt64(3)),
+                reader.GetInt64(0),
+                reader.GetInt64(1),
+                reader.GetInt64(2),
+                reader.GetInt64(3),
                 estimatedCost),
-            checked((int)reader.GetInt64(5)),
-            checked((int)reader.GetInt64(6)),
-            checked((int)reader.GetInt64(7)),
-            checked((int)reader.GetInt64(8)));
+            SaturateToInt(reader.GetInt64(5)),
+            SaturateToInt(reader.GetInt64(6)),
+            SaturateToInt(reader.GetInt64(7)),
+            SaturateToInt(reader.GetInt64(8)));
     }
+
+    private static int SaturateToInt(long value)
+        => value > int.MaxValue ? int.MaxValue : (int)value;
 
     /// <inheritdoc />
     public async Task<UsageMeteringDetailReport> GetDetailAsync(
@@ -203,13 +206,13 @@ public sealed class SqliteUsageMeteringStore(
         if (query.FromUtc is { } fromUtc)
         {
             conditions.Add("occurred_at_utc >= $fromUtc");
-            parameters["$fromUtc"] = fromUtc.ToString("O", CultureInfo.InvariantCulture);
+            parameters["$fromUtc"] = fromUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
         }
 
         if (query.ToUtc is { } toUtc)
         {
             conditions.Add("occurred_at_utc <= $toUtc");
-            parameters["$toUtc"] = toUtc.ToString("O", CultureInfo.InvariantCulture);
+            parameters["$toUtc"] = toUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture);
         }
 
         if (!string.IsNullOrWhiteSpace(query.TenantId))
@@ -253,7 +256,7 @@ public sealed class SqliteUsageMeteringStore(
     {
         command.Parameters.AddWithValue("$id", record.Id);
         command.Parameters.AddWithValue("$kind", record.Kind.ToString());
-        command.Parameters.AddWithValue("$occurredAtUtc", record.OccurredAtUtc.ToString("O", CultureInfo.InvariantCulture));
+        command.Parameters.AddWithValue("$occurredAtUtc", record.OccurredAtUtc.ToUniversalTime().ToString("O", CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$tenantId", (object?)record.TenantId ?? DBNull.Value);
         command.Parameters.AddWithValue("$hostId", (object?)record.HostId ?? DBNull.Value);
         command.Parameters.AddWithValue("$workspaceRoot", (object?)record.WorkspaceRoot ?? DBNull.Value);

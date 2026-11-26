@@ -252,7 +252,8 @@ public sealed class ProviderBackedAgentKernel(
                                     CreateProviderFailedEventMessage(provider.ProviderName, providerEvent));
                             }
 
-                            if (!providerEvent.IsTerminal && !string.IsNullOrWhiteSpace(providerEvent.Content))
+                            // Keep whitespace-only deltas (newlines, indentation): dropping them corrupts code blocks.
+                            if (!providerEvent.IsTerminal && !string.IsNullOrEmpty(providerEvent.Content))
                             {
                                 candidateTextSegments.Add(providerEvent.Content);
                             }
@@ -337,9 +338,22 @@ public sealed class ProviderBackedAgentKernel(
                     break;
                 }
 
+                var iterationText = string.Concat(iterationTextSegments);
+                if (iteration + 1 >= options.MaxToolIterations)
+                {
+                    // Final allowed iteration: executing these tools would cause side effects whose results the
+                    // model can never observe, so stop here and report the loop as exhausted instead.
+                    if (!string.IsNullOrEmpty(iterationText))
+                    {
+                        outputSegments.Add(iterationText);
+                    }
+
+                    iteration = options.MaxToolIterations;
+                    break;
+                }
+
                 // Build assistant message with text + tool-use content blocks
                 var assistantBlocks = new List<ContentBlock>();
-                var iterationText = string.Concat(iterationTextSegments);
                 if (!string.IsNullOrEmpty(iterationText))
                 {
                     assistantBlocks.Add(new ContentBlock(ContentBlockKind.Text, iterationText, null, null, null, null));
@@ -352,7 +366,8 @@ public sealed class ProviderBackedAgentKernel(
                         null,
                         toolUseEvent.ToolUseId,
                         toolUseEvent.ToolName,
-                        toolUseEvent.ToolInputJson,
+                        // Record exactly what the dispatcher executes; a blank input would round-trip as JSON null.
+                        string.IsNullOrWhiteSpace(toolUseEvent.ToolInputJson) ? "{}" : toolUseEvent.ToolInputJson,
                         null));
                 }
 

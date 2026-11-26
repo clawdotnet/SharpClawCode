@@ -269,6 +269,107 @@ public sealed class ResilienceTests
         mock.CallCount.Should().Be(2);
     }
 
+    [Fact]
+    public async Task Retries_transient_failed_event_before_any_output()
+    {
+        // SDK adapters surface HTTP errors as a terminal failed event instead of throwing.
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 503 ServiceUnavailable: overloaded"))));
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, SingleEvent())));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        var events = await CollectAsync(stream.Events);
+
+        mock.CallCount.Should().Be(2);
+        events.Should().ContainSingle().Which.Kind.Should().Be("completed");
+    }
+
+    [Fact]
+    public async Task Does_not_retry_non_transient_failed_event_and_surfaces_it()
+    {
+        var mock = new CountingMockProvider();
+        mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 400 BadRequest: invalid request"))));
+        var decorator = BuildDecorator(mock);
+
+        var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        var events = await CollectAsync(stream.Events);
+
+        mock.CallCount.Should().Be(1);
+        events.Should().ContainSingle().Which.Kind.Should().Be("failed");
+    }
+
+    [Fact]
+    public async Task Failed_events_count_toward_the_circuit_breaker()
+    {
+        var mock = new CountingMockProvider();
+        for (var i = 0; i < 3; i++)
+        {
+            mock.Behaviors.Enqueue(() => Task.FromResult(new ProviderStreamHandle(FakeRequest, FailedEventStream("HTTP 400 BadRequest: invalid"))));
+        }
+
+        var decorator = BuildDecorator(mock, new ProviderResilienceOptions
+        {
+            MaxRetries = 0,
+            InitialRetryDelay = TimeSpan.Zero,
+            MaxRetryDelay = TimeSpan.Zero,
+            RequestTimeout = TimeSpan.FromSeconds(30),
+            CircuitBreakerFailureThreshold = 2,
+            CircuitBreakerBreakDuration = TimeSpan.FromMinutes(5),
+        });
+
+        for (var i = 0; i < 2; i++)
+        {
+            var stream = await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+            await DrainAsync(stream.Events);
+        }
+
+        var open = async () => await decorator.StartStreamAsync(FakeRequest, CancellationToken.None);
+        await open.Should().ThrowAsync<ProviderExecutionException>().WithMessage("*Circuit breaker is open*");
+    }
+
+    [Theory]
+    [InlineData("1e100")]
+    [InlineData("NaN")]
+    [InlineData("Infinity")]
+    [InlineData("-5")]
+    public void Out_of_range_retry_after_hints_are_ignored(string hint)
+    {
+        var exception = new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests);
+        exception.Data["Retry-After"] = hint;
+
+        ProviderStreamFailureClassifier.TryGetRetryAfter(exception).Should().BeNull();
+        ProviderStreamFailureClassifier.Describe(exception).Should().StartWith("HTTP 429");
+    }
+
+    [Fact]
+    public void Retry_after_hints_beyond_one_day_are_ignored_on_every_path()
+    {
+        var exception = new HttpRequestException("rate limited", null, System.Net.HttpStatusCode.TooManyRequests);
+        exception.Data["Retry-After"] = TimeSpan.FromDays(3);
+        ProviderStreamFailureClassifier.TryGetRetryAfter(exception).Should().BeNull();
+
+        var failedEvent = new ProviderEvent("e", FakeRequest.Id, "failed", DateTimeOffset.UtcNow,
+            "HTTP 429 TooManyRequests (retry-after 999999s): slow down", true, null);
+        ProviderStreamFailureClassifier.TryGetRetryAfter(failedEvent).Should().BeNull();
+
+        var usable = failedEvent with { Content = "HTTP 429 TooManyRequests (retry-after 5s): slow down" };
+        ProviderStreamFailureClassifier.TryGetRetryAfter(usable).Should().Be(TimeSpan.FromSeconds(5));
+    }
+
+    private static async IAsyncEnumerable<ProviderEvent> FailedEventStream(string message)
+    {
+        await Task.Yield();
+        yield return new ProviderEvent(
+            Id: Guid.NewGuid().ToString("N"),
+            RequestId: FakeRequest.Id,
+            Kind: "failed",
+            CreatedAtUtc: DateTimeOffset.UtcNow,
+            Content: message,
+            IsTerminal: true,
+            Usage: null);
+    }
+
     private static async Task DrainAsync(IAsyncEnumerable<ProviderEvent> events)
         => _ = await CollectAsync(events);
 

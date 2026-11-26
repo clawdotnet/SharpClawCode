@@ -407,7 +407,7 @@ public sealed partial class PromptReferenceResolver(
             foreach (var file in EnumerateSortedFiles(current))
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ShouldSkipPath(file))
+                if (!ShouldSkipPath(Path.GetRelativePath(directoryPath, file)))
                 {
                     yield return file;
                 }
@@ -417,7 +417,7 @@ public sealed partial class PromptReferenceResolver(
             for (var i = directories.Length - 1; i >= 0; i--)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                if (!ShouldSkipPath(directories[i]))
+                if (!ShouldSkipPath(Path.GetRelativePath(directoryPath, directories[i])))
                 {
                     pending.Push(directories[i]);
                 }
@@ -429,7 +429,7 @@ public sealed partial class PromptReferenceResolver(
     {
         try
         {
-            return Directory.EnumerateFiles(directoryPath, "*", SearchOption.TopDirectoryOnly)
+            return Directory.EnumerateFiles(directoryPath, "*", TopLevelNoLinks)
                 .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
@@ -443,7 +443,7 @@ public sealed partial class PromptReferenceResolver(
     {
         try
         {
-            return Directory.EnumerateDirectories(directoryPath, "*", SearchOption.TopDirectoryOnly)
+            return Directory.EnumerateDirectories(directoryPath, "*", TopLevelNoLinks)
                 .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
         }
@@ -452,6 +452,16 @@ public sealed partial class PromptReferenceResolver(
             return [];
         }
     }
+
+    // Symlinks/junctions inside a referenced directory are skipped so their targets (possibly outside the
+    // workspace, e.g. ~/.ssh) are never inlined without the outside-workspace approval.
+    private static readonly EnumerationOptions TopLevelNoLinks = new()
+    {
+        RecurseSubdirectories = false,
+        AttributesToSkip = FileAttributes.ReparsePoint,
+        IgnoreInaccessible = true,
+        MatchType = MatchType.Win32,
+    };
 
     private static bool ShouldSkipPath(string path)
         => path.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)

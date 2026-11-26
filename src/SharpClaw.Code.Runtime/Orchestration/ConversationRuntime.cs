@@ -130,9 +130,6 @@ public sealed class ConversationRuntime(
             throw new InvalidOperationException($"Unable to resume session '{request.SessionId}'.");
         }
 
-        session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
-        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
-
         var sessionMutex = GetSessionMutex(workspacePath, session.Id);
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -148,6 +145,11 @@ public sealed class ConversationRuntime(
             {
                 session = refreshed;
             }
+
+            // Persist settings from the refreshed snapshot, under the lock, so a save cannot overwrite state
+            // (such as undo metadata) that a concurrent prompt recorded while this request waited.
+            session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
+            session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
             session = await EnsureRecoverableFromFailedForPromptAsync(
                     workspacePath,
@@ -301,8 +303,6 @@ public sealed class ConversationRuntime(
                 Usage = turnRunResult.Usage,
                 Verification = turnRunResult.Verification,
             };
-            ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
-
             await AppendRuntimeEventsAsync(
                 workspacePath,
                 session.Id,
@@ -399,6 +399,10 @@ public sealed class ConversationRuntime(
                 runtimeEvents,
                 cancellationToken).ConfigureAwait(false);
 
+            // Only cache the turn for history once its completion is durably recorded, so the in-process cache
+            // never diverges from the persisted log when a later step fails.
+            ConversationHistoryCache.StoreCompletedTurn(workspacePath, session.Id, completedTurn);
+
             await sessionStore.SaveAsync(workspacePath, session, cancellationToken).ConfigureAwait(false);
             logger.LogInformation("Completed prompt turn {TurnId} for session {SessionId}.", turnId, session.Id);
 
@@ -445,6 +449,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 CanceledTurnReason,
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogWarning(
                 exception,
@@ -462,6 +467,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 FormatProviderFailureReason(exception),
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogError(
                 exception,
@@ -480,6 +486,7 @@ public sealed class ConversationRuntime(
                 turnId,
                 runtimeEvents,
                 string.IsNullOrWhiteSpace(exception.Message) ? FailedTurnReason : exception.Message,
+                mutationCheckpointId,
                 CancellationToken.None).ConfigureAwait(false);
             logger.LogError(
                 exception,
@@ -551,13 +558,27 @@ public sealed class ConversationRuntime(
         metadata[SharpClawWorkflowMetadataKeys.CustomCommandName] = definition.Name;
 
         var permission = ClampPermissionModeForCustomCommand(context.PermissionMode, definition.PermissionMode);
-        var contextPrimary = context.PrimaryMode ?? PrimaryMode.Build;
-        var primary = ClampPrimaryModeForCustomCommand(contextPrimary, definition.PrimaryModeOverride);
+        // Without an explicit context mode, the command inherits the target session's persisted mode (as a plain
+        // prompt would), so a command's Build override cannot switch a Plan or Research session out of its mode.
+        var sessionId = context.SessionId;
+        var contextPrimary = context.PrimaryMode;
+        if (contextPrimary is null)
+        {
+            var probe = new RunPromptRequest(expanded, context.SessionId, workspace, permission, context.OutputFormat, Metadata: null);
+            var target = await ResolveSessionAsync(workspace, probe, cancellationToken).ConfigureAwait(false);
+            if (target is not null)
+            {
+                sessionId ??= target.Id; // run in the session whose mode was inherited
+                contextPrimary = PrimaryModeResolver.ResolveEffective(probe, target);
+            }
+        }
+
+        var primary = ClampPrimaryModeForCustomCommand(contextPrimary ?? PrimaryMode.Build, definition.PrimaryModeOverride);
 
         return await RunPromptAsync(
             new RunPromptRequest(
                 Prompt: expanded,
-                SessionId: context.SessionId,
+                SessionId: sessionId,
                 WorkingDirectory: workspace,
                 PermissionMode: permission,
                 OutputFormat: context.OutputFormat,
@@ -1010,6 +1031,10 @@ public sealed class ConversationRuntime(
         var md = CloneMetadata(parent.Metadata);
         md.Remove(SharpClawWorkflowMetadataKeys.UndoRedoStateJson);
         md.Remove(CheckpointMutationCoordinator.PartialMutationKey);
+        // A fork is a new transcript: it must not reuse (and later overwrite or delete) the parent's public share.
+        md.Remove(SharpClawWorkflowMetadataKeys.ShareId);
+        md.Remove(SharpClawWorkflowMetadataKeys.ShareUrl);
+        md.Remove(SharpClawWorkflowMetadataKeys.SharedAtUtc);
         md[SharpClawWorkflowMetadataKeys.ParentSessionId] = parent.Id;
         md[SharpClawWorkflowMetadataKeys.ForkedAtUtc] = systemClock.UtcNow.ToString("O", CultureInfo.InvariantCulture);
         md[SharpClawWorkflowMetadataKeys.ForkHistorySummary] = summary;
@@ -1275,6 +1300,32 @@ public sealed class ConversationRuntime(
     private async Task<ConversationSession> PreserveInterruptedMutationsAsync(string workspacePath, ConversationSession session, string turnId, IReadOnlyList<FileMutationOperation> operations, string? checkpointId)
     {
         if (operations.Count == 0) return session;
+        try
+        {
+            return await PreserveInterruptedMutationsCoreAsync(workspacePath, session, turnId, operations, checkpointId).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            // Runs inside failure handlers: it must never prevent the turn failure from being persisted.
+            logger.LogError(exception, "Failed to preserve interrupted edits for session {SessionId}, turn {TurnId}.", session.Id, turnId);
+
+            // Preservation may have saved recovery metadata (checkpoint, mutation set) before failing, e.g. while
+            // publishing the recorded event. Continue from the durable snapshot so the failure save keeps it.
+            try
+            {
+                using var reread = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                return await sessionStore.GetByIdAsync(workspacePath, session.Id, reread.Token).ConfigureAwait(false) ?? session;
+            }
+            catch (Exception rereadException)
+            {
+                logger.LogDebug(rereadException, "Could not re-read session {SessionId} after a preservation failure.", session.Id);
+                return session;
+            }
+        }
+    }
+
+    private async Task<ConversationSession> PreserveInterruptedMutationsCoreAsync(string workspacePath, ConversationSession session, string turnId, IReadOnlyList<FileMutationOperation> operations, string? checkpointId)
+    {
         using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         var latest = await sessionStore.GetByIdAsync(workspacePath, session.Id, cleanup.Token).ConfigureAwait(false) ?? session;
         var id = checkpointId ?? CreateIdentifier("checkpoint");
@@ -1411,6 +1462,7 @@ public sealed class ConversationRuntime(
         string turnId,
         List<RuntimeEvent> collectedEvents,
         string? reason,
+        string? turnCheckpointId,
         CancellationToken cancellationToken)
     {
         if (session.State == SessionLifecycleState.Archived)
@@ -1425,7 +1477,7 @@ public sealed class ConversationRuntime(
         var failedState = stateMachine.Transition(session.State, RuntimeLifecycleTransition.Fail);
         var failedAtUtc = systemClock.UtcNow;
         var stateBeforeFailure = session.State;
-        var updatedSession = session with
+        var updatedSession = await MergeDurableRecoveryStateAsync(workspacePath, session, turnCheckpointId).ConfigureAwait(false) with
         {
             State = failedState,
             UpdatedAtUtc = failedAtUtc,
@@ -1448,6 +1500,51 @@ public sealed class ConversationRuntime(
 
         await sessionStore.SaveAsync(workspacePath, updatedSession, cancellationToken).ConfigureAwait(false);
         return updatedSession;
+    }
+
+    /// <summary>
+    /// Failure handling may run with an in-memory session that predates recovery data already made durable
+    /// (recorded mutation sets, partial-undo markers, checkpoints). Carry that state over from the stored
+    /// snapshot so recording the failure never hides recoverable edits from undo. A checkpoint this turn
+    /// created (<paramref name="turnCheckpointId"/>) is the newest one and is kept even when the stored snapshot
+    /// still names an older checkpoint; preservation reuses that same id, so the two cannot diverge.
+    /// </summary>
+    private async Task<ConversationSession> MergeDurableRecoveryStateAsync(string workspacePath, ConversationSession session, string? turnCheckpointId)
+    {
+        ConversationSession? durable;
+        try
+        {
+            using var reread = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            durable = await sessionStore.GetByIdAsync(workspacePath, session.Id, reread.Token).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not re-read session {SessionId} before recording a turn failure.", session.Id);
+            return session;
+        }
+
+        if (durable?.Metadata is null)
+        {
+            return session;
+        }
+
+        var metadata = CloneMetadata(session.Metadata);
+        foreach (var key in new[] { SharpClawWorkflowMetadataKeys.UndoRedoStateJson, CheckpointMutationCoordinator.PartialMutationKey })
+        {
+            if (durable.Metadata.TryGetValue(key, out var value))
+            {
+                metadata[key] = value;
+            }
+        }
+
+        return session with
+        {
+            Metadata = metadata,
+            LastCheckpointId = turnCheckpointId is not null
+                && string.Equals(session.LastCheckpointId, turnCheckpointId, StringComparison.Ordinal)
+                    ? session.LastCheckpointId
+                    : durable.LastCheckpointId ?? session.LastCheckpointId,
+        };
     }
 
     private async Task<string?> ResolveCommandSessionIdAsync(
@@ -1664,7 +1761,8 @@ public sealed class ConversationRuntime(
     }
 
     /// <summary>
-    /// Workspace markdown cannot disable plan mode: if either side is <see cref="PrimaryMode.Plan"/>, plan wins.
+    /// Workspace markdown cannot disable read-only modes: if either side is <see cref="PrimaryMode.Plan"/> or
+    /// <see cref="PrimaryMode.Research"/>, that read-only mode wins (Plan first).
     /// </summary>
     private static PrimaryMode ClampPrimaryModeForCustomCommand(PrimaryMode context, PrimaryMode? commandOverride)
     {
@@ -1672,6 +1770,11 @@ public sealed class ConversationRuntime(
         if (context == PrimaryMode.Plan || effective == PrimaryMode.Plan)
         {
             return PrimaryMode.Plan;
+        }
+
+        if (context == PrimaryMode.Research || effective == PrimaryMode.Research)
+        {
+            return PrimaryMode.Research;
         }
 
         if (context == PrimaryMode.Spec || effective == PrimaryMode.Spec)

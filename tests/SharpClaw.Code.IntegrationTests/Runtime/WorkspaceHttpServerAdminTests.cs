@@ -152,6 +152,85 @@ public sealed class WorkspaceHttpServerAdminTests
         }
     }
 
+    /// <summary>
+    /// Ensures browsers on other origins, rebinding hosts, non-JSON bodies, and escalation attempts are rejected.
+    /// </summary>
+    [Fact]
+    public async Task Server_should_reject_cross_origin_rebinding_and_permission_escalation()
+    {
+        var workspaceRoot = CreateTemporaryWorkspace();
+        var services = new ServiceCollection();
+        services.AddSharpClawRuntime();
+        services.AddDeterministicMockModelProvider();
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var server = serviceProvider.GetRequiredService<IWorkspaceHttpServer>();
+        var port = FindFreePort();
+        using var serverCts = new CancellationTokenSource();
+        var serverTask = server.RunAsync(
+            workspaceRoot,
+            "127.0.0.1",
+            port,
+            new SharpClaw.Code.Runtime.Abstractions.RuntimeCommandContext(
+                WorkingDirectory: workspaceRoot,
+                Model: "default",
+                PermissionMode: PermissionMode.WorkspaceWrite,
+                OutputFormat: OutputFormat.Json),
+            serverCts.Token);
+
+        try
+        {
+            using var httpClient = new HttpClient
+            {
+                BaseAddress = new Uri($"http://127.0.0.1:{port}/"),
+                Timeout = TimeSpan.FromSeconds(10),
+            };
+            await WaitForServerAsync(httpClient, CancellationToken.None);
+
+            using var crossOrigin = new HttpRequestMessage(HttpMethod.Post, "v1/prompt")
+            {
+                Content = new StringContent("""{"prompt":"hi"}""", Encoding.UTF8, "application/json"),
+            };
+            crossOrigin.Headers.Add("Origin", "https://evil.example");
+            using var crossOriginResponse = await httpClient.SendAsync(crossOrigin, CancellationToken.None);
+            crossOriginResponse.StatusCode.Should().Be(System.Net.HttpStatusCode.Forbidden);
+
+            using var textPlain = await httpClient.PostAsync(
+                "v1/prompt",
+                new StringContent("""{"prompt":"hi"}""", Encoding.UTF8, "text/plain"),
+                CancellationToken.None);
+            textPlain.StatusCode.Should().Be(System.Net.HttpStatusCode.UnsupportedMediaType);
+
+            using var malformed = await httpClient.PostAsync(
+                "v1/admin/sessions",
+                new StringContent("{not json", Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            malformed.StatusCode.Should().Be(System.Net.HttpStatusCode.BadRequest);
+
+            using var escalation = await httpClient.PostAsync(
+                "v1/admin/sessions",
+                new StringContent("""{"permissionMode":"dangerFullAccess","outputFormat":"json"}""", Encoding.UTF8, "application/json"),
+                CancellationToken.None);
+            escalation.EnsureSuccessStatusCode();
+            var session = JsonSerializer.Deserialize(
+                await escalation.Content.ReadAsStringAsync(),
+                ProtocolJsonContext.Default.ConversationSession);
+            session!.PermissionMode.Should().Be(PermissionMode.WorkspaceWrite, "HTTP callers cannot exceed the server's permission mode");
+
+            // Last: HttpListener closes the connection after rejecting an unknown Host.
+            using var rebinding = new HttpRequestMessage(HttpMethod.Get, "v1/status");
+            rebinding.Headers.Host = $"attacker.example:{port}";
+            using var rebindingResponse = await httpClient.SendAsync(rebinding, CancellationToken.None);
+            // Rejected either by HttpListener's prefix matching (404) or by the server's own host check (403).
+            rebindingResponse.StatusCode.Should().BeOneOf(System.Net.HttpStatusCode.Forbidden, System.Net.HttpStatusCode.NotFound);
+        }
+        finally
+        {
+            serverCts.Cancel();
+            await serverTask;
+        }
+    }
+
     private static async Task WaitForServerAsync(HttpClient httpClient, CancellationToken cancellationToken)
     {
         var attempts = 0;

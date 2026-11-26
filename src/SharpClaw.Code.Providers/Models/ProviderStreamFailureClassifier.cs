@@ -29,10 +29,138 @@ public static class ProviderStreamFailureClassifier
             ? exception.GetType().Name
             : exception.Message;
         var statusCode = TryGetStatusCode(exception);
-        return statusCode is null
-            ? message
+        if (statusCode is null)
+        {
+            return message;
+        }
+
+        var retryAfter = TryGetRetryAfter(exception);
+        return retryAfter is { } delay
+            ? $"HTTP {(int)statusCode.Value} {statusCode.Value} (retry-after {(int)Math.Ceiling(delay.TotalSeconds)}s): {message}"
             : $"HTTP {(int)statusCode.Value} {statusCode.Value}: {message}";
     }
+
+    /// <summary>
+    /// Determines whether an exception represents a transient provider failure worth retrying
+    /// (timeouts, connection failures, HTTP 408/429/5xx).
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns><see langword="true"/> when a retry may succeed.</returns>
+    public static bool IsTransient(Exception exception)
+    {
+        if (IsAuthenticationFailure(exception) || IsContextOverflow(exception))
+        {
+            return false;
+        }
+
+        if (TryGetStatusCode(exception) is { } statusCode)
+        {
+            return IsTransientStatus(statusCode);
+        }
+
+        return exception is HttpRequestException or TimeoutException or IOException
+            || (exception.InnerException is not null && IsTransient(exception.InnerException));
+    }
+
+    /// <summary>
+    /// Determines whether a terminal <c>failed</c> provider event describes a transient failure.
+    /// Events produced from HTTP errors carry an <c>HTTP {status}</c> prefix; failures without a status
+    /// (connection resets, DNS errors) are treated as transient unless they look like auth or context errors.
+    /// </summary>
+    /// <param name="providerEvent">The failed event.</param>
+    /// <returns><see langword="true"/> when a retry may succeed.</returns>
+    public static bool IsTransientFailedEvent(ProviderEvent providerEvent)
+    {
+        if (ClassifyFailedEvent(providerEvent) != ProviderFailureKind.StreamFailed)
+        {
+            return false;
+        }
+
+        var match = HttpStatusPrefix.Match(providerEvent.Content ?? string.Empty);
+        return !match.Success
+            || IsTransientStatus((HttpStatusCode)int.Parse(match.Groups["status"].Value, CultureInfo.InvariantCulture));
+    }
+
+    /// <summary>
+    /// Reads a retry-after hint embedded in a failed event's description, if any.
+    /// </summary>
+    /// <param name="providerEvent">The failed event.</param>
+    /// <returns>The suggested delay, or <see langword="null"/>.</returns>
+    public static TimeSpan? TryGetRetryAfter(ProviderEvent providerEvent)
+    {
+        var match = RetryAfterHint.Match(providerEvent.Content ?? string.Empty);
+        return match.Success
+            && int.TryParse(match.Groups["seconds"].Value, NumberStyles.None, CultureInfo.InvariantCulture, out var seconds)
+            && seconds > 0
+            && seconds <= MaxRetryAfter.TotalSeconds
+            ? TimeSpan.FromSeconds(seconds)
+            : null;
+    }
+
+    /// <summary>
+    /// Reads the Retry-After header (delta-seconds or HTTP date) from an SDK or HTTP exception when available.
+    /// </summary>
+    /// <param name="exception">The failure.</param>
+    /// <returns>The suggested delay, or <see langword="null"/>.</returns>
+    public static TimeSpan? TryGetRetryAfter(Exception exception)
+    {
+        if (exception is ClientResultException clientResultException
+            && clientResultException.GetRawResponse() is { } rawResponse
+            && rawResponse.Headers.TryGetValue("Retry-After", out var headerValue)
+            && ParseRetryAfter(headerValue) is { } fromHeader)
+        {
+            return fromHeader;
+        }
+
+        if (exception.Data.Contains("Retry-After"))
+        {
+            switch (exception.Data["Retry-After"])
+            {
+                case int seconds when seconds > 0 && seconds <= MaxRetryAfter.TotalSeconds:
+                    return TimeSpan.FromSeconds(seconds);
+                case TimeSpan span when span > TimeSpan.Zero && span <= MaxRetryAfter:
+                    return span;
+                case string text when ParseRetryAfter(text) is { } parsed:
+                    return parsed;
+            }
+        }
+
+        return exception.InnerException is null ? null : TryGetRetryAfter(exception.InnerException);
+    }
+
+    private static TimeSpan? ParseRetryAfter(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return null;
+        }
+
+        if (double.TryParse(value.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds))
+        {
+            // Reject NaN/infinity/huge values instead of letting TimeSpan.FromSeconds throw and mask the HTTP error.
+            return double.IsFinite(seconds) && seconds > 0 && seconds <= MaxRetryAfter.TotalSeconds
+                ? TimeSpan.FromSeconds(seconds)
+                : null;
+        }
+
+        if (DateTimeOffset.TryParse(value, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var date))
+        {
+            var delta = date - DateTimeOffset.UtcNow;
+            return delta > TimeSpan.Zero && delta <= MaxRetryAfter ? delta : null;
+        }
+
+        return null;
+    }
+
+    /// <summary>Upper bound for a usable retry-after hint; larger values are treated as absent.</summary>
+    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromDays(1);
+
+    private static bool IsTransientStatus(HttpStatusCode statusCode)
+        => statusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.TooManyRequests
+            || (int)statusCode >= 500;
+
+    private static readonly Regex HttpStatusPrefix = new(@"^HTTP (?<status>\d{3})\b", RegexOptions.CultureInvariant);
+    private static readonly Regex RetryAfterHint = new(@"\(retry-after (?<seconds>\d+)s\)", RegexOptions.CultureInvariant);
 
     /// <summary>
     /// Classifies a terminal provider failed event.

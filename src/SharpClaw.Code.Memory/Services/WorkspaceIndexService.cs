@@ -102,8 +102,9 @@ public sealed class WorkspaceIndexService(
             foreach (var directory in fileSystem.EnumerateDirectories(current))
             {
                 var name = Path.GetFileName(directory);
-                if (IgnoredDirectories.Contains(name))
+                if (IgnoredDirectories.Contains(name) || IsReparsePoint(directory))
                 {
+                    // Skip ignored folders and symlinked directories (which may loop or escape the workspace).
                     continue;
                 }
 
@@ -112,8 +113,23 @@ public sealed class WorkspaceIndexService(
 
             foreach (var file in fileSystem.EnumerateFiles(current, "*"))
             {
-                yield return file;
+                if (!IsReparsePoint(file))
+                {
+                    yield return file;
+                }
             }
+        }
+    }
+
+    private static bool IsReparsePoint(string path)
+    {
+        try
+        {
+            return File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            return true;
         }
     }
 

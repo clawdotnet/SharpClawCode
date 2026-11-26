@@ -44,21 +44,66 @@ public sealed class ProcessRunner(ISystemClock systemClock) : IProcessRunner
         var startedAtUtc = systemClock.UtcNow;
         process.Start();
 
+        var standardOutput = new System.Text.StringBuilder();
+        var standardError = new System.Text.StringBuilder();
+        using var readerCts = new CancellationTokenSource();
+        var standardOutputTask = PumpAsync(process.StandardOutput, standardOutput, readerCts.Token);
+        var standardErrorTask = PumpAsync(process.StandardError, standardError, readerCts.Token);
         try
         {
-            var standardOutputTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-            var standardErrorTask = process.StandardError.ReadToEndAsync(cancellationToken);
             await process.WaitForExitAsync(cancellationToken).ConfigureAwait(false);
-            var standardOutput = await standardOutputTask.ConfigureAwait(false);
-            var standardError = await standardErrorTask.ConfigureAwait(false);
-            var completedAtUtc = systemClock.UtcNow;
 
-            return new ProcessRunResult(process.ExitCode, standardOutput, standardError, startedAtUtc, completedAtUtc);
+            // A backgrounded child (e.g. `server &`) inherits the pipes and keeps them open after the shell exits.
+            // Drain what is available, but do not block the caller until that child exits.
+            try
+            {
+                await Task.WhenAll(standardOutputTask, standardErrorTask)
+                    .WaitAsync(OutputDrainGracePeriod, cancellationToken)
+                    .ConfigureAwait(false);
+            }
+            catch (TimeoutException)
+            {
+                readerCts.Cancel();
+            }
+
+            var completedAtUtc = systemClock.UtcNow;
+            return new ProcessRunResult(process.ExitCode, Snapshot(standardOutput), Snapshot(standardError), startedAtUtc, completedAtUtc);
         }
         catch (OperationCanceledException)
         {
             TryKillProcessTree(process);
+            readerCts.Cancel();
             throw;
+        }
+    }
+
+    private static readonly TimeSpan OutputDrainGracePeriod = TimeSpan.FromSeconds(2);
+
+    private static async Task PumpAsync(StreamReader reader, System.Text.StringBuilder sink, CancellationToken cancellationToken)
+    {
+        var buffer = new char[4096];
+        try
+        {
+            int read;
+            while ((read = await reader.ReadAsync(buffer.AsMemory(), cancellationToken).ConfigureAwait(false)) > 0)
+            {
+                lock (sink)
+                {
+                    sink.Append(buffer, 0, read);
+                }
+            }
+        }
+        catch (Exception exception) when (exception is OperationCanceledException or ObjectDisposedException or IOException)
+        {
+            // Stopped draining: the caller takes whatever was captured so far.
+        }
+    }
+
+    private static string Snapshot(System.Text.StringBuilder sink)
+    {
+        lock (sink)
+        {
+            return sink.ToString();
         }
     }
 

@@ -42,6 +42,118 @@ public sealed class AcpStdioHostTests
     }
 
     [Fact]
+    public async Task RunAsync_should_not_answer_notifications()
+    {
+        var host = CreateHost();
+        using var input = new StringReader("""{"jsonrpc":"2.0","method":"session/cancel","params":{}}""");
+        using var output = new StringWriter(new StringBuilder());
+
+        await host.RunAsync(input, output, CancellationToken.None);
+
+        output.ToString().Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task RunAsync_should_reject_malformed_messages_without_an_id()
+    {
+        var host = CreateHost();
+        using var input = new StringReader("""{"jsonrpc":"2.0","method":1}""");
+        using var output = new StringWriter(new StringBuilder());
+
+        await host.RunAsync(input, output, CancellationToken.None);
+
+        output.ToString().Should().Contain(@"""code"":-32600");
+    }
+
+    [Fact]
+    public async Task Session_cancel_notification_cancels_the_live_prompt_before_eof()
+    {
+        var controls = new LiveTurnControlService();
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (_, token) => await Task.Delay(Timeout.Infinite, token)
+        };
+        var host = CreateHost(runtime, controls: controls);
+        var input = new HeldOpenReader(
+            """{"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}""",
+            """{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{"cwd":".","sessionId":"s1","prompt":"work","liveTurnControl":true}}""",
+            """{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}""");
+        var output = new StringWriter();
+        var run = host.RunAsync(input, output, CancellationToken.None);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        var cancelledBeforeEof = output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal);
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancelledBeforeEof.Should().BeTrue("the id-less session/cancel notification must stop the active prompt");
+        ReadResponseResult(output, "p")["stopReason"]!.GetValue<string>().Should().Be("cancelled");
+        output.ToString().Should().NotContain("\"id\":null", "notifications are never answered");
+    }
+
+    [Fact]
+    public async Task Session_cancel_notification_cancels_an_ordinary_prompt_before_eof()
+    {
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (_, token) => await Task.Delay(Timeout.Infinite, token)
+        };
+        var host = CreateHost(runtime, controls: new LiveTurnControlService());
+        var input = new HeldOpenReader(
+            """{"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}""",
+            """{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{"cwd":".","sessionId":"s1","prompt":"work"}}""",
+            """{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"s1"}}""");
+        var output = new StringWriter();
+        var run = host.RunAsync(input, output, CancellationToken.None);
+
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        while (!output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal) && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(25);
+        }
+
+        var cancelledBeforeEof = output.ToString().Contains("\"cancelled\"", StringComparison.Ordinal);
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancelledBeforeEof.Should().BeTrue("prompts without liveTurnControl must also honor session/cancel notifications");
+        ReadResponseResult(output, "p")["stopReason"]!.GetValue<string>().Should().Be("cancelled");
+        output.ToString().Should().NotContain("\"id\":null");
+    }
+
+    [Theory]
+    [InlineData("""{"sessionId":"s1","promptRequestId":{}}""")]
+    [InlineData("""{"sessionId":"s1","cwd":""}""")]
+    public async Task Malformed_session_cancel_notification_cancels_nothing_and_does_not_fault(string parameters)
+    {
+        var controls = new LiveTurnControlService();
+        var runtime = new StubConversationRuntime
+        {
+            DuringPrompt = async (_, token) => await Task.Delay(Timeout.Infinite, token)
+        };
+        var host = CreateHost(runtime, controls: controls);
+        var input = new HeldOpenReader(
+            """{"jsonrpc":"2.0","id":"init","method":"initialize","params":{}}""",
+            """{"jsonrpc":"2.0","id":"p","method":"session/prompt","params":{"cwd":".","sessionId":"s1","prompt":"work","liveTurnControl":true}}""",
+            $$"""{"jsonrpc":"2.0","method":"session/cancel","params":{{parameters}}}""");
+        var output = new StringWriter();
+        var run = host.RunAsync(input, output, CancellationToken.None);
+
+        await Task.Delay(500);
+        var cancelledEarly = output.ToString().Contains("\"p\"", StringComparison.Ordinal);
+        input.Release();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+
+        cancelledEarly.Should().BeFalse("a malformed selector must not cancel the session's prompts");
+        output.ToString().Should().NotContain("\"id\":null");
+    }
+
+    [Fact]
     public async Task RunAsync_should_return_invalid_request_for_missing_method()
     {
         var host = CreateHost();
@@ -486,5 +598,26 @@ public sealed class AcpStdioHostTests
 
         public Task<IReadOnlyList<ProviderModelCatalogEntry>> ListAsync(CancellationToken cancellationToken)
             => Task.FromResult(Entries);
+    }
+
+    private sealed class HeldOpenReader(params string[] lines) : TextReader
+    {
+        private readonly Queue<string> pending = new(lines);
+        private readonly TaskCompletionSource released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void Release() => released.TrySetResult();
+
+        public override async ValueTask<string?> ReadLineAsync(CancellationToken cancellationToken)
+        {
+            if (pending.TryDequeue(out var line))
+            {
+                return line;
+            }
+
+            await released.Task.WaitAsync(cancellationToken).ConfigureAwait(false);
+            return null;
+        }
+
+        public override string? ReadLine() => pending.TryDequeue(out var line) ? line : null;
     }
 }

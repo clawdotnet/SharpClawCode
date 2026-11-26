@@ -33,7 +33,7 @@ public sealed class SqliteSessionStore(
                 payload_json = excluded.payload_json;
             """;
         command.Parameters.AddWithValue("$sessionId", session.Id);
-        command.Parameters.AddWithValue("$updatedAtUtc", session.UpdatedAtUtc.ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", session.UpdatedAtUtc.ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$payloadJson", SessionSnapshotSerializer.Serialize(session));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
     }

@@ -11,6 +11,35 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
 {
     private sealed record ActivePrompt(string Workspace, string SessionId, LiveTurnHandle Handle);
     private readonly ConcurrentDictionary<string, ActivePrompt> active = new(StringComparer.Ordinal);
+    private sealed record OrdinaryPrompt(string Workspace, string SessionId, CancellationTokenSource Cancellation);
+    private readonly ConcurrentDictionary<string, OrdinaryPrompt> ordinary = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Runs a prompt that did not opt into live turn control. It keeps the ordinary semantics (stdin EOF does not
+    /// cancel it) but is tracked so an id-less <c>session/cancel</c> notification for its session can stop it, in
+    /// which case it completes with <c>stopReason: "cancelled"</c>.
+    /// </summary>
+    internal async Task<JsonObject> RunOrdinaryAsync(JsonNode id, string? workspace, string? sessionId, Func<CancellationToken, Task<JsonObject>> run, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrEmpty(workspace) || string.IsNullOrEmpty(sessionId))
+            return await run(cancellationToken).ConfigureAwait(false);
+
+        using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        var key = id.ToJsonString();
+        var tracked = ordinary.TryAdd(key, new(Path.TrimEndingDirectorySeparator(workspace), sessionId, cancellation));
+        try
+        {
+            return await run(cancellation.Token).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            return new JsonObject { ["stopReason"] = "cancelled" };
+        }
+        finally
+        {
+            if (tracked) ordinary.TryRemove(key, out _);
+        }
+    }
 
     internal async Task<JsonObject> RunAsync(JsonNode id, string workspace, string sessionId, Func<CancellationToken, Task<JsonObject>> run)
     {
@@ -65,6 +94,76 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
 
         if (cancel) target.Handle.Cancel();
         return new JsonObject { ["accepted"] = cancel || target.Handle.TrySteer(text!) };
+    }
+
+    /// <summary>
+    /// Handles an id-less <c>session/cancel</c> notification. Cancels every live prompt of the named session
+    /// (optionally narrowed by <c>promptRequestId</c> and <c>cwd</c>); each cancelled prompt then completes with
+    /// <c>stopReason: "cancelled"</c>. Cancelling all of them is deterministic and matches the notification's
+    /// session-level intent.
+    /// </summary>
+    internal int CancelSession(JsonNode? parameters)
+    {
+        if (parameters?["sessionId"] is not JsonValue sessionValue
+            || !sessionValue.TryGetValue<string>(out var sessionId)
+            || string.IsNullOrEmpty(sessionId))
+            return 0;
+
+        // An omitted selector means "the whole session"; a present but malformed one cancels nothing.
+        string? promptRequestId = null;
+        if (parameters is JsonObject parameterObject && parameterObject.TryGetPropertyValue("promptRequestId", out var selector))
+        {
+            if (selector is not JsonValue requested
+                || !(requested.TryGetValue<string>(out _) || requested.TryGetValue<long>(out _)))
+                return 0;
+            promptRequestId = requested.ToJsonString();
+        }
+
+        string? workspace = null;
+        if (parameters is JsonObject withCwd && withCwd.TryGetPropertyValue("cwd", out var cwdNode))
+        {
+            if (cwdNode is not JsonValue cwdValue || !cwdValue.TryGetValue<string>(out var cwd) || string.IsNullOrWhiteSpace(cwd))
+                return 0;
+            try
+            {
+                workspace = Path.GetFullPath(cwd);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return 0;
+            }
+        }
+        var cancelled = 0;
+        foreach (var (key, target) in active)
+        {
+            if (target.SessionId != sessionId
+                || (promptRequestId is not null && key != promptRequestId)
+                || (workspace is not null && !string.Equals(target.Workspace, Path.TrimEndingDirectorySeparator(workspace),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+                continue;
+            target.Handle.Cancel();
+            cancelled++;
+        }
+
+        foreach (var (key, target) in ordinary)
+        {
+            if (target.SessionId != sessionId
+                || (promptRequestId is not null && key != promptRequestId)
+                || (workspace is not null && !string.Equals(target.Workspace, Path.TrimEndingDirectorySeparator(workspace),
+                    OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
+                continue;
+            try
+            {
+                target.Cancellation.Cancel();
+                cancelled++;
+            }
+            catch (ObjectDisposedException)
+            {
+                // The prompt finished concurrently.
+            }
+        }
+
+        return cancelled;
     }
 
     private static void AddPending(JsonObject result, IReadOnlyList<string> pending)

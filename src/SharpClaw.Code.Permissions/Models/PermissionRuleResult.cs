@@ -6,10 +6,12 @@ namespace SharpClaw.Code.Permissions.Models;
 /// <param name="Outcome">The rule outcome.</param>
 /// <param name="Reason">A concise explanation for the outcome.</param>
 /// <param name="CanRememberApproval">Indicates whether a positive approval can be remembered for the session.</param>
+/// <param name="AllowAutoApproval">Indicates whether session auto-approval scopes may satisfy this approval without prompting.</param>
 public sealed record PermissionRuleResult(
     PermissionRuleOutcome Outcome,
     string? Reason,
-    bool CanRememberApproval = false)
+    bool CanRememberApproval = false,
+    bool AllowAutoApproval = true)
 {
     /// <summary>
     /// Creates an abstaining rule result.
@@ -35,8 +37,9 @@ public sealed record PermissionRuleResult(
     /// Creates a rule result that requires explicit approval.
     /// </summary>
     /// <param name="reason">The approval reason.</param>
+    /// <param name="allowAutoApproval">Whether session auto-approval scopes may satisfy the approval.</param>
     /// <param name="canRememberApproval">Indicates whether a positive approval can be remembered for the session.</param>
     /// <returns>The approval-required result.</returns>
-    public static PermissionRuleResult RequireApproval(string reason, bool canRememberApproval = false)
-        => new(PermissionRuleOutcome.RequireApproval, reason, canRememberApproval);
+    public static PermissionRuleResult RequireApproval(string reason, bool canRememberApproval = false, bool allowAutoApproval = true)
+        => new(PermissionRuleOutcome.RequireApproval, reason, canRememberApproval, allowAutoApproval);
 }

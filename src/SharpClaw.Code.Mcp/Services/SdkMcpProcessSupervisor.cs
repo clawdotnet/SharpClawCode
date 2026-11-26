@@ -19,8 +19,41 @@ namespace SharpClaw.Code.Mcp.Services;
 /// <param name="loggerFactory">Logger factory for SDK clients; null uses <see cref="NullLoggerFactory"/>.</param>
 public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null) : IMcpProcessSupervisor
 {
-    private static long _nextSessionId;
-    private static readonly ConcurrentDictionary<long, McpClient> Sessions = new();
+    // Handles are persisted in the registry and outlive this process. Start each process at a random base so a
+    // handle recorded by an earlier process can never match (and be mistaken for, or stop) a live session here.
+    private static long _nextSessionId = Random.Shared.NextInt64(1, 1L << 40) << 16;
+    private static readonly ConcurrentDictionary<long, TrackedSession> Sessions = new();
+
+    private sealed class TrackedSession(string serverId, McpClient client)
+    {
+        private readonly Lock gate = new();
+        private Task? disposal;
+
+        public string ServerId { get; } = serverId;
+
+        public McpClient Client { get; } = client;
+
+        /// <summary>
+        /// Returns the one disposal of this client. McpClient marks itself disposed before its shutdown awaits
+        /// finish, so a second DisposeAsync after a failure returns without completing the transport shutdown.
+        /// Reusing the first attempt keeps a failed shutdown reported as failed instead of as a later success.
+        /// </summary>
+        public Task DisposeOnceAsync()
+        {
+            lock (gate)
+            {
+                return disposal ??= Client.DisposeAsync().AsTask();
+            }
+        }
+    }
+
+    /// <inheritdoc />
+    public bool IsSessionActive(long sessionHandle) => Sessions.ContainsKey(sessionHandle);
+
+    /// <inheritdoc />
+    public bool IsSessionActive(long sessionHandle, string serverId)
+        => Sessions.TryGetValue(sessionHandle, out var tracked)
+            && string.Equals(tracked.ServerId, serverId, StringComparison.Ordinal);
     private readonly ILoggerFactory resolvedLoggerFactory = loggerFactory ?? NullLoggerFactory.Instance;
     private readonly ILogger logger = (loggerFactory ?? NullLoggerFactory.Instance).CreateLogger<SdkMcpProcessSupervisor>();
 
@@ -131,7 +164,7 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
             }
 
             var sessionId = Interlocked.Increment(ref _nextSessionId);
-            if (!Sessions.TryAdd(sessionId, client))
+            if (!Sessions.TryAdd(sessionId, new TrackedSession(definition.Id, client)))
             {
                 await client.DisposeAsync().ConfigureAwait(false);
                 return new McpProcessStartResult(
@@ -165,10 +198,16 @@ public sealed class SdkMcpProcessSupervisor(ILoggerFactory? loggerFactory = null
     /// <inheritdoc />
     public async Task StopAsync(McpProcessStopRequest request, CancellationToken cancellationToken)
     {
-        if (request.SessionHandle > 0 && Sessions.TryRemove(request.SessionHandle, out var tracked))
+        if (request.SessionHandle > 0
+            && Sessions.TryGetValue(request.SessionHandle, out var tracked)
+            && (request.ServerId is null || string.Equals(tracked.ServerId, request.ServerId, StringComparison.Ordinal)))
         {
             cancellationToken.ThrowIfCancellationRequested();
-            await tracked.DisposeAsync().ConfigureAwait(false);
+
+            // The handle stays tracked until shutdown has completed; a failed shutdown keeps it, and every
+            // later stop reports the same failure rather than dropping a session whose transport may be running.
+            await tracked.DisposeOnceAsync().ConfigureAwait(false);
+            Sessions.TryRemove(new KeyValuePair<long, TrackedSession>(request.SessionHandle, tracked));
         }
 
         if (request.Pid is int pid)

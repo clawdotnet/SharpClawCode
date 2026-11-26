@@ -209,10 +209,45 @@ public sealed class ConfiguredApprovalIdentityService(
             static key => new ConfigurationManager<OpenIdConnectConfiguration>(
                 $"{key}/.well-known/openid-configuration",
                 new OpenIdConnectConfigurationRetriever(),
-                new HttpDocumentRetriever
-                {
-                    RequireHttps = false,
-                }));
+                new LoopbackAwareDocumentRetriever()));
+
+    /// <summary>
+    /// Fetches OIDC discovery and JWKS documents, deciding the TLS requirement per document address: signing keys
+    /// fetched over plain HTTP could be substituted by a network attacker and used to forge approval principals,
+    /// so only loopback destinations (local IdPs, tests) may use HTTP, and that path never follows redirects.
+    /// A loopback authority advertising a remote <c>http://</c> <c>jwks_uri</c> is therefore rejected.
+    /// </summary>
+    private sealed class LoopbackAwareDocumentRetriever : IDocumentRetriever
+    {
+        private static readonly HttpDocumentRetriever Secure = new() { RequireHttps = true };
+
+        private static readonly HttpDocumentRetriever LoopbackHttp = new(
+            new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(30) })
+        {
+            RequireHttps = false,
+        };
+
+        public Task<string> GetDocumentAsync(string address, CancellationToken cancel)
+        {
+            if (!Uri.TryCreate(address, UriKind.Absolute, out var uri))
+            {
+                throw new ArgumentException($"OIDC document address '{address}' is not an absolute URI.", nameof(address));
+            }
+
+            if (uri.Scheme == Uri.UriSchemeHttps)
+            {
+                return Secure.GetDocumentAsync(address, cancel);
+            }
+
+            if (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)
+            {
+                return LoopbackHttp.GetDocumentAsync(address, cancel);
+            }
+
+            throw new InvalidOperationException(
+                $"OIDC document address '{address}' must use HTTPS; plain HTTP is only allowed for loopback hosts.");
+        }
+    }
 
     private static string[]? ReadDelimitedHeader(IReadOnlyDictionary<string, string> headers, string headerName)
     {

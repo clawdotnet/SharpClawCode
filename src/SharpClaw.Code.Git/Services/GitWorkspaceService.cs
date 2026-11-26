@@ -35,7 +35,7 @@ public sealed class GitWorkspaceService(IProcessRunner processRunner) : IGitWork
         var repositoryRoot = NormalizeLine(repositoryRootResult.StandardOutput);
         var currentBranchTask = RunGitAsync(workingDirectory, ["branch", "--show-current"], cancellationToken);
         var headTask = RunGitAsync(workingDirectory, ["rev-parse", "HEAD"], cancellationToken);
-        var statusTask = RunGitAsync(workingDirectory, ["status", "--porcelain=v1", "--branch"], cancellationToken);
+        var statusTask = RunGitAsync(workingDirectory, ["status", "--porcelain=v1", "-z", "--branch"], cancellationToken);
         var diffTask = RunGitAsync(workingDirectory, ["diff", "--no-ext-diff", "--stat"], cancellationToken);
         var freshnessTask = RunGitAsync(workingDirectory, ["rev-list", "--left-right", "--count", "@{upstream}...HEAD"], cancellationToken);
         var worktreeListTask = ListWorktreesCoreAsync(workingDirectory, repositoryRoot ?? workingDirectory, cancellationToken);
@@ -189,19 +189,42 @@ public sealed class GitWorkspaceService(IProcessRunner processRunner) : IGitWork
 
     private static IReadOnlyList<GitStatusEntry> ParseStatusEntries(string output)
     {
+        // `git status --porcelain=v1 -z` separates records with NUL, never C-quotes paths, and emits the original
+        // path of a rename/copy as an extra NUL-terminated field. Newline-separated output is accepted as a fallback.
+        var nulSeparated = output.Contains('\0', StringComparison.Ordinal);
+        var records = nulSeparated
+            ? output.Split('\0')
+            : output.Split('\n').Select(static line => line.TrimEnd('\r')).ToArray();
         var entries = new List<GitStatusEntry>();
-        foreach (var rawLine in output.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        for (var index = 0; index < records.Length; index++)
         {
-            var line = rawLine.TrimEnd('\r');
-            if (line.StartsWith("##", StringComparison.Ordinal) || line.Length < 4)
+            var record = records[index];
+            if (record.StartsWith("##", StringComparison.Ordinal) || record.Length < 4)
             {
                 continue;
             }
 
+            var indexStatus = record[0];
+            var workingTreeStatus = record[1];
+            var path = record[3..];
+            if (nulSeparated && (indexStatus is 'R' or 'C' || workingTreeStatus is 'R' or 'C'))
+            {
+                // Skip the original-path field that follows a rename/copy record.
+                index++;
+            }
+            else if (!nulSeparated)
+            {
+                var arrow = path.IndexOf(" -> ", StringComparison.Ordinal);
+                if ((indexStatus is 'R' or 'C') && arrow >= 0)
+                {
+                    path = path[(arrow + 4)..];
+                }
+            }
+
             entries.Add(new GitStatusEntry(
-                Path: line[3..].Trim(),
-                IndexStatus: line[0].ToString(),
-                WorkingTreeStatus: line[1].ToString()));
+                Path: path,
+                IndexStatus: indexStatus.ToString(),
+                WorkingTreeStatus: workingTreeStatus.ToString()));
         }
 
         return entries;

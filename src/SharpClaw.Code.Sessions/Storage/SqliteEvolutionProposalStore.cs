@@ -74,7 +74,7 @@ public sealed class SqliteEvolutionProposalStore(
                 payload_json = excluded.payload_json;
             """;
         command.Parameters.AddWithValue("$proposalId", proposal.Id);
-        command.Parameters.AddWithValue("$updatedAtUtc", (proposal.UpdatedAtUtc ?? proposal.CreatedAtUtc).ToString("O"));
+        command.Parameters.AddWithValue("$updatedAtUtc", (proposal.UpdatedAtUtc ?? proposal.CreatedAtUtc).ToUniversalTime().ToString("O", System.Globalization.CultureInfo.InvariantCulture));
         command.Parameters.AddWithValue("$status", proposal.Status.ToString());
         command.Parameters.AddWithValue("$payloadJson", JsonSerializer.Serialize(proposal, ProtocolJsonContext.Default.EvolutionProposal));
         await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);

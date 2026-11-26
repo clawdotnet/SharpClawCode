@@ -33,11 +33,7 @@ internal static class OpenAiMessageBuilder
 
         foreach (var message in messages)
         {
-            var meaiMessage = BuildMeaiMessage(message);
-            if (meaiMessage is not null)
-            {
-                result.Add(meaiMessage);
-            }
+            result.AddRange(BuildMeaiMessages(message));
         }
 
         return result;
@@ -86,6 +82,44 @@ internal static class OpenAiMessageBuilder
         }
 
         return new MeaiChatMessage(role, contentItems);
+    }
+
+    /// <summary>
+    /// Builds one or more MEAI messages for a SharpClaw message. Tool results must travel in
+    /// <see cref="ChatRole.Tool"/> messages for OpenAI-compatible APIs (MEAI drops them from user messages),
+    /// so a user message carrying tool results is split into a tool message plus an optional user message.
+    /// </summary>
+    private static IEnumerable<MeaiChatMessage> BuildMeaiMessages(ProtocolChatMessage message)
+    {
+        var hasToolResults = message.Content.Any(static block => block.Kind == ContentBlockKind.ToolResult);
+        if (!hasToolResults || string.Equals(message.Role, "assistant", StringComparison.OrdinalIgnoreCase))
+        {
+            if (BuildMeaiMessage(message) is { } single)
+            {
+                yield return single;
+            }
+
+            yield break;
+        }
+
+        var toolResults = message.Content
+            .Where(static block => block.Kind == ContentBlockKind.ToolResult)
+            .Select(BuildAiContent)
+            .OfType<AIContent>()
+            .ToList();
+        if (toolResults.Count > 0)
+        {
+            yield return new MeaiChatMessage(ChatRole.Tool, toolResults);
+        }
+
+        var remaining = message.Content
+            .Where(static block => block.Kind != ContentBlockKind.ToolResult)
+            .ToList();
+        if (remaining.Count > 0
+            && BuildMeaiMessage(message with { Content = remaining }) is { } rest)
+        {
+            yield return rest;
+        }
     }
 
     private static AIContent? BuildAiContent(ContentBlock block)
