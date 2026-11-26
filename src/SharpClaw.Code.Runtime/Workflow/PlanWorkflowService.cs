@@ -5,6 +5,7 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Sessions.Abstractions;
+using SharpClaw.Code.Sessions.Concurrency;
 
 namespace SharpClaw.Code.Runtime.Workflow;
 
@@ -200,10 +201,17 @@ public sealed class PlanWorkflowService(
         var normalizedWorkspacePath = pathService.GetFullPath(workspacePath);
         if (!assumeSessionLockHeld)
         {
-            await using var gate = await fileSystem
-                .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspacePath, sessionId), cancellationToken)
-                .ConfigureAwait(false);
-            await PersistSessionSummaryCoreAsync(normalizedWorkspacePath, sessionId, payload, cancellationToken).ConfigureAwait(false);
+            await SessionUpdateScope.RunAsync(
+                fileSystem,
+                storagePathResolver,
+                normalizedWorkspacePath,
+                sessionId,
+                async ct =>
+                {
+                    await PersistSessionSummaryCoreAsync(normalizedWorkspacePath, sessionId, payload, ct).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 

@@ -21,6 +21,7 @@ using SharpClaw.Code.Runtime.Mutations;
 using SharpClaw.Code.Runtime.Turns;
 using SharpClaw.Code.Runtime.Workflow;
 using SharpClaw.Code.Sessions.Abstractions;
+using SharpClaw.Code.Sessions.Concurrency;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -130,9 +131,6 @@ public sealed class ConversationRuntime(
             throw new InvalidOperationException($"Unable to resume session '{request.SessionId}'.");
         }
 
-        session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
-        session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
-
         var sessionMutex = GetSessionMutex(workspacePath, session.Id);
         await sessionMutex.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
@@ -142,12 +140,21 @@ public sealed class ConversationRuntime(
                 .AcquireExclusiveFileLockAsync(turnLockPath, cancellationToken)
                 .ConfigureAwait(false);
 
+            // Start a fresh concurrent-edit overlay *before* re-reading: edits made earlier are in the snapshot we
+            // are about to read, and edits made from now on are recorded and carried into this turn's saves.
+            await SessionUpdateScope.ResetOverlayAsync(fileSystem, storagePathResolver, workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
+
             // Re-read the session inside the lock so the turn sequence read-modify-write is consistent across concurrent prompts.
             var refreshed = await sessionStore.GetByIdAsync(workspacePath, session.Id, cancellationToken).ConfigureAwait(false);
             if (refreshed is not null)
             {
                 session = refreshed;
             }
+
+            // Persist per-turn preferences only while holding the turn lock, on the freshly read snapshot,
+            // so they cannot overwrite a concurrent turn's history or checkpoints.
+            session = await EnsurePrimaryModePersistedAsync(workspacePath, session, request.PrimaryMode, cancellationToken).ConfigureAwait(false);
+            session = await EnsureApprovalSettingsPersistedAsync(workspacePath, session, request.ApprovalSettings, cancellationToken).ConfigureAwait(false);
 
             session = await EnsureRecoverableFromFailedForPromptAsync(
                     workspacePath,
@@ -493,6 +500,15 @@ public sealed class ConversationRuntime(
         finally
         {
             mutationJournal?.End(session.Id, turnId);
+            try
+            {
+                // The turn's final state now includes every concurrent edit; start the next window clean.
+                await SessionUpdateScope.ResetOverlayAsync(fileSystem, storagePathResolver, workspacePath, session.Id, CancellationToken.None).ConfigureAwait(false);
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                logger.LogDebug(exception, "Could not reset the concurrent-edit overlay for session {SessionId}.", session.Id);
+            }
         }
         }
         finally

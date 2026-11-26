@@ -10,8 +10,16 @@ namespace SharpClaw.Code.Runtime.Workflow;
 /// <inheritdoc />
 public sealed class SessionPreferenceService(
     ISessionStore sessionStore,
-    ISessionCoordinator sessionCoordinator) : ISessionPreferenceService
+    ISessionCoordinator sessionCoordinator,
+    ISessionUpdateCoordinator? sessionUpdateCoordinator = null) : ISessionPreferenceService
 {
+    // Preference edits can race a running turn; the coordinator serializes them and keeps them from being
+    // overwritten by the turn's stale session copy.
+    private Task<T> RunScopedAsync<T>(string workspaceRoot, string sessionId, Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+        => sessionUpdateCoordinator is null
+            ? action(cancellationToken)
+            : sessionUpdateCoordinator.RunAsync(workspaceRoot, sessionId, action, cancellationToken);
+
     /// <inheritdoc />
     public async Task<PermissionStatusReport> GetPermissionStatusAsync(
         string workspaceRoot,
@@ -37,20 +45,24 @@ public sealed class SessionPreferenceService(
         string? currentModel,
         CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var key = kind == TrustedSourceKind.Plugin
-            ? SharpClawWorkflowMetadataKeys.TrustedPluginNamesJson
-            : SharpClawWorkflowMetadataKeys.TrustedMcpServerNamesJson;
-        var names = ReadStringArray(metadata, key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        names.Add(name.Trim());
-        metadata[key] = JsonSerializer.Serialize(names.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToArray(), ProtocolJsonContext.Default.StringArray);
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        var attachedSessionId = await sessionCoordinator.GetAttachedSessionIdAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        return BuildReport(session, attachedSessionId, fallbackPermissionMode, approvalSettings, currentModel);
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
+        {
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var key = kind == TrustedSourceKind.Plugin
+                ? SharpClawWorkflowMetadataKeys.TrustedPluginNamesJson
+                : SharpClawWorkflowMetadataKeys.TrustedMcpServerNamesJson;
+            var names = ReadStringArray(metadata, key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            names.Add(name.Trim());
+            metadata[key] = JsonSerializer.Serialize(names.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToArray(), ProtocolJsonContext.Default.StringArray);
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            var attachedSessionId = await sessionCoordinator.GetAttachedSessionIdAsync(workspaceRoot, ct).ConfigureAwait(false);
+            return BuildReport(session, attachedSessionId, fallbackPermissionMode, approvalSettings, currentModel);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -64,20 +76,24 @@ public sealed class SessionPreferenceService(
         string? currentModel,
         CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var key = kind == TrustedSourceKind.Plugin
-            ? SharpClawWorkflowMetadataKeys.TrustedPluginNamesJson
-            : SharpClawWorkflowMetadataKeys.TrustedMcpServerNamesJson;
-        var names = ReadStringArray(metadata, key).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        names.Remove(name.Trim());
-        metadata[key] = JsonSerializer.Serialize(names.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToArray(), ProtocolJsonContext.Default.StringArray);
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        var attachedSessionId = await sessionCoordinator.GetAttachedSessionIdAsync(workspaceRoot, cancellationToken).ConfigureAwait(false);
-        return BuildReport(session, attachedSessionId, fallbackPermissionMode, approvalSettings, currentModel);
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
+        {
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var key = kind == TrustedSourceKind.Plugin
+                ? SharpClawWorkflowMetadataKeys.TrustedPluginNamesJson
+                : SharpClawWorkflowMetadataKeys.TrustedMcpServerNamesJson;
+            var names = ReadStringArray(metadata, key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            names.Remove(name.Trim());
+            metadata[key] = JsonSerializer.Serialize(names.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToArray(), ProtocolJsonContext.Default.StringArray);
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            var attachedSessionId = await sessionCoordinator.GetAttachedSessionIdAsync(workspaceRoot, ct).ConfigureAwait(false);
+            return BuildReport(session, attachedSessionId, fallbackPermissionMode, approvalSettings, currentModel);
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -87,36 +103,44 @@ public sealed class SessionPreferenceService(
         string model,
         CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var preference = new SessionModelPreference(model.Trim(), DateTimeOffset.UtcNow);
-        metadata[SharpClawWorkflowMetadataKeys.SessionModelPreferenceJson] = JsonSerializer.Serialize(preference, ProtocolJsonContext.Default.SessionModelPreference);
-        session = session with { Metadata = metadata, UpdatedAtUtc = preference.UpdatedAtUtc };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        return preference;
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
+        {
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var preference = new SessionModelPreference(model.Trim(), DateTimeOffset.UtcNow);
+            metadata[SharpClawWorkflowMetadataKeys.SessionModelPreferenceJson] = JsonSerializer.Serialize(preference, ProtocolJsonContext.Default.SessionModelPreference);
+            session = session with { Metadata = metadata, UpdatedAtUtc = preference.UpdatedAtUtc };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            return preference;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<bool> ClearModelPreferenceAsync(string workspaceRoot, string? sessionId, CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        if (session.Metadata is null)
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
         {
-            return false;
-        }
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            if (session.Metadata is null)
+            {
+                return false;
+            }
 
-        var metadata = new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var removed = metadata.Remove(SharpClawWorkflowMetadataKeys.SessionModelPreferenceJson);
-        if (!removed)
-        {
-            return false;
-        }
+            var metadata = new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var removed = metadata.Remove(SharpClawWorkflowMetadataKeys.SessionModelPreferenceJson);
+            if (!removed)
+            {
+                return false;
+            }
 
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        return true;
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -126,14 +150,18 @@ public sealed class SessionPreferenceService(
         PermissionMode permissionMode,
         CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        metadata[SharpClawWorkflowMetadataKeys.PreferredPermissionMode] = permissionMode.ToString();
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        return permissionMode;
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
+        {
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            metadata[SharpClawWorkflowMetadataKeys.PreferredPermissionMode] = permissionMode.ToString();
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            return permissionMode;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
@@ -143,57 +171,65 @@ public sealed class SessionPreferenceService(
         ApprovalSettings approvalSettings,
         CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var normalized = ApprovalSettingsResolver.Normalize(approvalSettings);
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
+        {
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var normalized = ApprovalSettingsResolver.Normalize(approvalSettings);
 
-        if (normalized.AutoApproveScopes.Count == 0)
-        {
-            metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
-        }
-        else
-        {
-            metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson] = JsonSerializer.Serialize(
-                normalized.AutoApproveScopes.ToList(),
-                ProtocolJsonContext.Default.ListApprovalScope);
-        }
+            if (normalized.AutoApproveScopes.Count == 0)
+            {
+                metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
+            }
+            else
+            {
+                metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson] = JsonSerializer.Serialize(
+                    normalized.AutoApproveScopes.ToList(),
+                    ProtocolJsonContext.Default.ListApprovalScope);
+            }
 
-        if (normalized.AutoApproveBudget is null)
-        {
-            metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
-        }
-        else
-        {
-            metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget] = normalized.AutoApproveBudget.Value.ToString();
-        }
+            if (normalized.AutoApproveBudget is null)
+            {
+                metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
+            }
+            else
+            {
+                metadata[SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget] = normalized.AutoApproveBudget.Value.ToString();
+            }
 
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        return normalized;
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            return normalized;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     /// <inheritdoc />
     public async Task<bool> ClearApprovalSettingsAsync(string workspaceRoot, string? sessionId, CancellationToken cancellationToken)
     {
-        var session = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
-        if (session.Metadata is null)
+        var target = await RequireSessionAsync(workspaceRoot, sessionId, cancellationToken).ConfigureAwait(false);
+        return await RunScopedAsync(workspaceRoot, target.Id, async ct =>
         {
-            return false;
-        }
+            var session = await RequireSessionAsync(workspaceRoot, target.Id, ct).ConfigureAwait(false);
+            if (session.Metadata is null)
+            {
+                return false;
+            }
 
-        var metadata = new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        var removedScopes = metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
-        var removedBudget = metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
-        if (!removedScopes && !removedBudget)
-        {
-            return false;
-        }
+            var metadata = new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            var removedScopes = metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveScopesJson);
+            var removedBudget = metadata.Remove(SharpClawWorkflowMetadataKeys.ApprovalAutoApproveBudget);
+            if (!removedScopes && !removedBudget)
+            {
+                return false;
+            }
 
-        session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
-        await sessionStore.SaveAsync(workspaceRoot, session, cancellationToken).ConfigureAwait(false);
-        return true;
+            session = session with { Metadata = metadata, UpdatedAtUtc = DateTimeOffset.UtcNow };
+            await sessionStore.SaveAsync(workspaceRoot, session, ct).ConfigureAwait(false);
+            return true;
+        }, cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<ConversationSession> RequireSessionAsync(string workspaceRoot, string? sessionId, CancellationToken cancellationToken)

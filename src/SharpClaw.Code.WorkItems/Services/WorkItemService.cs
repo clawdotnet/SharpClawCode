@@ -21,8 +21,14 @@ public sealed class WorkItemService(
     IEventStore eventStore,
     IRuntimeEventPublisher eventPublisher,
     IPathService pathService,
-    ISystemClock systemClock) : IWorkItemService
+    ISystemClock systemClock,
+    ISessionUpdateCoordinator? sessionUpdateCoordinator = null) : IWorkItemService
 {
+    private Task<T> RunScopedAsync<T>(string workspace, string sessionId, Func<CancellationToken, Task<T>> action, CancellationToken cancellationToken)
+        => sessionUpdateCoordinator is null
+            ? action(cancellationToken)
+            : sessionUpdateCoordinator.RunAsync(workspace, sessionId, action, cancellationToken);
+
     /// <inheritdoc />
     public async Task<WorkItemImportResult> ImportAsync(WorkItemImportRequest request, CancellationToken cancellationToken)
     {
@@ -30,21 +36,28 @@ public sealed class WorkItemService(
         var provider = registry.Resolve(request.Provider, request.IdOrUrl)
             ?? throw new InvalidOperationException($"No work-item provider can import '{request.IdOrUrl}'.");
         var workItem = await provider.ImportAsync(request with { WorkspacePath = workspace }, cancellationToken).ConfigureAwait(false);
-        var (session, created) = await ResolveSessionAsync(workspace, request.SessionId, workItem, cancellationToken).ConfigureAwait(false);
+        var (resolved, created) = await ResolveSessionAsync(workspace, request.SessionId, workItem, cancellationToken).ConfigureAwait(false);
 
-        var metadata = session.Metadata is null
-            ? new Dictionary<string, string>(StringComparer.Ordinal)
-            : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
-        metadata[SharpClawWorkflowMetadataKeys.WorkItemJson] = JsonSerializer.Serialize(workItem, ProtocolJsonContext.Default.WorkItem);
-        metadata[SharpClawWorkflowMetadataKeys.WorkItemGoal] = workItem.Title;
-
-        var updated = session with
+        // Read-modify-write under the session update scope so a concurrently running turn cannot overwrite
+        // the imported work item with its stale copy of the session, and concurrent imports serialize.
+        var updated = await RunScopedAsync(workspace, resolved.Id, async ct =>
         {
-            Title = workItem.Title,
-            Metadata = metadata,
-            UpdatedAtUtc = systemClock.UtcNow,
-        };
-        await sessionStore.SaveAsync(workspace, updated, cancellationToken).ConfigureAwait(false);
+            var session = await sessionStore.GetByIdAsync(workspace, resolved.Id, ct).ConfigureAwait(false) ?? resolved;
+            var metadata = session.Metadata is null
+                ? new Dictionary<string, string>(StringComparer.Ordinal)
+                : new Dictionary<string, string>(session.Metadata, StringComparer.Ordinal);
+            metadata[SharpClawWorkflowMetadataKeys.WorkItemJson] = JsonSerializer.Serialize(workItem, ProtocolJsonContext.Default.WorkItem);
+            metadata[SharpClawWorkflowMetadataKeys.WorkItemGoal] = workItem.Title;
+
+            var next = session with
+            {
+                Title = workItem.Title,
+                Metadata = metadata,
+                UpdatedAtUtc = systemClock.UtcNow,
+            };
+            await sessionStore.SaveAsync(workspace, next, ct).ConfigureAwait(false);
+            return next;
+        }, cancellationToken).ConfigureAwait(false);
         await PublishAsync(
             workspace,
             updated.Id,

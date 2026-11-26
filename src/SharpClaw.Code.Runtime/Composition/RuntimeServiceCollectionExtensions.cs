@@ -35,6 +35,7 @@ using SharpClaw.Code.Runtime.Verification.Tools;
 using SharpClaw.Code.Tools.Abstractions;
 using SharpClaw.Code.Runtime.WorkItems;
 using SharpClaw.Code.Sessions.Abstractions;
+using SharpClaw.Code.Sessions.Concurrency;
 using SharpClaw.Code.Sessions.Storage;
 using SharpClaw.Code.Telemetry;
 using SharpClaw.Code.Telemetry.Abstractions;
@@ -124,7 +125,12 @@ public static class RuntimeServiceCollectionExtensions
         services.AddSingleton<IRuntimeEventSink>(serviceProvider => serviceProvider.GetRequiredService<UsageMeteringService>());
         services.AddSingleton<FileSessionStore>();
         services.AddSingleton<SqliteSessionStore>();
-        services.AddSingleton<ISessionStore, HostAwareSessionStore>();
+        services.AddSingleton<HostAwareSessionStore>();
+        services.AddSingleton<ISessionUpdateCoordinator, SessionUpdateCoordinator>();
+        services.AddSingleton<ISessionStore>(serviceProvider => new ConcurrencySafeSessionStore(
+            serviceProvider.GetRequiredService<HostAwareSessionStore>(),
+            serviceProvider.GetRequiredService<IFileSystem>(),
+            serviceProvider.GetRequiredService<IRuntimeStoragePathResolver>()));
         services.AddSingleton<FileScheduledPromptStore>();
         services.AddSingleton<SqliteScheduledPromptStore>();
         services.AddSingleton<IScheduledPromptStore, HostAwareScheduledPromptStore>();

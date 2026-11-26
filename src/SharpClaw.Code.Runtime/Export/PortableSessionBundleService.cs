@@ -181,6 +181,12 @@ public sealed class PortableSessionBundleService(
         foreach (var file in fileSystem.EnumerateFiles(sourceDir, "*"))
         {
             var fileName = Path.GetFileName(file);
+            if (IsTransientCoordinationFile(fileName))
+            {
+                // Lock files may be held exclusively by a running turn, and the overlay only matters in-process.
+                continue;
+            }
+
             var targetFile = pathService.Combine(destDir, fileName);
             await fileSystem.CopyFileAsync(file, targetFile, cancellationToken).ConfigureAwait(false);
         }
@@ -196,4 +202,8 @@ public sealed class PortableSessionBundleService(
             await CopyTreeAsync(directory, pathService.Combine(destDir, dirName), cancellationToken).ConfigureAwait(false);
         }
     }
+
+    private static bool IsTransientCoordinationFile(string fileName)
+        => (fileName.StartsWith('.') && fileName.EndsWith(".lock", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(fileName, ".metadata-overlay.json", StringComparison.Ordinal);
 }

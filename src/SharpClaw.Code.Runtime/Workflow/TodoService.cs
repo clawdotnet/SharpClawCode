@@ -5,6 +5,7 @@ using SharpClaw.Code.Protocol.Models;
 using SharpClaw.Code.Protocol.Serialization;
 using SharpClaw.Code.Runtime.Abstractions;
 using SharpClaw.Code.Sessions.Abstractions;
+using SharpClaw.Code.Sessions.Concurrency;
 using SharpClaw.Code.Sessions.Storage;
 
 namespace SharpClaw.Code.Runtime.Workflow;
@@ -117,15 +118,20 @@ public sealed class TodoService(
                 cancellationToken).ConfigureAwait(false);
         }
 
-        await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, sessionId), cancellationToken)
-            .ConfigureAwait(false);
-        return await SyncManagedSessionTodosCoreAsync(
+        // Out-of-turn edits use the short session snapshot scope instead of the turn lock, so they neither block
+        // for the whole duration of a running turn nor get overwritten by it.
+        return await SessionUpdateScope.RunAsync(
+            fileSystem,
+            storagePathResolver,
             normalizedWorkspaceRoot,
             sessionId,
-            normalizedOwnerAgentId,
-            mapMetadataKey,
-            desiredTodos,
+            ct => SyncManagedSessionTodosCoreAsync(
+                normalizedWorkspaceRoot,
+                sessionId,
+                normalizedOwnerAgentId,
+                mapMetadataKey,
+                desiredTodos,
+                ct),
             cancellationToken).ConfigureAwait(false);
     }
 
@@ -177,16 +183,21 @@ public sealed class TodoService(
             Normalize(ownerAgentId),
             resolvedSessionId);
 
-        await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
-            .ConfigureAwait(false);
-
-        var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
-        var todos = ReadSessionTodoList(session);
-        todos.Add(todo);
-        await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "added", todo, cancellationToken).ConfigureAwait(false);
-        return todo;
+        return await SessionUpdateScope.RunAsync(
+            fileSystem,
+            storagePathResolver,
+            normalizedWorkspaceRoot,
+            resolvedSessionId,
+            async ct =>
+            {
+                var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
+                var todos = ReadSessionTodoList(session);
+                todos.Add(todo);
+                await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "added", todo, ct).ConfigureAwait(false);
+                return todo;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<TodoItem> UpdateSessionTodoAsync(
@@ -201,31 +212,36 @@ public sealed class TodoService(
         var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
         var resolvedSessionId = RequireSessionId(sessionId);
 
-        await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
-            .ConfigureAwait(false);
+        return await SessionUpdateScope.RunAsync(
+            fileSystem,
+            storagePathResolver,
+            normalizedWorkspaceRoot,
+            resolvedSessionId,
+            async ct =>
+            {
+                var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
+                var todos = ReadSessionTodoList(session);
+                var index = todos.FindIndex(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
+                if (index < 0)
+                {
+                    throw new InvalidOperationException($"Todo '{todoId}' was not found.");
+                }
 
-        var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
-        var todos = ReadSessionTodoList(session);
-        var index = todos.FindIndex(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
-        if (index < 0)
-        {
-            throw new InvalidOperationException($"Todo '{todoId}' was not found.");
-        }
+                var existing = todos[index];
+                var updated = existing with
+                {
+                    Title = string.IsNullOrWhiteSpace(title) ? existing.Title : title.Trim(),
+                    Status = status ?? existing.Status,
+                    OwnerAgentId = Normalize(ownerAgentId) ?? existing.OwnerAgentId,
+                    UpdatedAtUtc = systemClock.UtcNow,
+                };
 
-        var existing = todos[index];
-        var updated = existing with
-        {
-            Title = string.IsNullOrWhiteSpace(title) ? existing.Title : title.Trim(),
-            Status = status ?? existing.Status,
-            OwnerAgentId = Normalize(ownerAgentId) ?? existing.OwnerAgentId,
-            UpdatedAtUtc = systemClock.UtcNow,
-        };
-
-        todos[index] = updated;
-        await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "updated", updated, cancellationToken).ConfigureAwait(false);
-        return updated;
+                todos[index] = updated;
+                await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "updated", updated, ct).ConfigureAwait(false);
+                return updated;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task<bool> RemoveSessionTodoAsync(
@@ -237,22 +253,27 @@ public sealed class TodoService(
         var normalizedWorkspaceRoot = pathService.GetFullPath(workspaceRoot);
         var resolvedSessionId = RequireSessionId(sessionId);
 
-        await using var gate = await fileSystem
-            .AcquireExclusiveFileLockAsync(storagePathResolver.GetSessionTurnLockPath(normalizedWorkspaceRoot, resolvedSessionId), cancellationToken)
-            .ConfigureAwait(false);
+        return await SessionUpdateScope.RunAsync(
+            fileSystem,
+            storagePathResolver,
+            normalizedWorkspaceRoot,
+            resolvedSessionId,
+            async ct =>
+            {
+                var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, ct).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
+                var todos = ReadSessionTodoList(session);
+                var removed = todos.FirstOrDefault(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
+                if (removed is null)
+                {
+                    return false;
+                }
 
-        var session = await sessionStore.GetByIdAsync(normalizedWorkspaceRoot, resolvedSessionId, cancellationToken).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"Session '{resolvedSessionId}' was not found.");
-        var todos = ReadSessionTodoList(session);
-        var removed = todos.FirstOrDefault(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
-        if (removed is null)
-        {
-            return false;
-        }
-
-        todos.RemoveAll(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
-        await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "removed", removed, cancellationToken).ConfigureAwait(false);
-        return true;
+                todos.RemoveAll(item => string.Equals(item.Id, todoId, StringComparison.Ordinal));
+                await SaveSessionTodosAsync(normalizedWorkspaceRoot, session, todos, "removed", removed, ct).ConfigureAwait(false);
+                return true;
+            },
+            cancellationToken).ConfigureAwait(false);
     }
 
     private async Task SaveSessionTodosAsync(
