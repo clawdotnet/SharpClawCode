@@ -119,6 +119,31 @@ public sealed class WorkspaceInsightsAndTodoServiceTests : IDisposable
     private static ConversationTurn CreateTurn(string sessionId, string turnId)
         => new(turnId, sessionId, 1, "prompt", "output", DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, "primary-coding-agent", null, null, null);
 
+    [Fact]
+    public async Task Session_todo_edits_do_not_wait_for_a_running_turn()
+    {
+        Directory.CreateDirectory(workspaceRoot);
+        var clock = new FixedClock(DateTimeOffset.Parse("2026-04-13T18:00:00Z"));
+        var storagePathResolver = TestRuntimeStorageResolver.Create(workspaceRoot, pathService);
+        var sessionStore = new FileSessionStore(fileSystem, storagePathResolver);
+        var eventStore = new NdjsonEventStore(fileSystem, storagePathResolver);
+        var todoService = new TodoService(sessionStore, eventStore, fileSystem, pathService, storagePathResolver, clock);
+        var session = new ConversationSession(
+            "session-busy", "Busy", SessionLifecycleState.Active, PermissionMode.WorkspaceWrite, OutputFormat.Json,
+            workspaceRoot, workspaceRoot, clock.UtcNow, clock.UtcNow, "turn-running", null,
+            new Dictionary<string, string>(StringComparer.Ordinal));
+        await sessionStore.SaveAsync(workspaceRoot, session, CancellationToken.None);
+
+        // Simulate a turn in progress: it holds the session turn lock for its whole duration.
+        await using var turnLock = await fileSystem.AcquireExclusiveFileLockAsync(
+            storagePathResolver.GetSessionTurnLockPath(workspaceRoot, session.Id), CancellationToken.None);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        var todo = await todoService.AddAsync(workspaceRoot, TodoScope.Session, "Added mid-turn", session.Id, null, timeout.Token);
+
+        todo.Title.Should().Be("Added mid-turn");
+    }
+
     private sealed class FixedClock(DateTimeOffset utcNow) : SharpClaw.Code.Infrastructure.Abstractions.ISystemClock
     {
         public DateTimeOffset UtcNow { get; } = utcNow;
