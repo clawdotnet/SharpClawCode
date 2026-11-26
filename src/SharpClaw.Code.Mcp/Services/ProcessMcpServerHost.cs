@@ -142,6 +142,24 @@ public sealed class ProcessMcpServerHost(
                     await processSupervisor
                         .StopAsync(new McpProcessStopRequest(processResult.Pid, processResult.SessionHandle), CancellationToken.None)
                         .ConfigureAwait(false);
+
+                    // The registry may already say Ready (only event publication failed); record that the session
+                    // is gone so status queries do not report a healthy server that no longer exists.
+                    await registry.UpdateStatusAsync(
+                            workspaceRoot,
+                            finalStatus with
+                            {
+                                State = McpLifecycleState.Faulted,
+                                UpdatedAtUtc = systemClock.UtcNow,
+                                StatusMessage = "MCP server was stopped because its status could not be recorded.",
+                                IsHealthy = false,
+                                HandshakeSucceeded = false,
+                                FailureKind = McpFailureKind.Startup,
+                                Pid = null,
+                                SessionHandle = null,
+                            },
+                            CancellationToken.None)
+                        .ConfigureAwait(false);
                 }
                 catch (Exception stopException)
                 {
@@ -258,8 +276,17 @@ public sealed class ProcessMcpServerHost(
         => status.State is McpLifecycleState.Starting or McpLifecycleState.Connecting
             || (status.SessionHandle is long handle && handle > 0 && !processSupervisor.IsSessionActive(handle));
 
+    // Key on the same normalized workspace identity the registry uses, so "/repo" and "/repo/." share one gate.
     private static string CreateServerLockKey(string workspaceRoot, string serverId)
-        => $"{workspaceRoot}\u0000{serverId}";
+    {
+        var normalized = Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspaceRoot));
+        if (OperatingSystem.IsWindows())
+        {
+            normalized = normalized.ToUpperInvariant();
+        }
+
+        return $"{normalized}\u0000{serverId}";
+    }
 
     private static SemaphoreSlim GetServerLock(string workspaceRoot, string serverId)
         => ServerLocks.GetOrAdd(CreateServerLockKey(workspaceRoot, serverId), static _ => new SemaphoreSlim(1, 1));
