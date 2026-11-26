@@ -75,16 +75,41 @@ internal sealed class AcpLiveTurns(ILiveTurnControlService? controls, Func<JsonO
     /// </summary>
     internal int CancelSession(JsonNode? parameters)
     {
-        var sessionId = parameters?["sessionId"]?.GetValue<string>();
-        if (string.IsNullOrEmpty(sessionId)) return 0;
-        var promptRequestId = parameters?["promptRequestId"] is JsonValue requested ? requested.ToJsonString() : null;
-        var workspace = parameters?["cwd"]?.GetValue<string>();
+        if (parameters?["sessionId"] is not JsonValue sessionValue
+            || !sessionValue.TryGetValue<string>(out var sessionId)
+            || string.IsNullOrEmpty(sessionId))
+            return 0;
+
+        // An omitted selector means "the whole session"; a present but malformed one cancels nothing.
+        string? promptRequestId = null;
+        if (parameters is JsonObject parameterObject && parameterObject.TryGetPropertyValue("promptRequestId", out var selector))
+        {
+            if (selector is not JsonValue requested
+                || !(requested.TryGetValue<string>(out _) || requested.TryGetValue<long>(out _)))
+                return 0;
+            promptRequestId = requested.ToJsonString();
+        }
+
+        string? workspace = null;
+        if (parameters is JsonObject withCwd && withCwd.TryGetPropertyValue("cwd", out var cwdNode))
+        {
+            if (cwdNode is not JsonValue cwdValue || !cwdValue.TryGetValue<string>(out var cwd) || string.IsNullOrWhiteSpace(cwd))
+                return 0;
+            try
+            {
+                workspace = Path.GetFullPath(cwd);
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                return 0;
+            }
+        }
         var cancelled = 0;
         foreach (var (key, target) in active)
         {
             if (target.SessionId != sessionId
                 || (promptRequestId is not null && key != promptRequestId)
-                || (workspace is not null && !string.Equals(target.Workspace, Path.TrimEndingDirectorySeparator(Path.GetFullPath(workspace)),
+                || (workspace is not null && !string.Equals(target.Workspace, Path.TrimEndingDirectorySeparator(workspace),
                     OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal)))
                 continue;
             target.Handle.Cancel();
