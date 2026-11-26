@@ -133,7 +133,7 @@ public sealed class AcpStdioHost(
                     logger.LogDebug("Ignoring ACP notification {Method}.", notificationMethod);
                 }
             }
-            catch (Exception ex) when (ex is AcpRequestException or InvalidOperationException or FormatException)
+            catch (Exception ex) when (ex is AcpRequestException or InvalidOperationException or FormatException or ArgumentException)
             {
                 logger.LogDebug(ex, "Ignoring malformed ACP notification {Method}.", notificationMethod);
             }
