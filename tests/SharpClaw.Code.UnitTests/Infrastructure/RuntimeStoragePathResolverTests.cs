@@ -50,6 +50,43 @@ public sealed class RuntimeStoragePathResolverTests
         act.Should().Throw<ArgumentException>();
     }
 
+    [Fact]
+    public void Hosted_workspace_keys_ignore_path_casing_when_paths_are_case_insensitive()
+    {
+        var storageRoot = Path.Combine(userRoot, "hosted");
+        var resolver = new RuntimeStoragePathResolver(pathService, new FixedUserProfilePaths(userRoot), accessor, caseInsensitivePaths: true);
+        using var scope = accessor.BeginScope(new RuntimeHostContext("test-host", StorageRoot: storageRoot));
+
+        var upper = resolver.GetSharpClawRoot(Path.Combine(userRoot, "Work", "Repo"));
+        var lower = resolver.GetSharpClawRoot(Path.Combine(userRoot, "work", "repo"));
+
+        upper.ToUpperInvariant().Should().Be(lower.ToUpperInvariant(), "C:\\Repo and c:\\repo are the same workspace on Windows");
+    }
+
+    [Fact]
+    public void Hosted_workspace_keys_keep_using_an_existing_legacy_exact_case_root()
+    {
+        var storageRoot = Path.Combine(userRoot, "hosted-legacy");
+        var workspacePath = Path.Combine(userRoot, "Work", "Repo");
+        using var scope = accessor.BeginScope(new RuntimeHostContext("test-host", StorageRoot: storageRoot));
+        var legacyRoot = new RuntimeStoragePathResolver(pathService, new FixedUserProfilePaths(userRoot), accessor, caseInsensitivePaths: false)
+            .GetSharpClawRoot(workspacePath);
+        var legacyWorkspaceDirectory = Path.GetDirectoryName(legacyRoot)!;
+        Directory.CreateDirectory(legacyWorkspaceDirectory);
+
+        try
+        {
+            var resolved = new RuntimeStoragePathResolver(pathService, new FixedUserProfilePaths(userRoot), accessor, caseInsensitivePaths: true)
+                .GetSharpClawRoot(workspacePath);
+
+            resolved.Should().Be(legacyRoot, "existing hosted sessions must not disappear after the key change");
+        }
+        finally
+        {
+            Directory.Delete(userRoot, recursive: true);
+        }
+    }
+
     private RuntimeStoragePathResolver CreateResolver()
         => new(pathService, new FixedUserProfilePaths(userRoot), accessor);
 
