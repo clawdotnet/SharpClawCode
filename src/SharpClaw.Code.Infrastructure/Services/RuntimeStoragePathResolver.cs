@@ -6,11 +6,21 @@ using SharpClaw.Code.Protocol.Abstractions;
 namespace SharpClaw.Code.Infrastructure.Services;
 
 /// <inheritdoc />
+/// <param name="pathService">Path service.</param>
+/// <param name="userProfilePaths">User profile paths.</param>
+/// <param name="hostContextAccessor">Host context accessor.</param>
+/// <param name="caseInsensitivePaths">
+/// Whether workspace paths compare case-insensitively when deriving hosted storage keys.
+/// Defaults to <see langword="true"/> on Windows.
+/// </param>
 public sealed class RuntimeStoragePathResolver(
     IPathService pathService,
     IUserProfilePaths userProfilePaths,
-    IRuntimeHostContextAccessor hostContextAccessor) : IRuntimeStoragePathResolver
+    IRuntimeHostContextAccessor hostContextAccessor,
+    bool? caseInsensitivePaths = null) : IRuntimeStoragePathResolver
 {
+    private readonly bool foldPathCase = caseInsensitivePaths ?? OperatingSystem.IsWindows();
+
     /// <inheritdoc />
     public string GetSharpClawRoot(string workspacePath)
     {
@@ -18,10 +28,7 @@ public sealed class RuntimeStoragePathResolver(
         var hostContext = hostContextAccessor.Current;
         var baseRoot = string.IsNullOrWhiteSpace(hostContext?.StorageRoot)
             ? workspace
-            : pathService.Combine(
-                pathService.GetFullPath(hostContext.StorageRoot!),
-                "workspaces",
-                BuildWorkspaceKey(workspace));
+            : ResolveHostedWorkspaceRoot(pathService.GetFullPath(hostContext.StorageRoot!), workspace);
 
         var sharpClawRoot = pathService.Combine(baseRoot, ".sharpclaw");
         return string.IsNullOrWhiteSpace(hostContext?.TenantId)
@@ -142,12 +149,28 @@ public sealed class RuntimeStoragePathResolver(
             : pathService.Combine(root, "tenants", BuildTenantSegment(hostContext!.TenantId!));
     }
 
-    private string BuildWorkspaceKey(string workspacePath)
+    private string ResolveHostedWorkspaceRoot(string storageRoot, string workspace)
+    {
+        var workspacesRoot = pathService.Combine(storageRoot, "workspaces");
+        var current = pathService.Combine(workspacesRoot, BuildWorkspaceKey(workspace, foldPathCase));
+        if (!foldPathCase || Directory.Exists(current))
+        {
+            return current;
+        }
+
+        // Before keys were case-folded, "C:\Repo" and "c:\repo" hashed differently. Keep using a root created
+        // under the old, exact-case key so existing sessions do not disappear.
+        var legacy = pathService.Combine(workspacesRoot, BuildWorkspaceKey(workspace, foldCase: false));
+        return Directory.Exists(legacy) ? legacy : current;
+    }
+
+    private string BuildWorkspaceKey(string workspacePath, bool foldCase)
     {
         var normalized = pathService.GetFullPath(workspacePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         var name = pathService.GetFileName(normalized);
         var slug = string.IsNullOrWhiteSpace(name) ? "workspace" : SanitizeSegment(name);
-        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized))).ToLowerInvariant()[..12];
+        var hashInput = foldCase ? normalized.ToUpperInvariant() : normalized;
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(hashInput))).ToLowerInvariant()[..12];
         return $"{slug}-{hash}";
     }
 
